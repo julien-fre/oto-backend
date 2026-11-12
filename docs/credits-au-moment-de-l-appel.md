@@ -383,18 +383,17 @@ comptage avant l'appel) : ils se règlent `exceeded: true`. Échéance :
 Le rapprochement avec le relevé d'Anthropic se fait en jetons, au total et par modèle
 (`oto_admin_model_spend`, `by_model`).
 
-**Une famille, un connecteur** : les modèles OUVERTS servis par OpenRouter (famille
-`openrouter` du catalogue, `runner_models`) se réservent et se règlent exactement de même,
-mais sous leur propre connecteur — `openrouter` / `messages:<modèle>` (`messages:deepseek/…`,
-l'id du catalogue tel quel, `/` et `.` compris), quatre lignes par modèle. Le connecteur d'un
-tour est la famille de son modèle quand elle est réglée tour par tour
-(`credits_tours.CONNECTEURS_DE_MODELE`), `anthropic` sinon — dont un travail sans modèle
-catalogué, qui lit donc ce qu'il lisait avant ; un règlement suit le connecteur de sa
-réservation. Des lignes `anthropic` au même nom ne tarifent pas un modèle ouvert. Le mode
-se règle de même (`openrouter.messages:*=…`, surface comprise). Le prix d'une ligne est
-celui du plus cher des hôtes OpenRouter que le catalogue épingle pour ce modèle
-(`Modele.providers`, envoyés en `provider.only`) : un tour n'est jamais réglé sous son coût,
-quel que soit l'hôte qui l'a servi. `oto_admin_model_spend` ne rapproche qu'Anthropic.
+**Les modèles OUVERTS servis par OpenRouter** (famille `openrouter`, `runner_models`) ne
+passent PAS par le budget d'unités : ni réservés, ni réglés, ni plancher au départ du
+travail. Un même id y est servi par plusieurs hôtes à des prix différents, et l'hôte d'un
+tour se choisit à la requête : une ligne au jeton ne serait qu'une supposition (mesuré le
+12/11 : 7 à 13 % au-dessus du coût au prix de l'hôte le plus cher). OpenRouter rend avec
+chaque appel ce qu'il a facturé (`usage.cost`) ; le worker le rapporte (`usage_cost_usd`)
+et oto l'ÉCRIT au journal, une ligne par tour — `kind='settlement'`, outil `openrouter`,
+`quantity` en micro-dollars arrondis au-dessus —, sans y appliquer aucun tarif : le prix
+d'un dollar est celui de la grille du commerce (`tours_au_cout`, `FAMILLES_AU_COUT`). Sans
+coût déclaré, le tour est refusé (`usage_unmeasured`) et le travail s'arrête ; rejoué, il
+n'est écrit qu'une fois. `oto_admin_model_spend` ne rapproche qu'Anthropic.
 
 **Les appels au modèle de l'agent intégré** (`capabilities/copilot/cle.py`, `docs/copilot.md`) : le même chemin que les tours d'un agent hébergé (`reserver_tour` avant, `regler_tour` après), clé `copilot:<conversation>:<rang>` (lue `call_id` au rapprochement). Deux différences : une réservation que le registre n'a pas tenue hors du mode `off` (barème sans les lignes du modèle en `report`) REFUSE l'appel au lieu de le servir ; une erreur HTTP du fournisseur LIBÈRE la réservation (rien n'a été consommé).
 

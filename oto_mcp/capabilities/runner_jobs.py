@@ -28,7 +28,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _limites_du_run,
                _lignes_reservables, _modele, _ordre_de_service)
-from .. import db, outils_du_travail, runner_consigne, runner_models, time_saved, tool_alias
+from .. import (db, outils_du_travail, runner_consigne, runner_models, time_saved, tool_alias,
+               tours_au_cout)
 from ..db import user_subscriptions
 from ..access import credits as budget
 from ..access import credits_tours as tours
@@ -760,7 +761,10 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
                                "qui ne mesure pas chaque appel — rendu à la file",
                                job.get("id"), job["org_id"], depot, appelant)
                 return None
-            if payeur is not None:
+            if payeur is not None and not tours_au_cout.au_cout(
+                    (job.get("payload") or {}).get("model")):
+                # Un modèle JOURNALISÉ AU COÛT (`tours_au_cout`) n'a pas de plancher ici :
+                # oto ne tient pas son budget, le commerce coupe la clé à zéro.
                 # LE PLANCHER (#1376, B) : l'entrée du premier tour ne se réserve pas ;
                 # un travail que le solde ne couvre pas ne part pas pour mourir au
                 # premier appel. AVANT l'estampille : refusé, il n'a rien consommé.
@@ -874,7 +878,8 @@ def _reserver_un_tour(ctx: ResolvedCtx, job_id: int, tour: int, max_tokens: int)
     - **Idempotent** : le même tour redemandé rend la même réponse.
     - Un travail servi par la clé de SON org n'a rien à réserver : `held: false`."""
     prise = _tentative_partagee(ctx, job_id)
-    if prise is None:
+    if prise is None or tours_au_cout.au_cout(prise.get("model")):
+        # Un modèle journalisé AU COÛT ne se réserve pas : son prix n'est connu qu'après.
         return {"ok": True, "held": False}
     try:
         r = tours.reserver_tour(tours.cle_du_tour(job_id, prise["attempts"], tour), prise["sub"],
@@ -912,6 +917,8 @@ def _regler_un_tour(ctx: ResolvedCtx, job_id: int, tour: int, usage: dict) -> di
     if prise is None:
         return {"ok": True, "metered": False}
     est = prise["cle_partagee"]
+    if tours_au_cout.au_cout(prise.get("model")):
+        return _journaliser_un_tour(job_id, tour, usage, postes, prise)
     try:
         r = tours.regler_tour(
             tours.cle_du_tour(job_id, prise["attempts"], tour), prise["sub"], prise["org_id"],
@@ -933,6 +940,42 @@ def _regler_un_tour(ctx: ResolvedCtx, job_id: int, tour: int, usage: dict) -> di
         return {"ok": True, "metered": False}
     return {"ok": True, "metered": True, "amount": r["amount"], "exceeded": r["exceeded"],
             "duplicate": not r["settled"]}
+
+
+def _journaliser_un_tour(job_id: int, tour: int, usage: dict, postes: dict,
+                         prise: dict) -> dict:
+    """Un appel au modèle d'une famille JOURNALISÉE AU COÛT (`tours_au_cout`), payé par une
+    clé partagée : le coût que le fournisseur a rendu (`usage_cost_usd`, USD) est écrit au
+    journal, une ligne par tour, et rien n'est tarifé ici.
+
+    - **Refusé** (422 `usage_unmeasured`) sans coût déclaré : le worker s'arrête plutôt que
+      de consommer une clé partagée dont personne ne saurait ce qu'elle a coûté.
+    - **Idempotent** : un tour déjà écrit ne l'est pas deux fois — `duplicate: true`.
+    - Un journal qu'on ne peut écrire refuse (503, le worker s'arrête, il rejouera)."""
+    cout = tours_au_cout.cout_declare(usage.get("usage_cost_usd"))
+    if cout is None:
+        raise AuthzDenied(422, "usage_unmeasured",
+                          "this model is billed on the cost the provider reports "
+                          "(`usage_cost_usd`): without it the call is not settled and the "
+                          "job stops.")
+    est = prise["cle_partagee"]
+    uid = tours.cle_du_tour(job_id, prise["attempts"], tour)
+    try:
+        r = tours_au_cout.journaliser_tour(
+            uid, model=prise["model"], sub=prise["sub"], org=prise["org_id"],
+            run_id=prise.get("run_id"), servi=usage.get("model"), cout_usd=cout,
+            tokens={k: v for k, v in postes.items() if v is not None},
+            key_mode=est.get("mode"),
+            meta={"runner_job_id": int(job_id), "attempt": prise["attempts"],
+                  "turn": int(tour)})
+    except Exception:
+        logger.exception("travail %s : tour %s NON journalisé (clé partagée `%s`)", job_id,
+                         tour, est.get("depot"))
+        raise AuthzDenied(503, budget.INDISPONIBLE, "The usage journal could not be "
+                          "written: stop, the call is journaled when it is reported "
+                          "again.") from None
+    return {"ok": True, "metered": True, "microdollars": r["microdollars"],
+            "duplicate": not r["journaled"]}
 
 
 def _clore_la_tentative(job_id: int, conclu: dict) -> None:

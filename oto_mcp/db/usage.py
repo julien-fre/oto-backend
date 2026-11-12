@@ -62,6 +62,22 @@ def increment_usage(sub: str, tool: str, amount: int = 1) -> int:
         return int(row["count"]) if row else 0
 
 
+def releve_existe(kind: str, tool: str, call_uid: str) -> bool:
+    """Is a journal line of nature `kind`, tool `tool` and `call_uid` already written in
+    the last two days? What keeps a settlement replayed by its writer from being written
+    twice (`tours_au_cout`). Bounded in time so it reads `idx_tool_calls_kind` (`kind`,
+    `created_at`): `call_uid` has no index, and a replay comes within minutes."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM tool_calls
+             WHERE kind = %s AND created_at > now() - interval '2 days'
+               AND tool = %s AND call_uid = %s
+             LIMIT 1
+            """, (kind, tool, call_uid)).fetchone()
+        return row is not None
+
+
 def insert_tool_call(row: dict) -> None:
     """Sink calllog (middleware inliné oto_mcp/calllog.py) : insère un row canonique (server, sub, email, tool,
     args, ok, error, duration_ms) + corrélation OTO-LOCALE (session_id, run_id ;

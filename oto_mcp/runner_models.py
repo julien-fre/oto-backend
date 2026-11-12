@@ -42,8 +42,8 @@ class Modele(NamedTuple):
     #: Propriété du modèle comme l'effort : un même id est servi par des dizaines d'hôtes,
     #: à des prix qui vont du simple au décuple et en quantifications différentes (fp4).
     #: Les épingler rend le tour PRÉVISIBLE — même qualité, et un prix borné par le plus
-    #: cher de la liste, celui auquel le barème le règle (jamais sous le coût). Vide = le
-    #: fournisseur route où il veut (toute autre famille).
+    #: cher de la liste (le tour est journalisé à SON coût réel, `tours_au_cout`). Vide =
+    #: le fournisseur route où il veut (toute autre famille).
     providers: tuple[str, ...] = ()
 
 
@@ -70,9 +70,9 @@ MODELES: tuple[Modele, ...] = (
     # `https://openrouter.ai/api/v1`. Placés APRÈS les familles d'avant : le défaut se dérive
     # du premier modèle servi, et un worker OpenRouter qui démarre ne le déplace pas.
     # Hôtes épinglés en fp8, jamais fp4 ni alias `~`, et de prix VOISINS (écart ≤ 11 %
-    # sur la liste du 12/11/2026) : le tour se règle au plus cher d'entre eux, donc une
-    # liste large vendrait au-dessus du coût l'hôte le moins cher. Un hôte qu'on ajoute
-    # ou retire ici re-dérive la ligne du barème chez le commerce. Le DERNIER hôte d'une
+    # sur la liste du 12/11/2026) : un tour sur la clé partagée est journalisé au coût
+    # qu'OpenRouter a rendu (`tours_au_cout`), aucune ligne de barème ne suit cette
+    # liste ; la garder serrée garde le coût d'un run prévisible. Le DERNIER hôte d'une
     # liste est un secours de capacité, moins cher que les autres sur l'entrée et la
     # sortie : `order` ne l'atteint que si les précédents refusent (429, panne).
     # Le raisonnement partage le plafond de complétion avec la réponse : chacun déclare

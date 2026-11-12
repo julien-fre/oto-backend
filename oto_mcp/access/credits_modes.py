@@ -48,7 +48,7 @@ def entrees() -> dict[tuple[Optional[str], str, str], str]:
     Absent or empty: none. Unreadable (syntax, mode, surface, a surface on a connector
     without turns) or named twice: raises, naming the item."""
     from .credits import _MODES
-    from .credits_tours import CONNECTEURS_DE_MODELE
+    from .credits_tours import MODELE_CONNECTOR
     # Names LITERAL: the inventory (`env_inventory.py`) finds its reads by the AST.
     lu = os.environ.get("OTO_CREDITS_MODE_FUNCTIONS", "")
     out: dict[tuple[Optional[str], str, str], str] = {}
@@ -68,10 +68,9 @@ def entrees() -> dict[tuple[Optional[str], str, str], str]:
         if surface is not None and surface not in SURFACES:
             raise ValueError(f"{_ENV_MODE_FONCTIONS}: {item!r} — unknown surface "
                              f"`{surface}`, one of {', '.join(SURFACES)}")
-        if surface is not None and connector not in CONNECTEURS_DE_MODELE:
+        if surface is not None and connector != MODELE_CONNECTOR:
             raise ValueError(f"{_ENV_MODE_FONCTIONS}: {item!r} — a surface names model "
-                             f"turns only (`<{'|'.join(sorted(CONNECTEURS_DE_MODELE))}>"
-                             ".<function>`)")
+                             f"turns only (`{MODELE_CONNECTOR}.<function>`)")
         if (surface, connector, function) in out:
             raise ValueError(f"{_ENV_MODE_FONCTIONS}: `{nom(surface, connector, function)}` "
                              "is named twice")

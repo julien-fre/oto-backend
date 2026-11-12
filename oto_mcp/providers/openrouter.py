@@ -16,8 +16,8 @@ from ._model import _c
 # `byo_org`: the ORGANIZATION's key — it pays for the turns, and a scheduled agent
 # outlives its author. `platform`: a SHARED key (the instance's) serves an org that
 # deposited none and that it is GRANTED to (`platform_key_open=False`: the grant is the
-# right), each model call reserved then settled under `openrouter.messages:<model>`
-# (`access/credits_tours`), for the commerce to bill back.
+# right), each model call journaled at the cost OpenRouter reported for it, unpriced
+# (`tours_au_cout`), for the commerce to bill back.
 CONNECTOR = _c(
     "openrouter", [], kind="credential", auth_modes={"byo_org", "platform"}, keyed=True,
     platform_key_open=False,
