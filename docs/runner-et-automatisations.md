@@ -1093,6 +1093,26 @@ plafond faisait lever toute reprise d'un run qui raisonne (relevé en revue).
 `max_output_tokens` et applique sa variable d'hôte ; un worker d'après lève sur un
 travail avec effort produit par un backend d'avant.
 
+
+### Les modèles ouverts via OpenRouter : une famille, des hôtes épinglés (12/11/2026)
+
+La famille `openrouter` (`runner_models`) sert des modèles ouverts — DeepSeek V4.1 Flash,
+DeepSeek V4 Pro, GLM-5.3, MiniMax M3 — par OpenRouter, en Chat Completions : un worker
+oto-runner `OTO_RUNNER_PROVIDER=openai` sur `OTO_RUNNER_OPENAI_BASE=https://openrouter.ai/api/v1`,
+dont l'hôte NOMME le dépôt `openrouter`. Le dépôt est un porteur de clé
+(`providers/openrouter.py`, `kind="credential"`) : la clé de l'org (`byo_org`), ou la clé
+partagée de l'instance accordée à l'org (`platform`, fermée), réservée puis réglée tour par
+tour sous `openrouter.messages:<modèle>` (`docs/credits-au-moment-de-l-appel.md`).
+
+Chaque modèle déclare, en plus de son effort et de son plafond de complétion, les hôtes
+OpenRouter AUTORISÉS (`Modele.providers`, slugs d'endpoint : `deepinfra/fp8`). Le travail
+les emporte (`charge` → `payload.providers`) et le worker les envoie en `provider.order` +
+`provider.only`, avec `data_collection: deny` : un même id est servi par des dizaines
+d'hôtes, à des prix qui vont du simple au décuple et en quantifications différentes —
+l'épingle rend le tour prévisible, et borne le prix au plus cher de la liste. Les modèles
+ouverts sont placés APRÈS les familles d'avant : le défaut proposé ne bouge pas tant qu'une
+famille antérieure est servie.
+
 ### Un agent tourne sur la clé de SON org — ou ne tourne pas (12/09/2026)
 
 La remise de clé (#874, ci-dessus) avait un envers que rien ne gardait : **une org

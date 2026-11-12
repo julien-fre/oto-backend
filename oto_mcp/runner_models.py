@@ -37,6 +37,14 @@ class Modele(NamedTuple):
     #: ⚠️ Un modèle qui RAISONNE (un effort autre que `none`) en déclare un : le worker
     #: lève sans lui (oto-runner `agent_llm_openai.plafond_de_sortie`).
     max_output_tokens: Optional[int] = None
+    #: Les hôtes OpenRouter AUTORISÉS pour ce modèle, dans l'ordre de préférence
+    #: (`provider.order` + `provider.only`, slugs d'endpoint OpenRouter : `deepinfra/fp8`).
+    #: Propriété du modèle comme l'effort : un même id est servi par des dizaines d'hôtes,
+    #: à des prix qui vont du simple au décuple et en quantifications différentes (fp4).
+    #: Les épingler rend le tour PRÉVISIBLE — même qualité, et un prix borné par le plus
+    #: cher de la liste, celui auquel le barème le règle (jamais sous le coût). Vide = le
+    #: fournisseur route où il veut (toute autre famille).
+    providers: tuple[str, ...] = ()
 
 
 #: ⚠️ L'ORDRE est la préférence : le modèle proposé par défaut est le premier
@@ -57,6 +65,29 @@ MODELES: tuple[Modele, ...] = (
     # par tour au plus. Même plafond que Medium : le raisonnement le partage avec la réponse.
     Modele("mistral-small-2603", "Mistral Small", "mistral", effort="high",
            max_output_tokens=16000),
+    # ⚠️ Les modèles OUVERTS servis par OpenRouter (famille `openrouter`, dépôt de clé du
+    # même nom) : la voie bon marché des agents hébergés, en Chat Completions sur
+    # `https://openrouter.ai/api/v1`. Placés APRÈS les familles d'avant : le défaut se dérive
+    # du premier modèle servi, et un worker OpenRouter qui démarre ne le déplace pas.
+    # Hôtes épinglés en fp8 ou au fournisseur d'origine, jamais fp4 ni alias `~` :
+    # la liste borne le prix réglé (le plus cher d'entre eux) et la quantification.
+    # Le raisonnement partage le plafond de complétion avec la réponse : chacun déclare
+    # le sien (`max_output_tokens`), comme les modèles Mistral qui raisonnent.
+    #
+    # DeepSeek V4.1 Flash (1017) : le modèle du banc « procédures réelles » — suit les
+    # procédures, s'arrête sur une donnée manquante, ~×0,2 le coût de Claude. Contexte 1M.
+    Modele("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "openrouter",
+           effort="medium", max_output_tokens=16000,
+           providers=("deepinfra/fp8", "stepfun/fp8", "streamlake/fp8", "deepseek")),
+    Modele("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "openrouter",
+           effort="medium", max_output_tokens=16000,
+           providers=("streamlake/fp8", "baidu/fp8", "gmicloud/fp8", "deepinfra/fp8")),
+    Modele("z-ai/glm-5.3", "GLM-5.3", "openrouter",
+           effort="medium", max_output_tokens=16000,
+           providers=("novita/fp8", "siliconflow/fp8", "gmicloud/fp8")),
+    Modele("minimax/minimax-m3", "MiniMax M3", "openrouter",
+           effort="medium", max_output_tokens=16000,
+           providers=("gmicloud/fp8", "deepinfra/fp8", "parasail/fp8", "minimax")),
     # ⚠️ L'ABONNEMENT de la personne (OTO-130), pas une clé : ces travaux tournent
     # dans SON sandbox, sur le programme Claude Code officiel où elle s'est
     # connectée elle-même. La famille est donc un dépôt qu'AUCUNE org ne dépose et
@@ -118,7 +149,8 @@ def charge(model: Optional[str]) -> dict:
     """Ce qu'un travail emporte de son modèle : `{model, model_family}`, plus
     `effort` et `max_output_tokens` (14/09/2026) SI le modèle catalogué les déclare —
     mistral-medium-2604 tourne en effort HAUT sous 16 000 jetons de complétion,
-    claude-haiku-4-5 sans effort. Une clé que le modèle ne déclare pas ne part pas.
+    claude-haiku-4-5 sans effort — et `providers`, les hôtes OpenRouter épinglés. Une clé
+    que le modèle ne déclare pas ne part pas.
 
     ⚠️ Un modèle que le catalogue ne connaît pas ne part PAS : sans famille, il
     atteindrait un worker quelconque qui tenterait de l'appeler chez un
@@ -132,6 +164,8 @@ def charge(model: Optional[str]) -> dict:
         charge["effort"] = m.effort
     if m.max_output_tokens:
         charge["max_output_tokens"] = m.max_output_tokens
+    if m.providers:
+        charge["providers"] = list(m.providers)
     return charge
 
 

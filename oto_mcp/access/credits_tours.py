@@ -6,7 +6,8 @@ the platform's, or the primary tenant's (`credits.rang_refacture`,
 sent, at its `max_tokens` of output — the only bound known before the call; the input
 and the cache are not reserved (no token count before the call) and settle as
 `exceeded` — then settled at the four token counts the provider answered, under the
-scale lines of `anthropic.messages:<model>`, one per unit. The MODEL is in the scale
+scale lines of `<family>.messages:<model>`, one per unit — `anthropic`, or `openrouter`
+for the open models brokered through OpenRouter (`CONNECTEURS_DE_MODELE`). The MODEL is in the scale
 key: models are not priced alike, and a turn is reserved at the price of the model its
 job names (`fonction_du_modele`). The scale and the payer are the budget's
 (`access/credits`); the mode is that of the model's function as called from the turn's
@@ -31,6 +32,11 @@ from . import credits_modes as modes
 logger = logging.getLogger(__name__)
 
 MODELE_CONNECTOR = "anthropic"
+#: The model FAMILIES whose calls on a shared key are reserved and settled turn by turn,
+#: each under its own connector in the scale (`<family>.messages:<model>`): the family IS
+#: the key depot (`runner_models`), hence the connector the commerce prices and pauses.
+#: `anthropic` stays the connector of a call that names no model (the copilot's history).
+CONNECTEURS_DE_MODELE = frozenset({MODELE_CONNECTOR, "openrouter"})
 #: The scale function of a model call: `messages:<model>`.
 PREFIXE_DES_MODELES = "messages:"
 _DATE = re.compile(r"-\d{8}$")
@@ -75,6 +81,16 @@ def cle_du_modele(model: str) -> str:
     return _DATE.sub("", model.strip())
 
 
+def connecteur_du_modele(model: Optional[str]) -> str:
+    """The scale connector of a call to `model`: its catalogue family when that family is
+    billed per turn (`CONNECTEURS_DE_MODELE`), else `anthropic` — the connector every turn
+    was priced under before a second family existed, so a job without a catalogued model
+    reads exactly what it read before."""
+    from .. import runner_models
+    f = runner_models.famille(model)
+    return f if f in CONNECTEURS_DE_MODELE else MODELE_CONNECTOR
+
+
 def fonction_du_modele(model: Optional[str]) -> Optional[str]:
     """`messages:<model>`, the scale function of a call to `model`; None without one."""
     if not model or not model.strip():
@@ -86,10 +102,10 @@ def fonctions_connues(connector: str) -> frozenset[str]:
     """The functions of `connector` the scale can price: a model call of the catalogue
     (`messages:<model>`, `fonction_du_modele`) for the model connector, a
     function with a declared cost for any other. Empty: an unknown connector."""
-    if connector == MODELE_CONNECTOR:
+    if connector in CONNECTEURS_DE_MODELE:
         from .. import runner_models
         return frozenset(fonction_du_modele(m.id) for m in runner_models.MODELES
-                         if m.family == MODELE_CONNECTOR)
+                         if m.family == connector)
     from oto.connectors.declared import DECLARED
     return frozenset(f for f, d in DECLARED.get(connector, {}).items() if "cost" in d)
 
@@ -125,7 +141,8 @@ def mode_du_modele(model: Optional[str], surface: str) -> str:
     """The budget mode of a call to `model` from `surface` (`credits_modes.mode_de` on
     its scale function); a job that names no model reads the mode of `messages:`
     itself."""
-    return modes.mode_de(MODELE_CONNECTOR, fonction_du_modele(model) or PREFIXE_DES_MODELES,
+    return modes.mode_de(connecteur_du_modele(model),
+                         fonction_du_modele(model) or PREFIXE_DES_MODELES,
                          surface)
 
 
@@ -160,12 +177,13 @@ def sous_le_plancher(sub: Optional[str], org: Optional[int],
             if m == "enforce" else None)
 
 
-def _lignes_du_modele(lignes: dict, fonction: Optional[str]) -> Optional[dict]:
-    """`{unit: (budget, per_n)}` for the four units, or None if one is missing (or the
-    job names no model)."""
+def _lignes_du_modele(lignes: dict, fonction: Optional[str],
+                      connector: str = MODELE_CONNECTOR) -> Optional[dict]:
+    """`{unit: (budget, per_n)}` for the four units under `connector`, or None if one is
+    missing (or the job names no model)."""
     if fonction is None:
         return None
-    out = {u: lignes.get((MODELE_CONNECTOR, fonction, u)) for u in UNITES_DU_MODELE}
+    out = {u: lignes.get((connector, fonction, u)) for u in UNITES_DU_MODELE}
     return None if any(v is None for v in out.values()) else out
 
 
@@ -183,14 +201,15 @@ def reserver_tour(uid: str, sub: str, org: Optional[int], max_tokens: int,
     try:
         lu = budget._relire()
         fonction = fonction_du_modele(model)
-        lignes = _lignes_du_modele(lu["lignes"], fonction)
+        connecteur = connecteur_du_modele(model)
+        lignes = _lignes_du_modele(lu["lignes"], fonction, connecteur)
         if lignes is None:
             nom = fonction or f"{PREFIXE_DES_MODELES}(no model)"
             limite_refus_top.noter_credits(
-                f"unpriced:{MODELE_CONNECTOR}.{nom}",
+                f"unpriced:{connecteur}.{nom}",
                 budget.payeur(sub, org, lu["personnes"]), m, time.time())
             logger.warning("crédits (%s) : %s.%s sans ses quatre lignes au barème v%s "
-                           "— %s", m, MODELE_CONNECTOR, nom, lu["version"],
+                           "— %s", m, connecteur, nom, lu["version"],
                            "refusé" if m == "enforce" else "servi sans réservation")
             if m == "enforce":
                 raise TourRefuse(budget.SANS_BAREME, f"calls to the model `{model}` have "
@@ -200,7 +219,7 @@ def reserver_tour(uid: str, sub: str, org: Optional[int], max_tokens: int,
         reserve = budget._paquets(max_tokens, *lignes[_UNITE_RESERVEE])
         qui = budget.payeur(sub, org, lu["personnes"])
         r = db_credits.reserver(
-            call_uid=uid, payer=qui, connector=MODELE_CONNECTOR, function=fonction,
+            call_uid=uid, payer=qui, connector=connecteur, function=fonction,
             unit=_UNITE_RESERVEE, scale_version=lu["version"], quantity=max_tokens,
             reserved=reserve, deadline_s=budget.hold_max_s(), forcer=(m == "report"))
     except TourRefuse:
@@ -243,19 +262,22 @@ def regler_tour(uid: str, sub: str, org: Optional[int], tokens: dict,
     # The lines of the version the turn was reserved under, not today's.
     version = lu["version"] if hold is None else int(hold["scale_version"])
     fonction = fonction_du_modele(model) if hold is None else hold["function"]
+    # The connector the turn was reserved under, as its function: a hold says it back.
+    connecteur = (connecteur_du_modele(model) if hold is None
+                  else hold.get("connector") or MODELE_CONNECTOR)
     hold_lignes = _lignes_du_modele(lu["lignes"] if version == lu["version"] else {
         (l["connector"], l["function"], l["unit"]): (int(l["budget"]), int(l["per_n"]))
-        for l in db_credits.lignes_du_bareme(version)}, fonction)
+        for l in db_credits.lignes_du_bareme(version)}, fonction, connecteur)
     if hold_lignes is None:
         logger.warning("crédits : tour %s non réglé — %s.%s sans ses quatre lignes au "
-                       "barème v%s", uid, MODELE_CONNECTOR, fonction, version)
+                       "barème v%s", uid, connecteur, fonction, version)
         return None
     if hold is None:
         sortie = int(tokens[_UNITE_RESERVEE])
         hold = {"reserved": budget._paquets(sortie, *hold_lignes[_UNITE_RESERVEE])}
         db_credits.reserver(
             call_uid=uid, payer=budget.payeur(sub, org, lu["personnes"]),
-            connector=MODELE_CONNECTOR, function=fonction, unit=_UNITE_RESERVEE,
+            connector=connecteur, function=fonction, unit=_UNITE_RESERVEE,
             scale_version=version, quantity=sortie, reserved=hold["reserved"],
             deadline_s=budget.hold_max_s(), forcer=True)
     montant = sum(budget._paquets(int(tokens[u]), *hold_lignes[u])
