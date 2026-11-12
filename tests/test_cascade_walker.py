@@ -68,7 +68,7 @@ def test_non_shareable_skips_group_and_org():
 def test_byo_org_only_provider_has_no_member_rung():
     # http : byo_org seul → pas de credential membre par construction (la lecture
     # du coffre lèverait) — trou « un http par département » (2026-07-05).
-    win = access.cascade_winner("u1", "http", org=1, group=None,
+    win = access.cascade_winner("u1", "api", org=1, group=None,
                                 probe=probe(member=True, org=True))
     assert win is not None and win.mode == "org"
 

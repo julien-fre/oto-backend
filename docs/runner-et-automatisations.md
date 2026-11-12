@@ -3464,7 +3464,7 @@ chaîne. Sous un jeton de délégation, tout ce qui passe par `_exiger_la_porte`
 porteur en clair) sont refusés, avant tout autre jugement — même pour le propriétaire.
 Et un connecteur n'appelle plus l'instance elle-même (`egress.check_url`, voir
 `connector-vault.md` §Egress) : un porteur obtenu ailleurs ne s'emploie pas par
-`http_post`.
+`api_post`.
 
 **Au run.** Une recette-code est jugée avant son premier appel
 (`outils_du_travail.manquants`) : un seul reçu `code: tool_not_in_job`, `missing_tools`

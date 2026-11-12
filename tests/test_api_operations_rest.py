@@ -3,7 +3,7 @@ l'adaptateur (`_datastore_rest.call`) : query, corps, refus de champ inconnu, au
 handler.
 
 Même partage de droits que la clé de l'org (`orgs/secrets.py`) : un membre LIT, seul
-un administrateur de l'org ÉCRIT ou IMPORTE. Sans compte `http` pour ce nom : 404.
+un administrateur de l'org ÉCRIT ou IMPORTE. Sans compte `api` pour ce nom : 404.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ OP = {"name": "list_teams", "description": "List the teams.", "method": "GET",
 
 @pytest.fixture()
 def org(monkeypatch):
-    """L'org #35 a un compte `http` nommé `paie` ; u-admin l'administre, u-membre
+    """L'org #35 a un compte `api` nommé `paie` ; u-admin l'administre, u-membre
     n'en est que membre, u-dehors n'en est pas."""
     etat = {"config": {"operations": [OP]}, "ecrit": []}
     monkeypatch.setattr(_authz.access, "get_user_role", lambda sub: "member")
@@ -35,7 +35,7 @@ def org(monkeypatch):
     monkeypatch.setattr(roles, "is_org_admin", lambda sub, o: sub == "u-admin" and o == ORG)
     monkeypatch.setattr(credentials_store, "list_accounts",
                         lambda et, eid, con: [{"account": "paie"}]
-                        if (et, eid, con) == ("org", str(ORG), "http") else [])
+                        if (et, eid, con) == ("org", str(ORG), "api") else [])
     monkeypatch.setattr(ci, "live_instance_config",
                         lambda ot, oid, con, acc="": {"id": 4, "config": etat["config"]}
                         if acc == "paie" else None)
@@ -48,7 +48,7 @@ def org(monkeypatch):
     # La carte de l'org (déchiffrée en mémoire) : clé, mode, et un nom affiché.
     monkeypatch.setattr(credentials_store, "get_credential_with_meta",
                         lambda et, eid, con, acc="": {
-                            "secret": credentials_store.pack_secret("http", CARTE),
+                            "secret": credentials_store.pack_secret("api", CARTE),
                             "meta": {"label": "Acme Payroll"}})
     return etat
 
@@ -133,10 +133,10 @@ def test_import_doc_path_lu_avec_l_auth_du_compte(org, monkeypatch):
               "token": "T", "doc_path": "/openapi.json"}
     monkeypatch.setattr(credentials_store, "get_credential_with_meta",
                         lambda et, eid, con, acc="": {
-                            "secret": credentials_store.pack_secret("http", champs)})
+                            "secret": credentials_store.pack_secret("api", champs)})
     monkeypatch.setattr(egress, "resolved_addresses", lambda h, p: {"93.184.216.34"})
     doc = {"openapi": "3.0.0", "paths": {"/teams": {"get": {"operationId": "listTeams"}}}}
-    with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
+    with patch("oto_mcp.tools.api.HttpConnectorClient") as cls:
         cls.return_value.get_raw.return_value = (json.dumps(doc).encode(), "application/json")
         code, out = _import("u-admin", {"source": "doc_path"})
     assert code == 200 and [o["name"] for o in out["operations"]] == ["list_teams"]
@@ -162,7 +162,7 @@ def test_l_export_ne_porte_aucun_champ_secret(org):
     from oto_mcp import providers
     code, out = _def_get("u-membre")
     assert code == 200
-    secrets = {f.name for f in providers.REGISTRY["http"].secret_fields if f.secret}
+    secrets = {f.name for f in providers.REGISTRY["api"].secret_fields if f.secret}
     assert secrets and not secrets & set(out)
     assert "SECRET-TOKEN" not in str(out)
     assert out["base_url"] == CARTE["base_url"] and out["header_name"] == "X-Key"

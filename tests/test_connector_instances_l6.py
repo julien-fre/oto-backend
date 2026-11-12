@@ -98,11 +98,11 @@ _LECTEURS_ADMIS = {
     # nomment un connecteur absent du catalogue (lecture seule, admin plateforme). Il ne
     # résout rien : aucune cascade, aucun coffre, aucune autorisation ne passe par lui.
     "connectors/orphelins.py",
-    # Les opérations décrites du connecteur `http` (« Custom API ») vivent dans la
+    # Les opérations décrites du connecteur `api` (« Custom API ») vivent dans la
     # `config` de l'instance. Ce module lit et écrit CETTE clé de config, en désignant
     # l'instance par le quadruplet du coffre que l'appelant lui donne — il ne résout
     # rien : la clé servie reste choisie par la cascade, sans lui.
-    "connectors/http_operations.py",
+    "connectors/api_operations.py",
     # #1499 (étape 3, L1) — la SOUS-INSTANCE d'un compte de messagerie : posée à sa
     # connexion et par la reprise, suivie à la fusion. Écrit des instances sans ligne
     # de coffre ; ne résout rien.
@@ -124,6 +124,9 @@ _LECTEURS_ADMIS = {
 _ECRIVAINS_DU_COFFRE = {
     "_upsert", "_delete", "clear_entity_credentials", "clear_connector_credentials",
     "rename_account", "rekey_personal_credentials",
+    # La copie d'un connecteur RENOMMÉ (`http` → `api`) : elle écrit la ligne neuve et
+    # recopie la définition de son instance, dans la transaction de la copie.
+    "copy_connector_rows",
 }
 
 # La table, et les symboles du module — chercher le CONCEPT, pas seulement le nom de

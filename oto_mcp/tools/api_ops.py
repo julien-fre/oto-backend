@@ -1,18 +1,18 @@
-"""`http` connector, second module: `http`, the READER of a Custom API (the pair's
-convention, `tests/test_convention_act.py`: `http` reads, `http_act` acts).
+"""`api` connector, second module: `api`, the READER of a Custom API (the pair's
+convention, `tests/test_convention_act.py`: `api` reads, `api_act` acts).
 
-`tools/http.py` reaches a configured API by raw path (`http_get`/`http_post`/`http_doc`,
+`tools/api.py` reaches a configured API by raw path (`api_get`/`api_post`/`api_doc`,
 the connector's tools from before the pair). This module adds what makes the connector
 usable for a tool we do not ship, without changing anything:
 
-- `http(op="setup_link")` — the link a person opens to connect the API THEMSELVES, the
+- `api(op="setup_link")` — the link a person opens to connect the API THEMSELVES, the
   key typed in the form. A raw secret is never an MCP argument (CLAUDE.md): the tool
   has no parameter that could carry one. Building a link writes nothing.
-- `http(op="list")` — the org's custom connectors, or one connector's saved definition
+- `api(op="list")` — the org's custom connectors, or one connector's saved definition
   (`custom_ops_definition`: label, description, constant headers, variables, actions),
-  stored on the credential's instance (`connectors/http_operations`).
+  stored on the credential's instance (`connectors/api_operations`).
 - everything that writes or reaches the API — calls, OpenAPI import, saving the
-  definition — is `http_act`, in `http_calls.py`.
+  definition — is `api_act`, in `api_calls.py`.
 
 The row whose definition is read or written is the one the cascade RESOLVES for the
 call (`_account`, team, org) — the same key the calls use.
@@ -28,9 +28,9 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, custom_ops, egress, links, roles, session_org
 from ..auth.hooks import current_user_sub_from_token
-from ..connectors import http_operations as store
+from ..connectors import api_operations as store
 from ..mcp_errors import McpError
-from ..providers.http import AUTH_MODES
+from ..providers.api import AUTH_MODES
 from .lecture import LECTURE
 
 # A header name is an RFC 9110 token — `api_key` (underscore) is one, and real APIs use it.
@@ -43,7 +43,7 @@ INSTRUCTIONS = (
     "vault. Never ask for the key in the conversation and never pass it to a tool. "
     "If a key was already pasted in a chat, ask them to revoke it at the provider and "
     "create a new one before connecting. Once saved, the API is reachable with "
-    "`http_get`/`http_post`, and by name with `http_act(op=\"call\")` once operations "
+    "`api_get`/`api_post`, and by name with `api_act(op=\"call\")` once operations "
     "are described.")
 
 
@@ -81,7 +81,7 @@ def setup_params(label: str, base_url: Optional[str], auth_mode: Optional[str],
             raise _bad("`base_url` is the API root only: no user, no `?query`, no `#` — "
                        "a key never travels in a link; it is typed in the form.")
         try:
-            egress.check_url(base_url.strip(), connector="http", field="base_url")
+            egress.check_url(base_url.strip(), connector="api", field="base_url")
         except egress.EgressRefused as e:
             raise _bad(str(e))
         out["base_url"] = base_url.strip().rstrip("/")
@@ -110,10 +110,10 @@ def _sub() -> str:
 def _resolved(account: Optional[str] = None):
     """The vault row the cascade serves for this call — `account` when given (an
     action resolved by name), else `_account`, team, org."""
-    rc = access.resolve_credential("http", want="byo", account=account)
+    rc = access.resolve_credential("api", want="byo", account=account)
     if rc.entity_type is None:
         raise _bad("http connector: no Custom API account of yours, your team's or your "
-                   "org's resolves — connect one first (`http(op=\"setup_link\")`).")
+                   "org's resolves — connect one first (`api(op=\"setup_link\")`).")
     return rc
 
 
@@ -154,20 +154,20 @@ def _require_admin(sub: str, rc) -> None:
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(name="http", annotations=LECTURE)
-    def http(op: Literal["list", "setup_link"] = "list",
+    @mcp.tool(name="api", annotations=LECTURE)
+    def api(op: Literal["list", "setup_link"] = "list",
              label: Optional[str] = None, base_url: Optional[str] = None,
              auth_mode: Optional[str] = None, header_name: Optional[str] = None,
              query_param: Optional[str] = None,
              doc_path: Optional[str] = None) -> dict:
         """Read the org's custom connectors (Custom API) — ops: `list`, `setup_link`.
-        Calls, import and changes: `http_act`.
+        Calls, import and changes: `api_act`.
 
         - `list` (default): without `_account`, every custom connector of the org
           (tools connected once for every member: account, label, description, action
           names) — start here. With `_account`: that connector's definition, its
           actions with their input schema. Call an action with
-          `http_act(op="call", operation=…, args={…})`.
+          `api_act(op="call", operation=…, args={…})`.
         - `setup_link`: a link to connect a tool that has no dedicated connector (a
           payroll, ERP or any SaaS with an API key) → `{url, prefilled,
           instructions}`. Send the url to the person who holds the key; they paste the
@@ -193,20 +193,20 @@ def register(mcp: FastMCP) -> None:
             params = setup_params(label, base_url, auth_mode, header_name, query_param,
                                   doc_path)
             org = access.current_org(sub)
-            url = links.connector_setup_link("http", sub=sub, org=org, **params)
+            url = links.connector_setup_link("api", sub=sub, org=org, **params)
             out = {"url": url, "prefilled": params, "instructions": INSTRUCTIONS}
             if url is None:
                 out["url_missing"] = links.raison_sans_lien("connectors", sub=sub, org=org)
             return out
-        refuse_foreign("http", op, setup, ())
+        refuse_foreign("api", op, setup, ())
         if session_org.current_call_account() is None:
             conns = _org_connectors(sub)
             if conns:
                 return {"connectors": [
                     {**{k: v for k, v in c.items() if k != "operations"},
                      "actions": [o["name"] for o in c["operations"]]} for c in conns],
-                    "next": "http(op=\"list\", _account=<account>) for an action's "
-                            "input; http_act(op=\"call\", operation=<action>, "
+                    "next": "api(op=\"list\", _account=<account>) for an action's "
+                            "input; api_act(op=\"call\", operation=<action>, "
                             "args={…}) to call it."}
         rc = _resolved()
         d = _definition(rc)

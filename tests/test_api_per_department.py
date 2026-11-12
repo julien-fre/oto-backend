@@ -1,7 +1,7 @@
 """Cas MM « un connecteur http par département » (feedback #183, ADR 0038).
 
 La différenciation des droits tombe PAR CONSTRUCTION avec les secrets de GROUPE :
-chaque département pose SON credential `http` (base_url scopé /finance vs /sales),
+chaque département pose SON credential `api` (base_url scopé /finance vs /sales),
 et la résolution ne le sert qu'aux lecteurs du groupe. On prouve la chaîne :
 
 1. la cascade sert le credential du groupe de l'appel (`group=` co-pose org+groupe,
@@ -26,16 +26,16 @@ def dept(monkeypatch):
     """Deux départements, chacun son credential http (base_url scopé)."""
     monkeypatch.setattr(access, "current_org", lambda sub: ORG)
     from oto_mcp import org_store
-    # `http` est multi-compte depuis #409 (credential multi-champs) : les paliers
+    # `api` est multi-compte depuis #409 (credential multi-champs) : les paliers
     # partagés passent par la sélection de compte, donc les seams prennent le
     # segment `account` (ici la ligne mono '' de chaque département).
     monkeypatch.setattr(org_store, "get_org_secret",
                         lambda org, prov, account="": None)  # pas de secret ORG
     vault = {
-        (FINANCE, "http"): pack_secret("http", {
+        (FINANCE, "api"): pack_secret("api", {
             "base_url": "https://acme-bridge.oto.zone/finance", "auth_mode": "bearer",
             "token": "TOK-FIN"}),
-        (SALES, "http"): pack_secret("http", {
+        (SALES, "api"): pack_secret("api", {
             "base_url": "https://acme-bridge.oto.zone/sales", "auth_mode": "bearer",
             "token": "TOK-SALES"}),
     }
@@ -48,12 +48,12 @@ def dept(monkeypatch):
 
 
 def _resolve_under_group(gid):
-    """Résout http comme le ferait un appel `http_get(group=<gid>)` : le jeton
+    """Résout http comme le ferait un appel `api_get(group=<gid>)` : le jeton
     co-pose l'org et le groupe (déjà gardé can_read_group à la pose par l'axe)."""
     t_org = session_org.set_call_org(ORG)
     t_grp = session_org.set_call_group(gid)
     try:
-        return access._resolve_credential_impl("http", "byo", "u")
+        return access._resolve_credential_impl("api", "byo", "u")
     finally:
         session_org.reset_call_group(t_grp)
         session_org.reset_call_org(t_org)
@@ -76,7 +76,7 @@ def test_no_group_context_no_department_credential(dept, monkeypatch):
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError, match="credential configured"):
-        access._resolve_credential_impl("http", "byo", "u")
+        access._resolve_credential_impl("api", "byo", "u")
 
 
 def test_instance_ref_group_guard_refuses_non_reader(monkeypatch):
@@ -85,7 +85,7 @@ def test_instance_ref_group_guard_refuses_non_reader(monkeypatch):
     from oto_mcp.mcp_errors import McpError
     from oto_mcp import roles
     monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: False)
-    ref = instance_refs.parse_ref(instance_refs.make_group_ref(FINANCE, "http"))
+    ref = instance_refs.parse_ref(instance_refs.make_group_ref(FINANCE, "api"))
     with pytest.raises(McpError, match="group"):
         access.guard_instance_access("intrus", ref)
 
@@ -97,9 +97,9 @@ def test_projection_org_admin_sees_all_departments(monkeypatch):
     from oto_mcp.capabilities.connectors import instances as ci
     from oto_mcp.capabilities._types import ResolvedCtx
 
-    rows = {str(FINANCE): [{"connector": "http", "account": "", "secret_kind": "fields",
+    rows = {str(FINANCE): [{"connector": "api", "account": "", "secret_kind": "fields",
                             "set_by": "adm", "set_at": "x", "meta": {"label": "MM Finance"}}],
-            str(SALES): [{"connector": "http", "account": "", "secret_kind": "fields",
+            str(SALES): [{"connector": "api", "account": "", "secret_kind": "fields",
                           "set_by": "adm", "set_at": "x", "meta": {"label": "MM Sales"}}]}
     monkeypatch.setattr(ci.credentials_store, "list_credentials",
                         lambda et, eid: rows.get(eid, []) if et == "group" else [])

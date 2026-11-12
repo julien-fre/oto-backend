@@ -1,4 +1,4 @@
-"""Un succès au corps non JSON reste un SUCCÈS sur `http_get`, `http_post`, `http_doc`.
+"""Un succès au corps non JSON reste un SUCCÈS sur `api_get`, `api_post`, `api_doc`.
 
 Vu en vrai sur une API publique : un 2xx rend « Pet deleted » sous un type JSON, le
 client d'oto-core lève alors une erreur de décodage. La traduire en échec ferait
@@ -15,7 +15,7 @@ import requests
 from fastmcp import FastMCP
 
 from oto_mcp import egress
-from oto_mcp.tools import http as H
+from oto_mcp.tools import api as H
 
 CARTE = {"base_url": "https://api.acme.test", "auth_mode": "bearer", "token": "T",
          "doc_path": "/openapi.json"}
@@ -47,9 +47,9 @@ def amont(monkeypatch):
 
 
 @pytest.mark.parametrize("appel", [
-    ("http_get", {"path": "/pet/1"}),
-    ("http_post", {"path": "/pet", "body": {"name": "x"}}),
-    ("http_doc", {}),
+    ("api_get", {"path": "/pet/1"}),
+    ("api_post", {"path": "/pet", "body": {"name": "x"}}),
+    ("api_doc", {}),
 ])
 def test_un_succes_non_json_est_un_succes(outils, amont, appel):
     nom, kw = appel
@@ -59,12 +59,12 @@ def test_un_succes_non_json_est_un_succes(outils, amont, appel):
 
 def test_un_long_corps_est_borne_et_le_dit(outils, amont):
     amont["corps"] = b"x" * (H.NON_JSON_MAX + 10)
-    out = outils("http_get")(path="/a")
+    out = outils("api_get")(path="/a")
     assert len(out["non_json_body"]) == H.NON_JSON_MAX and out["truncated"] is True
 
 
-@pytest.mark.parametrize("nom, kw", [("http_get", {"path": "/pet/1"}),
-                                     ("http_post", {"path": "/pet", "body": {}})])
+@pytest.mark.parametrize("nom, kw", [("api_get", {"path": "/pet/1"}),
+                                     ("api_post", {"path": "/pet", "body": {}})])
 def test_un_corps_json_garde_sa_forme(outils, amont, nom, kw):
     amont["corps"] = b'{"id": 1, "name": "rex"}'
     assert outils(nom)(**kw) == {"id": 1, "name": "rex"}
@@ -74,4 +74,4 @@ def test_un_echec_amont_reste_un_echec(outils, amont):
     from oto_mcp.mcp_errors import McpError
     amont["corps"], amont["statut"] = b"not found", 404
     with pytest.raises(McpError, match="HTTP 404"):
-        outils("http_get")(path="/pet/1")
+        outils("api_get")(path="/pet/1")

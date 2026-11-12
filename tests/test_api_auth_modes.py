@@ -1,4 +1,4 @@
-"""Les champs du connecteur `http` sont déclarés PAR mode d'auth (oto-backend#449).
+"""Les champs du connecteur `api` sont déclarés PAR mode d'auth (oto-backend#449).
 
 Deux défauts gravés ici :
 - douze champs affichés quel que soit le mode, alors que `bearer` en sert trois ;
@@ -13,7 +13,7 @@ import pytest
 from oto.tools.http import AUTH_MODES as CORE_AUTH_MODES, build_auth
 
 from oto_mcp import credentials_store
-from oto_mcp.providers.http import AUTH_MODES, CONNECTOR
+from oto_mcp.providers.api import AUTH_MODES, CONNECTOR
 
 BASE = {"base_url": "https://api.acme.test"}
 
@@ -62,7 +62,7 @@ def test_none_ne_demande_aucun_secret():
 
 def test_doc_path_est_optionnel_et_pertinent_quel_que_soit_le_mode():
     """`doc_path` n'est pas un secret, n'est requis dans aucun mode, et vaut pour
-    tous : le tool `http_doc` ne dépend pas de auth_mode."""
+    tous : le tool `api_doc` ne dépend pas de auth_mode."""
     for mode in AUTH_MODES:
         fields = CONNECTOR.fields_for({"auth_mode": mode})
         by_name = {f.name: f for f in fields}
@@ -91,33 +91,33 @@ def test_header_sans_header_name_est_refuse_a_lecriture():
     """Le cas nommé de l'issue : `ok: true` puis échec au premier appel réel."""
     with pytest.raises(credentials_store.CredentialFieldsInvalid) as e:
         credentials_store.validate_fields(
-            "http", {**BASE, "auth_mode": "header", "token": "T"})
+            "api", {**BASE, "auth_mode": "header", "token": "T"})
     assert e.value.code == "missing_credentials"
     assert "Header name" in e.value.message
 
 
 def test_un_mode_mal_orthographie_est_refuse_avec_le_jeu_attendu():
     with pytest.raises(credentials_store.CredentialFieldsInvalid) as e:
-        credentials_store.validate_fields("http", {**BASE, "auth_mode": "hedaer"})
+        credentials_store.validate_fields("api", {**BASE, "auth_mode": "hedaer"})
     assert e.value.code == "invalid_field_value"
     assert "bearer" in e.value.message and "hedaer" in e.value.message
 
 
 def test_bearer_naccepte_pas_dechapper_au_token():
     with pytest.raises(credentials_store.CredentialFieldsInvalid) as e:
-        credentials_store.validate_fields("http", {**BASE, "auth_mode": "bearer"})
+        credentials_store.validate_fields("api", {**BASE, "auth_mode": "bearer"})
     assert "Token" in e.value.message
 
 
 def test_une_saisie_coherente_passe():
     kept = credentials_store.validate_fields(
-        "http", {**BASE, "auth_mode": "bearer", "token": "T"})
+        "api", {**BASE, "auth_mode": "bearer", "token": "T"})
     assert kept == {**BASE, "auth_mode": "bearer", "token": "T"}
 
 
 def test_les_champs_hors_mode_ne_sont_pas_stockes():
     """Repasser d'oauth2 à bearer ne laisse pas un `client_secret` mort au coffre."""
-    kept = credentials_store.validate_fields("http", {
+    kept = credentials_store.validate_fields("api", {
         **BASE, "auth_mode": "bearer", "token": "T",
         "client_secret": "VIEUX", "token_url": "https://old.test/token"})
     assert "client_secret" not in kept and "token_url" not in kept

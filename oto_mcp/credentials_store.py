@@ -2051,9 +2051,12 @@ def suivre_les_accords_recus(conn, old_sub: str, new_sub: str) -> int:
     return len(rows)
 
 
-def copy_connector_rows(old: str, new: str) -> dict:
+def copy_connector_rows(old: str, new: str, *, with_instance: bool = False) -> dict:
     """COPIES every vault row of connector `old` to connector `new` — when a card hands
-    its credential over to a carrier (`sharepoint` → `microsoft`).
+    its credential over to a carrier (`sharepoint` → `microsoft`), or when a connector is
+    RENAMED (`http` → `api`, `with_instance=True`: the new row's instance also takes the
+    old one's `config`, `label` and `visibility` — the custom connector's definition
+    lives there, `connector_instances.copy_instance_definition`).
 
     A copy and not a move: the base is SHARED by prod and preprod, and the code still
     served on one of them reads `old` until its tag — moving would cut it off. Removing
@@ -2097,6 +2100,9 @@ def copy_connector_rows(old: str, new: str) -> dict:
                 continue
             meta = r["meta"] if isinstance(r["meta"], dict) else json.loads(r["meta"] or "{}")
             _upsert(conn, etype, eid, new, account, secret, r["set_by"], meta)
+            if with_instance:
+                connector_instances.copy_instance_definition(conn, etype, eid, old, new,
+                                                             account)
             update_meta(etype, eid, old, account, {"copied_to": new}, conn=conn)
             bilan["copied"] += 1
     return bilan

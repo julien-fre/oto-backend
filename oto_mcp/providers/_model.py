@@ -62,7 +62,7 @@ class CredentialField:
     # for this field. Empty (default) = the field applies whatever the discriminator —
     # so NOTHING CHANGES for the ~90 connectors that declare none.
     # When set, it says two things at once: the field is only DISPLAYED for these
-    # values, and its `required` only APPLIES there. E.g. `http`: `header_name` is
+    # values, and its `required` only APPLIES there. E.g. `api`: `header_name` is
     # required, but only with `auth_mode=header`. See `Connector.fields_for`.
     when: tuple[str, ...] = ()
     # CLOSED set of accepted values (a `select`, not a free field). Empty = free.
@@ -162,7 +162,7 @@ class Connector:
     #
     # ⚠️ The `"mount"` value (federation of a third-party MCP) was REMOVED on
     # 2026-09-09 along with the mechanism (ADR 0069): a remote service is joined through
-    # the generic `http` connector, or written as a native connector.
+    # the generic `api` connector, or written as a native connector.
     kind: str = "tools"
     # EXPLICIT input schema of the credential (generic multi-field model).
     # Empty → derived from secret_kind (see `secret_fields`). Set for
@@ -219,7 +219,7 @@ class Connector:
     # Empty = "compte". Published in the `auth` descriptor and displayed as-is.
     # French on purpose: the dashboard displays and inflects it.
     account_noun: str = ""
-    # Name of the field whose VALUE selects the others (`auth_mode` on `http`).
+    # Name of the field whose VALUE selects the others (`auth_mode` on `api`).
     # Empty (default) = flat-schema credential: all fields always apply.
     # When set, it enables `fields_for`: a form that only shows what
     # is useful, and a write-time validation that refuses an inconsistent mode instead of
@@ -464,7 +464,7 @@ class Connector:
             # knows the provider's vocabulary, not the screen.
             "account_noun": self.account_noun or "compte",
             # The field whose value selects the others, when there is one
-            # (`auth_mode` on `http`): the front does not need to know the connector
+            # (`auth_mode` on `api`): the front does not need to know the connector
             # to show only the useful fields — it reads `when` (#449).
             "field_discriminator": self.field_discriminator,
             # The hosted CHANNEL of this connector, when it carries one (unipile split

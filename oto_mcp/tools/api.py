@@ -1,15 +1,15 @@
-"""`http` connector — generic multi-auth HTTP client (secret IN the oto vault).
+"""`api` connector — generic multi-auth HTTP client (secret IN the oto vault).
 
 To be distinguished from the bridge (`tools/remote.py`, ADR 0034): the bridge forwards to a
 remote service that HOLDS the credential (custody outside the platform, M2M token);
 here oto holds the target API's secret (AES-encrypted vault, byo_org) and calls
-the API **directly**. The org configures on the HTTP card: `base_url`, `auth_mode`
+the API **directly**. The org configures on the Custom API card: `base_url`, `auth_mode`
 (bearer/header/query/basic/oauth2/none) + the mode's secret(s).
 
 Thin adapter (ADR 0037): the engine (auth + forward) lives in oto-core
 (`oto.tools.http`); here we resolve the org credential and translate errors
-into McpError. Three tools: `http_get` (read), `http_post` (POST with a JSON
-body — paginated search, writes), `http_doc` (the API's contract, if
+into McpError. Three tools: `api_get` (read), `api_post` (POST with a JSON
+body — paginated search, writes), `api_doc` (the API's contract, if
 the operator filled in `doc_path` on the card — e.g. `/openapi.json` for a
 bridge that exposes it behind the same auth as the rest).
 It is an "HTTP node" (like n8n/Zapier), but the destination is controlled:
@@ -31,12 +31,12 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from oto.tools.http import HttpConnectorClient
 
 from .. import access, egress
-from ..connectors import http_operations
+from ..connectors import api_operations
 from ..texte_tiers import cloture
 from .lecture import LECTURE
 from ..auth.hooks import current_user_sub_from_token
 
-log = logging.getLogger("oto_mcp.tools.http")
+log = logging.getLogger("oto_mcp.tools.api")
 TIMEOUT = 45
 
 # Excerpt of the upstream error body surfaced to the agent (oto-backend#449). 500
@@ -54,16 +54,16 @@ RETRYABLE_STATUSES = frozenset({429, 503})
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool(
-        name="http_get",
+        name="api_get",
         annotations=LECTURE,
         description=(
             "Read-only HTTP GET call to the API configured for your org "
-            "(`http` connector). `path` = path relative to the base_url (starts "
+            "(`api` connector). `path` = path relative to the base_url (starts "
             "with /). `params` = optional query params. The configured auth (bearer, "
             "API key, basic, oauth2) is injected automatically."
         ),
     )
-    def http_get(path: str, params: dict | None = None) -> dict:
+    def api_get(path: str, params: dict | None = None) -> dict:
         if not isinstance(path, str) or not path.startswith("/"):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
@@ -80,9 +80,9 @@ def register(mcp: FastMCP) -> None:
             raise _upstream_error(e)
 
     @mcp.tool(
-        name="http_post",
+        name="api_post",
         description=(
-            "HTTP POST call to the API configured for your org (`http` connector). "
+            "HTTP POST call to the API configured for your org (`api` connector). "
             "`path` = path relative to the base_url (starts with /). `body` = JSON "
             "body (dict/list). `params` = optional query params. The configured auth "
             "is injected automatically. Use for endpoints that require "
@@ -90,7 +90,7 @@ def register(mcp: FastMCP) -> None:
             "allowed to do depends on the target API."
         ),
     )
-    def http_post(path: str, body: dict | list | None = None,
+    def api_post(path: str, body: dict | list | None = None,
                   params: dict | None = None) -> dict:
         if not isinstance(path, str) or not path.startswith("/"):
             raise McpError(ErrorData(
@@ -108,16 +108,16 @@ def register(mcp: FastMCP) -> None:
             raise _upstream_error(e)
 
     @mcp.tool(
-        name="http_doc",
+        name="api_doc",
         description=(
             "Fetches the documentation of the API configured for your org "
-            "(`http` connector), if its operator filled in a `doc_path` route "
-            "on the HTTP card (e.g. an OpenAPI contract in JSON). No parameter: "
+            "(`api` connector), if its operator filled in a `doc_path` route "
+            "on the Custom API card (e.g. an OpenAPI contract in JSON). No parameter: "
             "the route comes from the config, never from the caller. Actionable error "
             "if `doc_path` is not set."
         ),
     )
-    def http_doc() -> dict:
+    def api_doc() -> dict:
         client = _client()
         doc_path = _require_doc_path(_resolve_fields())
         try:
@@ -131,17 +131,17 @@ def register(mcp: FastMCP) -> None:
 
 
 def _resolve_fields() -> dict:
-    """Raw fields of the org's `http` credential — same resolution as `_client()`,
-    split out so `http_doc` can read `doc_path` without rebuilding the client."""
+    """Raw fields of the org's `api` credential — same resolution as `_client()`,
+    split out so `api_doc` can read `doc_path` without rebuilding the client."""
     try:
-        return access.resolve_credential_fields("http")
+        return access.resolve_credential_fields("api")
     # noqa: SILENT — same declared debt as _client() (#424, verdict C)
     except Exception:
         return {}
 
 
 def _require_doc_path(fields: dict) -> str:
-    """The configured `doc_path`, or an actionable McpError — split out of `http_doc`
+    """The configured `doc_path`, or an actionable McpError — split out of `api_doc`
     to stay testable without an MCP context (same pattern as `_excerpt`)."""
     doc_path = (fields.get("doc_path") or "").strip()
     if not doc_path:
@@ -149,14 +149,14 @@ def _require_doc_path(fields: dict) -> str:
             code=INVALID_PARAMS,
             message=(
                 "http connector: no doc route configured for your org — "
-                "set `doc_path` on the dashboard's HTTP card (e.g. /openapi.json)."
+                "set `doc_path` on the dashboard's Custom API card (e.g. /openapi.json)."
             ),
         ))
     return doc_path
 
 
 def _client() -> HttpConnectorClient:
-    """Resolve the org's `http` credential and instantiate the oto-core client.
+    """Resolve the org's `api` credential and instantiate the oto-core client.
 
     Raises an actionable McpError if the org has not configured its connector or if
     the config is invalid (non-http(s) scheme, unknown mode, missing mode field).
@@ -180,7 +180,7 @@ def _client() -> HttpConnectorClient:
 def client_for(fields: dict, headers: dict | None = None) -> HttpConnectorClient:
     """THE oto-core client for these credential fields — the only place one is built,
     for the agent's calls (`client_from_fields`) as for the REST import of a `doc_path`
-    (`connectors/http_operations.fetch_doc_path_document`). The TWO destinations a
+    (`connectors/api_operations.fetch_doc_path_document`). The TWO destinations a
     card carries are guarded: the called base, and — in oauth2 mode — the token
     server, which goes out via `requests.post` from oto-core without passing through
     `base_url`. Guarding only the first would leave an entire outbound path outside the
@@ -192,17 +192,17 @@ def client_for(fields: dict, headers: dict | None = None) -> HttpConnectorClient
     if not base_url or not mode:
         raise ValueError("http connector not configured: `base_url` and `auth_mode` "
                          "are required on the Custom API card")
-    egress.check_url(base_url, connector="http", field="base_url")
+    egress.check_url(base_url, connector="api", field="base_url")
     token_url = (fields.get("token_url") or "").strip()
     if mode.lower() == "oauth2" and token_url:
-        egress.check_url(token_url, connector="http", field="token_url")
-    return http_operations.with_constant_headers(
+        egress.check_url(token_url, connector="api", field="token_url")
+    return api_operations.with_constant_headers(
         HttpConnectorClient(base_url, mode, fields, timeout=TIMEOUT), headers)
 
 
 def client_from_fields(f: dict, headers: dict | None = None) -> HttpConnectorClient:
     """The client for these credential fields, refusals translated into actionable
-    McpErrors — `_client()` for the call's credential, `http_act` for the row it
+    McpErrors — `_client()` for the call's credential, `api_act` for the row it
     resolved. Built by the single constructor, `client_for`; only the translation
     lives here."""
     if not (f.get("base_url") or "").strip() or not (f.get("auth_mode") or "").strip():
@@ -238,7 +238,7 @@ def non_json_success(e: "requests.JSONDecodeError") -> dict:
 def _excerpt(response) -> str:
     """The first characters of the upstream error body, cleanly truncated.
 
-    No attempt to guess the SHAPE of the body: `http` is BYO — the org calls
+    No attempt to guess the SHAPE of the body: `api` is BYO — the org calls
     the API it chose and no error schema is known. Extracting
     `error.message` would work for one family of APIs and discard the reason for
     all the others; we return the text as is, bounded."""

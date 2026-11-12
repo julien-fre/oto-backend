@@ -203,7 +203,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   `unipile`) ; `400 no_credential_form` = pas de champ de saisie, la connexion passe par
   un flux dédié (session de navigateur, consentement OAuth) ; `400 wrong_credential_scope`
   = il prend bien une clé, mais pas à ce palier — le refus **nomme le palier** qui
-  l'accepte (`http` : `scope=org`) et, pour le `POST` qui n'a pas de `scope`, la route
+  l'accepte (`api` : `scope=org`) et, pour le `POST` qui n'a pas de `scope`, la route
   qui la pose (`PUT /api/orgs/{id}/secrets/{provider}`). Autres refus :
   `400 missing_credentials`
   (le champ vide est NOMMÉ), `409 account_required` (pose anonyme là où des comptes nommés

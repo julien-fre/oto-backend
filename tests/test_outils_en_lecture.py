@@ -84,7 +84,7 @@ async def test_les_lectures_stripe_et_http_get_sont_declarees():
     synchronise par recette : ces outils ne font que lire chez leur fournisseur.
     `stripe_invoice` et `stripe_customer` restent non déclarés (brouillon, création)."""
     servis = {t.name: t for t in await _outils()}
-    for nom in ("http_get", "stripe_search", "stripe_subscription", "stripe_payment",
+    for nom in ("api_get", "stripe_search", "stripe_subscription", "stripe_payment",
                 "stripe_balance", "stripe_event"):
         assert en_lecture(servis[nom]), nom
     for nom in ("stripe_invoice", "stripe_customer", "stripe_catalog", "stripe_checkout"):
@@ -130,7 +130,7 @@ async def test_les_lectures_de_prospection_sont_declarees_en_lecture():
 async def test_aucun_outil_de_plateforme_ni_ecrivain_connu_n_est_declare():
     servis = {t.name: t for t in await _outils()}
     for nom in ("email_send", "slack_post_message", "gmail", "gmail_act", "outlook",
-                "outlook_act", "http_post",
+                "outlook_act", "api_post",
                 "lemlist_push_rows", "hubspot_push_rows", "routine_fire", "oto_call",
                 "data_write", "whatsapp_act", "telegram_act", "instagram_act",
                 "linkedin_unipile_act", "chat_act", "teams_act", "apollo_act",

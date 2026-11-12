@@ -605,6 +605,15 @@ def _prepare_database() -> None:
             ms_auth.copier_depuis_sharepoint()
     except Exception as e:
         logger.warning("microsoft_copy_from_sharepoint at boot failed: %s", e)
+    # Le connecteur Custom API s'appelle `api` (ex-`http`) : même COPIE re-chiffrée et
+    # additive du coffre, l'instance neuve reprenant la définition (opérations, en-têtes)
+    # de l'ancienne. Idempotente par marque.
+    try:
+        from .connectors import api_operations
+        with _timed("api_copy_from_http"):
+            api_operations.copier_depuis_http()
+    except Exception as e:
+        logger.warning("api_copy_from_http at boot failed: %s", e)
     # (Le backfill ADR 0044 §F R2 — clés plateforme legacy → instances scope PLATFORM —
     # a été RETIRÉ le 2026-07-28 : la fenêtre R2→R4 est close, `platform_keys` est droppée
     # par les migrations (`db/_init.py`) et les lectures passent par le coffre unifié. Il

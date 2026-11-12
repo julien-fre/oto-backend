@@ -2,7 +2,7 @@
 fois, puis appelé par nom, contre une VRAIE API publique et un VRAI PostgreSQL.
 
 Le parcours d'une cliente, sans un seul faux client : un admin d'org pose la carte
-`http` (vrai chemin de la pose d'org, vrai coffre), importe les actions depuis le
+`api` (vrai chemin de la pose d'org, vrai coffre), importe les actions depuis le
 document OpenAPI public de l'API, enregistre la définition (description, en-tête
 constant, variable), puis un agent découvre le connecteur, l'appelle par nom avec
 chaque verbe, en brut, et les refus (traversée, egress) tiennent. Cible : la démo
@@ -71,7 +71,7 @@ def base(pg_dsn):
 
 @pytest.fixture(scope="module")
 def monde(base):
-    """Une org, son admin, le connecteur `http` exposé (master ON)."""
+    """Une org, son admin, le connecteur `api` exposé (master ON)."""
     from oto_mcp import db, org_store
     from oto_mcp.connectors import activation
     u = uuid.uuid4().hex[:8]
@@ -79,7 +79,7 @@ def monde(base):
     db.upsert_user(admin, email=f"{admin}@example.test")
     org = org_store.create_org(f"Org {u}", created_by=admin)
     org_store.add_org_member(org, admin, "org_admin")
-    activation.set_activation("http", True, org_id=None, set_by=admin)
+    activation.set_activation("api", True, org_id=None, set_by=admin)
     return {"org": org, "admin": admin}
 
 
@@ -88,16 +88,16 @@ def agent(monde, monkeypatch):
     """Les coutures d'identité d'un appel MCP, et les vrais outils montés à nu."""
     from fastmcp import FastMCP
     from oto_mcp import access
-    from oto_mcp.tools import http as t_http, http_calls, http_ops
+    from oto_mcp.tools import api as t_http, api_calls, api_ops
     sub, org = monde["admin"], monde["org"]
     monkeypatch.setattr(t_http, "current_user_sub_from_token", lambda: sub)
-    monkeypatch.setattr(http_ops, "current_user_sub_from_token", lambda: sub)
+    monkeypatch.setattr(api_ops, "current_user_sub_from_token", lambda: sub)
     monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: sub)
     monkeypatch.setattr(access, "current_org", lambda s: org)
     monkeypatch.setattr(access, "current_group", lambda s: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda p: None)
     m = FastMCP("e2e")
-    for mod in (t_http, http_ops, http_calls):
+    for mod in (t_http, api_ops, api_calls):
         mod.register(m)
     return lambda name: asyncio.run(m.get_tool(name)).fn
 
@@ -122,7 +122,7 @@ def _poser_carte(monde, account: str, fields: dict):
     from oto_mcp.capabilities._types import ResolvedCtx
     from oto_mcp.capabilities.orgs import secrets as cap
     return cap._set_secret(ResolvedCtx(sub=monde["admin"], org_id=monde["org"]),
-                           cap.SetSecretInput(org_id=monde["org"], provider="http",
+                           cap.SetSecretInput(org_id=monde["org"], provider="api",
                                               account=account, fields=fields))
 
 
@@ -142,11 +142,11 @@ def test_le_parcours_complet(monde, agent, emis):
     assert _poser_carte(monde, "petstore", {
         "base_url": BASE, "auth_mode": "header", "header_name": "api_key",
         "token": "special-key", "label": "Pet Store"})["ok"]
-    [ligne] = cs.list_accounts("org", str(monde["org"]), "http")
+    [ligne] = cs.list_accounts("org", str(monde["org"]), "api")
     assert ligne["meta"]["label"] == "Pet Store"
 
     # 2. import depuis l'URL publique du document OpenAPI
-    imp = agent("http_act")(op="import", source="url", url=DOC)
+    imp = agent("api_act")(op="import", source="url", url=DOC)
     par_nom = {o["name"]: o for o in imp["operations"]}
     assert set(GARDEES) <= set(par_nom), sorted(par_nom)
     assert (par_nom["get_pet_by_id"]["method"], par_nom["get_pet_by_id"]["path"]) == \
@@ -165,7 +165,7 @@ def test_le_parcours_complet(monde, agent, emis):
                  "method": "GET", "path": "/pet/{id}",
                  "input": {"type": "object", "properties": {"id": {"type": "string"}},
                            "required": ["id"]}}
-    out = agent("http_act")(
+    out = agent("api_act")(
         op="set_definition",
         operations=[par_nom[n] for n in GARDEES] + [a_la_main],
         description="Swagger demo pet store: pets, orders, users.",
@@ -173,10 +173,10 @@ def test_le_parcours_complet(monde, agent, emis):
         variables={"petId": {"value": str(PET), "description": "the e2e pet"}})
     assert out["actions"] == [*GARDEES, "get_pet_text"]
     with pytest.raises(McpError, match="authenticates"):
-        agent("http_act")(op="set_definition", headers={"api_key": "x"})   # l'en-tête de la clé
+        agent("api_act")(op="set_definition", headers={"api_key": "x"})   # l'en-tête de la clé
 
     # 4. découverte : la liste de l'org, et `oto_connector(name=…)`
-    liste = agent("http")()
+    liste = agent("api")()
     [c] = liste["connectors"]
     assert (c["label"], c["account"], c["actions_count"]) == ("Pet Store", "petstore", 5)
     from oto_mcp.capabilities._types import ResolvedCtx
@@ -186,7 +186,7 @@ def test_le_parcours_complet(monde, agent, emis):
     assert trouve["custom_connector"]["label"] == "Pet Store"
     assert trouve["custom_connector"]["actions_count"] == 5
 
-    act = agent("http_act")
+    act = agent("api_act")
 
     def call(**kw):
         return act(op="call", **kw)
@@ -246,7 +246,7 @@ def test_le_parcours_complet(monde, agent, emis):
     try:
         n = len(emis)
         with pytest.raises(McpError, match="OTO_EGRESS_ALLOW|interne|internal"):
-            agent("http_act")(op="request", method="GET", path="/x")
+            agent("api_act")(op="request", method="GET", path="/x")
         assert len(emis) == n
     finally:
         reset(jeton)
@@ -258,7 +258,7 @@ def test_le_parcours_complet(monde, agent, emis):
                              path_params={"id": str(monde["org"])},
                              query=b"account=petstore", sub=monde["admin"])
     assert code == 200, export
-    secrets = {f.name for f in providers.REGISTRY["http"].secret_fields if f.secret}
+    secrets = {f.name for f in providers.REGISTRY["api"].secret_fields if f.secret}
     assert not secrets & set(export) and "special-key" not in str(export)
     assert (export["label"], export["base_url"], export["header_name"]) == \
         ("Pet Store", BASE, "api_key")

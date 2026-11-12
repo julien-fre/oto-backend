@@ -73,7 +73,7 @@ def test_unknown_connector_named_account_is_refused(monkeypatch):
 # --- 2. La règle de cardinalité ---------------------------------------------
 
 @pytest.mark.parametrize("name", ["slack", "silae", "stripe", "salesforce",
-                                  "zohodesk", "posthog", "http"])
+                                  "zohodesk", "posthog", "api"])
 def test_multi_field_credential_is_multi_account(name):
     """Un credential multi-champs porte N comptes comme une clé simple : la forme
     du credential n'est pas une raison de fournisseur."""

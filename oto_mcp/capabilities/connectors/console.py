@@ -308,7 +308,7 @@ CAPABILITIES += [
             "page where a PERSON connects it themselves — key form, OAuth button or hosted "
             "login — plus the fields they will be asked for and where to find the key: send "
             "them the `url`; never ask for a key in the chat, this op takes no secret; the "
-            "Custom API has its own, `http(op=\"setup_link\")`). Org admin, on "
+            "Custom API has its own, `api(op=\"setup_link\")`). Org admin, on "
             "`org_id`: op=force (install `name` in ONE `member`'s toolbox — refused, with the "
             "date, if they paused or removed it themselves; not an access grant) / recommend (set the org's KIT `connectors` as a whole list: the "
             "DIFFERENCE is installed for current members too, never over their own choice; [] "

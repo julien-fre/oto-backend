@@ -193,7 +193,7 @@ La face visuelle d'`oto_connector(op="setup_link")` (`tools/connector_app.py`, m
 handler, mêmes refus) : le nom du connecteur, le geste de la personne, et un bouton
 `OpenLink` vers la page du connecteur dans SON produit. Le bouton n'appelle aucun outil
 et n'écrit rien : la clé se saisit sur la page, jamais dans la carte ni dans la
-conversation. Un refus (nom inconnu, ambigu, `http`) devient une carte nommée ; un lien
+conversation. Un refus (nom inconnu, ambigu, `api`) devient une carte nommée ; un lien
 absent ne dessine pas de bouton et dit pourquoi. Deux canaux, comme les autres apps : le
 modèle reçoit le lien et les champs en texte. **Mise en page de la carte connecteur
 du produit** (front `connector-chat-card`) : logo, nom, pastille d'état (Not set up /

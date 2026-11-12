@@ -1,9 +1,9 @@
 """`sheets_spreadsheet op=write source=…` : un CSV qu'oto va chercher lui-même —
-typiquement servi par le connecteur `http` de l'appelant — écrit dans la feuille
+typiquement servi par le connecteur `api` de l'appelant — écrit dans la feuille
 sans que le modèle recopie une seule valeur.
 
 Ce qui est figé ici :
-- la source `http` passe par la MÊME fabrique que `http_get` (résolution de la
+- la source `api` passe par la MÊME fabrique que `api_get` (résolution de la
   clé, y compris une instance d'équipe épinglée sur le projet), en GET, sans suivre
   de redirection, et la clé ne sort jamais ;
 - `values` et `source` s'excluent ;
@@ -46,11 +46,11 @@ class _Rep:
 
 @pytest.fixture
 def connecteur_http(monkeypatch):
-    """Le VRAI client http d'oto-core, derrière la VRAIE fabrique de `http_get` :
+    """Le VRAI client http d'oto-core, derrière la VRAIE fabrique de `api_get` :
     seules la résolution de la clé (une instance d'équipe épinglée sur le projet) et
     la sortie réseau sont simulées."""
     from oto_mcp import access, egress
-    from oto_mcp.tools import http as H
+    from oto_mcp.tools import api as H
 
     resolutions = []
 
@@ -98,7 +98,7 @@ def _ecrire(**kwargs):
     return asyncio.run(fn(spreadsheet_id="s1", op="write", **kwargs))
 
 
-SOURCE = {"kind": "http", "path": "/ops/export.csv", "params": {"ids": "1,2"}}
+SOURCE = {"kind": "api", "path": "/ops/export.csv", "params": {"ids": "1,2"}}
 
 
 def test_un_csv_du_connecteur_http_part_type_sans_passer_par_le_modele(connecteur_http, feuille):
@@ -119,15 +119,15 @@ def test_un_csv_du_connecteur_http_part_type_sans_passer_par_le_modele(connecteu
 
 
 def test_la_cle_est_celle_que_resout_http_get(connecteur_http, feuille, monkeypatch):
-    """Même fabrique (`tools.http._client`) : la source ne résout pas la clé à sa
-    façon. `resolve_credential_fields("http")` est ce qui sert l'instance épinglée
-    par `_project` — y compris une instance d'équipe — à `http_get` comme ici."""
-    from oto_mcp.tools import http as H
+    """Même fabrique (`tools.api._client`) : la source ne résout pas la clé à sa
+    façon. `resolve_credential_fields("api")` est ce qui sert l'instance épinglée
+    par `_project` — y compris une instance d'équipe — à `api_get` comme ici."""
+    from oto_mcp.tools import api as H
     fabriques = []
     vraie = H._client
     monkeypatch.setattr(H, "_client", lambda: fabriques.append(1) or vraie())
     _ecrire(range="A1", source=SOURCE)
-    assert fabriques == [1] and connecteur_http["resolutions"] == ["http"]
+    assert fabriques == [1] and connecteur_http["resolutions"] == ["api"]
 
 
 def test_une_formule_ne_passe_que_sur_option(connecteur_http, feuille):
@@ -186,7 +186,7 @@ def test_un_csv_pas_en_utf8_est_refuse(connecteur_http, feuille):
 
 def test_un_chemin_absolu_est_refuse(feuille):
     with pytest.raises(McpError, match="path"):
-        _ecrire(range="A1", source={"kind": "http", "path": "https://ailleurs.test/x"})
+        _ecrire(range="A1", source={"kind": "api", "path": "https://ailleurs.test/x"})
 
 
 def test_une_redirection_ne_rend_pas_la_cle_de_sa_requete(connecteur_http, feuille):

@@ -1,4 +1,4 @@
-"""Registry declaration of the `http` connector.
+"""Registry declaration of the `api` connector.
 
 Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
 describe it). See `providers/_model.py` for the `Connector` contract.
@@ -17,30 +17,31 @@ from ._model import CredentialField, _c
 #
 # ⚠️ This comment announced "read-only (GET), anti-SSRF guard on
 # the host" until 2026-08-27 — TWO false claims (oto-backend#449): the
-# connector also carries `http_post`, and no SSRF guard existed. The second
+# connector also carries `api_post`, and no SSRF guard existed. The second
 # was then presented as intentional, on the grounds that the platform's egress
 # filtering compensated; it only blocks one range (link-local), loopback
 # and private ranges remained reachable. The guard now exists
-# in the code — `oto_mcp/egress.py`, called by `tools/http.py:_client()` —
+# in the code — `oto_mcp/egress.py`, called by `tools/api.py:_client()` —
 # and a legitimate internal destination is declared as a NAMED exception.
 # CLOSED set of auth modes. COPIED from `oto.tools.http.AUTH_MODES` — not imported:
 # the registry stays pure (no module-level runtime dependency, otherwise a missing
 # dep would remove the connector from the catalog instead of degrading it). The copy is
-# held by the `test_http_auth_modes.py` tripwire, which compares it to oto-core AND checks
+# held by the `test_api_auth_modes.py` tripwire, which compares it to oto-core AND checks
 # that the fields declared required per mode are EXACTLY the ones `build_auth` requires.
 AUTH_MODES = ("bearer", "header", "query", "basic", "oauth2", "none")
 
 CONNECTOR = _c(
-    "http", ["http"], auth_modes={"byo_org"}, secret_kind="fields",
+    "api", ["api"], auth_modes={"byo_org"}, secret_kind="fields",
     # Presented as "Custom API": the connector a person looks for when the tool they
-    # use (a payroll or ERP SaaS…) is not in the catalogue. The NAME stays `http` —
-    # tool names, vault rows and instance refs all carry it.
+    # use (a payroll or ERP SaaS…) is not in the catalogue. Named `http` until
+    # 12/11/2026: the old name and its tools refuse, naming `api`
+    # (`providers.CONNECTEURS_RENOMMES`, `outils_retires.RENOMMAGES_CONNECTEURS`).
     label="Custom API",
-    # The pair (`tests/test_convention_act.py`): `tools/http_ops.py` serves `http`
-    # (reads: custom connectors, definition, setup link), `tools/http_calls.py` serves
-    # `http_act` (calls, OpenAPI import, saving the definition). `tools/http.py` keeps
-    # the raw-path tools from before the pair (`http_get`/`http_post`/`http_doc`).
-    modules=("http", "http_ops", "http_calls"),
+    # The pair (`tests/test_convention_act.py`): `tools/api_ops.py` serves `api`
+    # (reads: custom connectors, definition, setup link), `tools/api_calls.py` serves
+    # `api_act` (calls, OpenAPI import, saving the definition). `tools/api.py` keeps
+    # the raw-path tools from before the pair (`api_get`/`api_post`/`api_doc`).
+    modules=("api", "api_ops", "api_calls"),
     # `auth_mode` SELECTS the other fields (oto-backend#449): a `bearer` form
     # need not show the six oauth2 and basic fields, and the write
     # refuses an inconsistent mode instead of accepting it then failing on the 1st call.
@@ -75,7 +76,7 @@ CONNECTOR = _c(
         CredentialField("doc_path", "Doc route", secret=False,
                         required=False,
                         help="path relative to base_url that returns the API's "
-                             "documentation (e.g. /openapi.json) — serves the `http_doc` tool, "
+                             "documentation (e.g. /openapi.json) — serves the `api_doc` tool, "
                              "when set. Same auth as the rest, no separate "
                              "public route"),
         CredentialField("token", "Token / API key", secret=True,

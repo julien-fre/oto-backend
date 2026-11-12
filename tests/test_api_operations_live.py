@@ -51,28 +51,28 @@ def live(pg_dsn):
 
 def _poser(account: str, token: str = "T1"):
     from oto_mcp import credentials_store as cs
-    secret = cs.pack_secret("http", {"base_url": "https://api.acme.test",
+    secret = cs.pack_secret("api", {"base_url": "https://api.acme.test",
                                      "auth_mode": "bearer", "token": token})
-    cs.set_credential("org", str(ORG), "http", secret, set_by=SUB, account=account)
+    cs.set_credential("org", str(ORG), "api", secret, set_by=SUB, account=account)
 
 
 def test_poser_lire_et_les_autres_cles_de_config_survivent(live):
-    from oto_mcp.connectors import http_operations as store
+    from oto_mcp.connectors import api_operations as store
     from oto_mcp.db import connector_instances as ci
     from oto_mcp.db._conn import _connect
     _poser("paie")
-    inst = ci.live_instance_config("org", str(ORG), "http", "paie")
+    inst = ci.live_instance_config("org", str(ORG), "api", "paie")
     assert inst is not None and store.load("org", str(ORG), "paie") == []
     with _connect() as c:
         c.execute("UPDATE connector_instances SET config = '{\"autre\": 1}'::jsonb "
                   "WHERE id = %s", (inst["id"],))
     assert store.save("org", str(ORG), "paie", [OP]) == [OP]
     assert store.load("org", str(ORG), "paie") == [OP]
-    assert ci.live_instance_config("org", str(ORG), "http", "paie")["config"]["autre"] == 1
+    assert ci.live_instance_config("org", str(ORG), "api", "paie")["config"]["autre"] == 1
 
 
 def test_la_rotation_de_la_cle_garde_les_operations(live):
-    from oto_mcp.connectors import http_operations as store
+    from oto_mcp.connectors import api_operations as store
     _poser("rot")
     store.save("org", str(ORG), "rot", [OP])
     _poser("rot", token="T2")
@@ -81,19 +81,19 @@ def test_la_rotation_de_la_cle_garde_les_operations(live):
 
 def test_le_renommage_du_compte_les_fait_suivre(live):
     from oto_mcp import credentials_store as cs
-    from oto_mcp.connectors import http_operations as store
+    from oto_mcp.connectors import api_operations as store
     _poser("avant")
     store.save("org", str(ORG), "avant", [OP])
-    cs.rename_account("org", str(ORG), "http", "avant", "apres")
+    cs.rename_account("org", str(ORG), "api", "avant", "apres")
     assert store.load("org", str(ORG), "apres") == [OP]
 
 
 def test_le_retrait_de_la_cle_archive_l_instance_et_ses_operations(live):
     from oto_mcp import credentials_store as cs
-    from oto_mcp.connectors import http_operations as store
+    from oto_mcp.connectors import api_operations as store
     _poser("retrait")
     store.save("org", str(ORG), "retrait", [OP])
-    cs.clear_credential("org", str(ORG), "http", account="retrait")
+    cs.clear_credential("org", str(ORG), "api", account="retrait")
     with pytest.raises(store.InstanceMissing):
         store.load("org", str(ORG), "retrait")
     with pytest.raises(store.InstanceMissing):
@@ -105,13 +105,13 @@ def test_la_definition_et_la_liste_de_l_org_sans_dechiffrer(live):
     personnalisés de l'org le lit sans déchiffrer ; une pose partielle de la définition
     garde le reste."""
     from oto_mcp import credentials_store as cs
-    from oto_mcp.connectors import http_operations as store
+    from oto_mcp.connectors import api_operations as store
     from oto_mcp.db import connector_instances as ci
-    secret, meta = cs.preparer_pose("org", str(ORG), "http", "malibou", fields={
+    secret, meta = cs.preparer_pose("org", str(ORG), "api", "malibou", fields={
         "base_url": "https://api.acme.test", "auth_mode": "bearer", "token": "T",
         "label": "Acme Payroll"})
     assert meta == {"label": "Acme Payroll"} and "Acme Payroll" not in secret
-    cs.set_credential("org", str(ORG), "http", secret, set_by=SUB, account="malibou",
+    cs.set_credential("org", str(ORG), "api", secret, set_by=SUB, account="malibou",
                       meta=meta)
     store.save_definition("org", str(ORG), "malibou", {"operations": [OP]})
     d = store.save_definition("org", str(ORG), "malibou",
@@ -120,5 +120,30 @@ def test_la_definition_et_la_liste_de_l_org_sans_dechiffrer(live):
     [c] = [c for c in store.org_connectors(ORG) if c["account"] == "malibou"]
     assert (c["label"], c["description"], c["actions_count"]) == \
         ("Acme Payroll", "Payroll.", 1)
-    iid = ci.live_instance_config("org", str(ORG), "http", "malibou")["id"]
+    iid = ci.live_instance_config("org", str(ORG), "api", "malibou")["id"]
     assert ci.configs_for_instance_ids([iid])[iid]["description"] == "Payroll."
+
+
+def test_le_coffre_de_l_ancien_nom_est_copie_avec_sa_definition(live):
+    """Le connecteur s'appelait `http` : au démarrage, ses lignes de coffre sont COPIÉES
+    sous `api` (re-chiffrées, l'AAD porte le nom), l'instance neuve reprend la définition
+    de l'ancienne, et la ligne `http` reste. Rejouée, la copie ne refait rien."""
+    from oto_mcp import credentials_store as cs
+    from oto_mcp.connectors import api_operations as store
+    from oto_mcp.db import connector_instances as ci
+    from oto_mcp.db._conn import _connect
+    secret = cs.pack_secret("api", {"base_url": "https://api.acme.test",
+                                     "auth_mode": "bearer", "token": "T-ancien"})
+    with _connect() as c:
+        cs._upsert(c, "org", str(ORG), "http", "ancienne", secret, SUB, {"label": "Paie"})
+        c.execute("UPDATE connector_instances SET config = %s::jsonb, label = 'Paie' "
+                  "WHERE owner_type = 'org' AND owner_id = %s AND connector = 'http' "
+                  "AND account = 'ancienne' AND revoked_at IS NULL",
+                  ('{"operations": [' + __import__("json").dumps(OP) + '], '
+                   '"description": "la paie"}', str(ORG)))
+    assert store.copier_depuis_http()["copied"] == 1
+    assert store.load("org", str(ORG), "ancienne") == [OP]
+    assert store.load_definition("org", str(ORG), "ancienne")["description"] == "la paie"
+    assert ci.live_instance_config("org", str(ORG), "http", "ancienne") is not None
+    assert cs.get_credential("org", str(ORG), "api", account="ancienne") == secret
+    assert store.copier_depuis_http() == {"copied": 0, "present": 0, "unreadable": 0}

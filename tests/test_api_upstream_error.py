@@ -8,7 +8,7 @@ borné et étiqueté non fiable, et `retryable` se dérive du seul code.
 """
 import requests
 
-from oto_mcp.tools.http import BODY_EXCERPT, _excerpt, _upstream_error
+from oto_mcp.tools.api import BODY_EXCERPT, _excerpt, _upstream_error
 
 
 def _http_error(status: int, body: str = "", *, unreadable: bool = False):
@@ -97,7 +97,7 @@ class _Redirige(ValueError):
 
 
 def test_une_redirection_refusee_dit_ou_elle_menait_et_quoi_faire():
-    from oto_mcp.tools.http import _value_error
+    from oto_mcp.tools.api import _value_error
 
     err = _value_error(_Redirige(302, "https://api.example.test/v2/x")).error
     assert "https://api.example.test/v2/x" in err.message
@@ -106,7 +106,7 @@ def test_une_redirection_refusee_dit_ou_elle_menait_et_quoi_faire():
 
 
 def test_une_autre_erreur_de_valeur_reste_telle_quelle():
-    from oto_mcp.tools.http import _value_error
+    from oto_mcp.tools.api import _value_error
 
     assert _value_error(ValueError("path must start with /")).error.message == \
         "path must start with /"
@@ -115,12 +115,12 @@ def test_une_autre_erreur_de_valeur_reste_telle_quelle():
 def test_une_redirection_refusee_ne_rend_ni_la_requete_ni_les_identifiants():
     """Un 3xx garde souvent la requête d'origine, où le connecteur injecte sa clé :
     le message rendu à l'agent (et journalisé) ne doit jamais la porter."""
-    from oto_mcp.tools import http
+    from oto_mcp.tools import api
 
-    err = http._value_error(_Redirige(
+    err = api._value_error(_Redirige(
         302, "https://u:pw@other.test:8443/v2/x?api_key=SECRET#f"))
     msg = err.error.message
     assert "SECRET" not in msg and "pw" not in msg
     assert "https://other.test:8443/v2/x" in msg
-    rel = http._value_error(_Redirige(301, "/v2/y?api_key=SECRET")).error.message
+    rel = api._value_error(_Redirige(301, "/v2/y?api_key=SECRET")).error.message
     assert "SECRET" not in rel and "/v2/y" in rel

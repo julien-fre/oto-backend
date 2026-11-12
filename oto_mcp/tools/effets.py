@@ -5,7 +5,7 @@ by op, with the batch an op that writes or sends may carry.
 direct MCP call: `middleware/call_context.py`; `oto_call` and recipes:
 `tools/meta.executer_cible`), the same for both (decision of 03/11/2026). It judges what
 the call does, and that cannot be guessed from a verb: an `add` that enrolls contacts in a
-sequence SENDS, a `set_*` that replaces DESTROYS, an `http_act` request destroys when its
+sequence SENDS, a `set_*` that replaces DESTROYS, an `api_act` request destroys when its
 `method` is DELETE. So it is written here, read and reviewed once, rather than inferred at
 call time. `tools/lecture.py` declares by WHOLE tool (`LECTURE` / `SIMULATION` / `ACTE`,
 for the MCP client); this table goes one level down, by `op`, for the server.
@@ -76,7 +76,7 @@ class EffetNonDeclare(LookupError):
     """A tool or an op this table does not declare: never presumed to read."""
 
 
-#: A judge decides the class from the ARGUMENTS when the op alone does not (`http_act`
+#: A judge decides the class from the ARGUMENTS when the op alone does not (`api_act`
 #: request: its `method`). It receives the op and the arguments and returns a class, or
 #: `None` to keep the declared one.
 Juge = Callable[[Optional[str], dict], Optional[str]]
@@ -97,27 +97,27 @@ _CLASSE_PAR_METHODE = {"GET": "lire", "HEAD": "lire", "POST": "envoyer", "PATCH"
 def _juge_http_act(op: Optional[str], args: dict) -> Optional[str]:
     """`request` does what its `method` does (none given: the declared doubt). `call` does
     what its SAVED action's method does, read in the database
-    (`http_calls.methode_de_l_action`): an unknown action raises, never a default."""
+    (`api_calls.methode_de_l_action`): an unknown action raises, never a default."""
     if op == "request":
         return _CLASSE_PAR_METHODE.get(str(args.get("method") or "").upper())
     if op == "call":
-        from .http_calls import methode_de_l_action
+        from .api_calls import methode_de_l_action
         methode = str(methode_de_l_action(args.get("operation"))).upper()
         if methode not in _CLASSE_PAR_METHODE:
-            raise EffetNonDeclare(f"`http_act` action `{args.get('operation')}`: "
+            raise EffetNonDeclare(f"`api_act` action `{args.get('operation')}`: "
                                   f"unknown method `{methode}`")
         return _CLASSE_PAR_METHODE[methode]
     return None
 
 
 JUGES: dict[str, Juge] = {
-    "http_act": _juge_http_act,
+    "api_act": _juge_http_act,
 }
 #: The judges that READ THE DATABASE, by tool and op: `effet()` on such a call is
 #: synchronous I/O — from an `async def`, run it off the event loop
 #: (`await run_in_threadpool(effet, name, args)`), as `lit_la_base()` tells.
 JUGES_EN_BASE: dict[str, frozenset[str]] = {
-    "http_act": frozenset({"call"}),
+    "api_act": frozenset({"call"}),
 }
 
 #: A tool that only RELAYS a call to another (`oto_call`): its effect is its target's,
@@ -484,9 +484,9 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "hithorizons_search_unstructured": "lire",
     "hithorizons_suggestions": "lire",
     # import only proposes candidate actions; call runs a saved action of any verb
-    "http_act": {"lire": "import", "detruire": "call request set_definition"},
-    "http_doc": "lire",
-    "http_post": "envoyer",
+    "api_act": {"lire": "import", "detruire": "call request set_definition"},
+    "api_doc": "lire",
+    "api_post": "envoyer",
     # add_members may also remove (remove_record_ids); copy_from moves up to 100 000 records
     "hubspot_list": {"lire": "search get members record_lists", "ecrire": "create restore", "detruire": "update delete add_members remove_members clear_members copy_from"},
     "hubspot_object": {"lire": "search list get associations", "ecrire": "create update add_note", "detruire": "delete merge"},
@@ -1539,8 +1539,8 @@ PAS_UN_LOT: dict[str, str] = {
     "gmail_act": "message_ids attachments",
     "granola_webhook_endpoint": "scopes events folder_ids",
     "hellostock_offre_update": "keywords",
-    "http_act": "body operations",
-    "http_post": "body",
+    "api_act": "body operations",
+    "api_post": "body",
     "hubspot_list": "remove_record_ids properties processing_types",
     "hubspot_object": "properties associations filters sorts merge_ids",
     "hubspot_property": "names",

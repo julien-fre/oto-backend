@@ -189,7 +189,7 @@ base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis p
   · ⚠️ la reprise inter-agents lit le **journal**, jamais le fil (`docs/runner-et-automatisations.md`).
 - **MCP Apps, veille** : `prefab_ui` rend les `*_app` (`docs/mcp-apps.md`, `docs/mcp-spec-watch.md`) · ⚠️ **la
   fédération MCP (`kind="mount"`) est RETIRÉE** (2026-09-09, ADR 0069, archive oto-enterprise) : trois connecteurs déclarés,
-  zéro vivant. Un service distant se joint par le connecteur `http` générique, ou s'écrit en connecteur natif —
+  zéro vivant. Un service distant se joint par le connecteur `api` générique (Custom API), ou s'écrit en connecteur natif —
   ce qu'est devenu `planity`. Ne pas la réintroduire sans remplacer l'ADR.
 
 ## Démarrage, silences & infra

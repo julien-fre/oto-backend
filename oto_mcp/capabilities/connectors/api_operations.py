@@ -1,4 +1,4 @@
-"""Capabilities "Custom API operations" — the org's REST face of the `http` connector's
+"""Capabilities "Custom API operations" — the org's REST face of the `api` connector's
 described operations (`custom_ops`), for the dashboard's Custom API page.
 
 Same permission split as the org's credential itself (`orgs/secrets.py`): any member
@@ -7,8 +7,8 @@ IMPORTS them — the same `ORG_ADMIN_OF` as setting the key. The row is the org'
 vault row for the named `account` (`""` = the single account); without one, 404:
 operations describe a connected API, never an absent one.
 
-The agent's face is `tools/http_ops.py` (row resolved by the cascade for the call);
-both go through `connectors/http_operations.py`, where the list is stored.
+The agent's face is `tools/api_ops.py` (row resolved by the cascade for the call);
+both go through `connectors/api_operations.py`, where the list is stored.
 """
 from __future__ import annotations
 
@@ -17,14 +17,14 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from ... import credentials_store, custom_ops, providers
-from ...connectors import http_operations as store
+from ...connectors import api_operations as store
 from .._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
-_PATH = "/api/orgs/{id}/connectors/http/operations"
-_DEF_PATH = "/api/orgs/{id}/connectors/http/definition"
+_PATH = "/api/orgs/{id}/connectors/api/operations"
+_DEF_PATH = "/api/orgs/{id}/connectors/api/definition"
 _DOC_ACCOUNT = ("Custom API account of the org (`\"\"` = the single account). "
                 "404 `http_credential_not_found` when the org has no such account.")
 
@@ -214,7 +214,7 @@ def _set_definition(ctx: ResolvedCtx, inp: DefinitionSetInput) -> dict:
 
 
 _NOT_FOUND = DeclaredError(404, "http_credential_not_found",
-                           "the org has no Custom API (`http`) credential for this account")
+                           "the org has no Custom API (`api`) credential for this account")
 
 CAPABILITIES += [
     Capability(

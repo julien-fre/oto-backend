@@ -1,11 +1,11 @@
-"""Where the `http` connector's described operations live, and where an import reads from.
+"""Where the `api` connector's described operations live, and where an import reads from.
 
-The operations of one `http` credential live in `connector_instances.config
+The operations of one `api` credential live in `connector_instances.config
 ["operations"]` of THE instance that names its vault row — designated by the vault's
-own quadruplet (owner type, owner id, `http`, account), never by anything else. The
-two faces go through here: the agent's tools (`tools/http_ops.py`, the row the
+own quadruplet (owner type, owner id, `api`, account), never by anything else. The
+two faces go through here: the agent's tools (`tools/api_ops.py`, the row the
 cascade resolved for the call) and the org's REST routes
-(`capabilities/connectors/http_operations.py`, the org's row for a named account).
+(`capabilities/connectors/api_operations.py`, the org's row for a named account).
 
 Nothing here resolves a credential: the caller hands over the row (and, to read the
 API's `doc_path`, its fields). The format and its validation are `custom_ops`; the
@@ -24,7 +24,7 @@ from ..db import connector_instances
 
 logger = logging.getLogger(__name__)
 
-CONNECTOR = "http"
+CONNECTOR = "api"
 CONFIG_KEY = "operations"
 # An API description worth importing fits well under this; beyond, it is not read.
 MAX_DOC_BYTES = 2 * 1024 * 1024
@@ -40,12 +40,30 @@ class ImportFailed(ValueError):
     """The source could not be read as an OpenAPI/Swagger JSON document."""
 
 
+#: The connector's name until 12/11/2026 (`providers.CONNECTEURS_RENOMMES`).
+ANCIEN_NOM = "http"
+
+
+def copier_depuis_http() -> dict:
+    """Boot step: COPIES the vault rows of the old name to `api`, each new instance
+    taking the old one's definition (`credentials_store.copy_connector_rows`,
+    `with_instance=True`). Additive — the old rows stay: prod and preprod share the
+    base, and the code served before the tag still reads `http`; removing them is a
+    later lot (`oto-mcp maintenance orphelins`). Idempotent: a copied row is marked.
+    The rest (selections, kits, tool lists) moves in the data revision
+    `20261112_1200_connecteur_api`."""
+    bilan = credentials_store.copy_connector_rows(ANCIEN_NOM, CONNECTOR, with_instance=True)
+    if any(bilan.values()):
+        logger.info("api: vault copied from %s — %s", ANCIEN_NOM, bilan)
+    return bilan
+
+
 def load(owner_type: str, owner_id: str, account: str = "") -> list[dict]:
     """The described operations of this vault row's instance (`[]` if none yet)."""
     inst = connector_instances.live_instance_config(owner_type, owner_id, CONNECTOR,
                                                     account)
     if inst is None:
-        raise InstanceMissing(f"no live `http` instance for account `{account}`")
+        raise InstanceMissing(f"no live `api` instance for account `{account}`")
     ops = (inst["config"] or {}).get(CONFIG_KEY)
     return ops if isinstance(ops, list) else []
 
@@ -54,14 +72,14 @@ def _instance(owner_type: str, owner_id: str, account: str) -> dict:
     inst = connector_instances.live_instance_config(owner_type, owner_id, CONNECTOR,
                                                     account)
     if inst is None:
-        raise InstanceMissing(f"no live `http` instance for account `{account}`")
+        raise InstanceMissing(f"no live `api` instance for account `{account}`")
     return inst
 
 
 def _write(owner_type: str, owner_id: str, account: str, patch: dict) -> None:
     inst = _instance(owner_type, owner_id, account)
     if not connector_instances.merge_instance_config(inst["id"], patch):
-        raise InstanceMissing(f"no live `http` instance for account `{account}`")
+        raise InstanceMissing(f"no live `api` instance for account `{account}`")
 
 
 def save(owner_type: str, owner_id: str, account: str, ops: Any) -> list[dict]:
@@ -105,7 +123,7 @@ def _summary(account: str, config: dict, meta_label: Optional[str] = None) -> di
 
 
 def org_connectors(org_id: int) -> list[dict]:
-    """The org's custom connectors, one per `http` account: `{account, label,
+    """The org's custom connectors, one per `api` account: `{account, label,
     description, logo_domain, actions_count}` — and `operations` (the full list), for
     the caller that resolves an action by name. Two queries, no decryption: the
     label is the definition's, else the card's (`meta.label`), else the account."""
@@ -125,8 +143,8 @@ def org_connectors(org_id: int) -> list[dict]:
 def for_context(org_id: int, connectors: list[str]) -> list[dict]:
     """The org's custom connectors for the agent's context (`instructions`, « Ton
     contexte oto ») — a tool configured once by the org, that the agent would not find
-    in the catalogue. At most 10; `[]` when `http` is not active. Fail-open, logged."""
-    if "http" not in connectors or not org_id:
+    in the catalogue. At most 10; `[]` when `api` is not active. Fail-open, logged."""
+    if CONNECTOR not in connectors or not org_id:
         return []
     try:
         return org_connectors(org_id)[:10]
@@ -139,7 +157,7 @@ def for_context(org_id: int, connectors: list[str]) -> list[dict]:
 def context_line(c: dict) -> str:
     """One line of the agent's context per custom connector."""
     return (f"- Custom connector: {c['label']} — "
-            f"`http(op=\"list\", _account=\"{c['account']}\")`")
+            f"`api(op=\"list\", _account=\"{c['account']}\")`")
 
 
 def match_org_connector(org_id: int, name: str) -> Optional[dict]:
@@ -154,8 +172,8 @@ def match_org_connector(org_id: int, name: str) -> Optional[dict]:
             return {"connector": CONNECTOR, "account": c["account"], "label": c["label"],
                     "description": c["description"], "logo_domain": c["logo_domain"],
                     "actions_count": c["actions_count"],
-                    "how_to_call": (f"http(op=\"list\", _account=\"{c['account']}\") "
-                                    "lists its actions; http_act(op=\"call\", "
+                    "how_to_call": (f"api(op=\"list\", _account=\"{c['account']}\") "
+                                    "lists its actions; api_act(op=\"call\", "
                                     "operation=…, args={…}) calls one.")}
     return None
 
@@ -234,8 +252,8 @@ def fetch_doc_path_document(fields: dict) -> Any:
     try:
         # The client comes from its single constructor, in the tool module, where the
         # egress guard of every free-host connector lives (`tests/test_egress_guard.py`).
-        # Imported here, not at the top: `tools/http` imports this module.
-        from ..tools.http import client_for
+        # Imported here, not at the top: `tools/api` imports this module.
+        from ..tools.api import client_for
         raw, _ = client_for(fields).get_raw(doc_path, max_bytes=MAX_DOC_BYTES)
     except egress.EgressRefused as e:
         raise ImportFailed(str(e)) from None

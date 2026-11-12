@@ -186,7 +186,7 @@ def test_reposer_une_cle_ne_reporte_jamais_une_sante_precedente(monkeypatch, vau
 #
 # `_credentialable` rendait `None` pour QUATRE raisons distinctes et ses trois
 # appelants traduisaient les quatre en un seul « 404 Connecteur inconnu ». Le
-# 08/09/2026, deux sessions ont lu ce message sur `http` — org-partageable, jamais
+# 08/09/2026, deux sessions ont lu ce message sur `api` — org-partageable, jamais
 # `byo_user`, donc refusé au palier membre qui est le DÉFAUT — et en ont déduit que
 # la production tournait une version antérieure au connecteur. L'une est partie
 # chercher un arbitrage de déploiement qui n'existait pas.
@@ -198,12 +198,12 @@ def test_reposer_une_cle_ne_reporte_jamais_une_sante_precedente(monkeypatch, vau
 # message envoie, et on prouve que ça passe.
 
 def test_le_palier_membre_sur_un_connecteur_org_ne_dit_pas_inconnu(monkeypatch, vault):
-    """`http` est au registre, avec 13 champs de credential : il n'est pas inconnu.
+    """`api` est au registre, avec 13 champs de credential : il n'est pas inconnu.
     Ce qui cloche est le PALIER — il n'est pas `byo_user`."""
     stub_authz(monkeypatch)
-    code, out = call("me.credential.get", path_params={"provider": "http"})
+    code, out = call("me.credential.get", path_params={"provider": "api"})
     assert out["error"] != "unknown_provider", (
-        "`http` EST au registre : dire « connecteur inconnu » envoie chercher un "
+        "`api` EST au registre : dire « connecteur inconnu » envoie chercher un "
         "déploiement manquant. C'est le voyage qu'ont fait deux sessions le 08/09.")
     assert code == 400 and out["error"] == "wrong_credential_scope"
 
@@ -211,9 +211,9 @@ def test_le_palier_membre_sur_un_connecteur_org_ne_dit_pas_inconnu(monkeypatch, 
 def test_ce_refus_de_palier_nomme_le_palier_qui_accepte(monkeypatch, vault):
     """Nommer la cause ne suffit pas : le refus doit dire OÙ ça se pose."""
     stub_authz(monkeypatch)
-    _, out = call("me.credential.get", path_params={"provider": "http"})
+    _, out = call("me.credential.get", path_params={"provider": "api"})
     detail = out["detail"] or ""
-    assert "http" in detail and "org" in detail, detail
+    assert "api" in detail and "org" in detail, detail
     assert "scope=org" in detail, (
         f"le refus doit porter le geste à rejouer, pas seulement son diagnostic : {detail!r}")
 
@@ -224,7 +224,7 @@ def test_le_palier_nomme_par_le_refus_passe_vraiment(monkeypatch, vault):
     alors sur le coffre vide, `not_configured` — pas sur un refus de connecteur)."""
     stub_authz(monkeypatch)
     monkeypatch.setattr(mc.roles, "is_org_admin", lambda sub, org: True)
-    code, out = call("me.credential.get", path_params={"provider": "http"},
+    code, out = call("me.credential.get", path_params={"provider": "api"},
                      query=b"scope=org")
     assert (code, out["error"]) == (404, "not_configured"), (
         f"le message envoie vers `scope=org` : ce palier doit passer la garde. {out!r}")
@@ -234,7 +234,7 @@ def test_le_retrait_nomme_le_palier_lui_aussi(monkeypatch, vault):
     """`_clear` recopiait l'éligibilité au lieu de la partager : le même mensonge y
     vivait en double."""
     stub_authz(monkeypatch)
-    code, out = call("me.credential.clear", path_params={"provider": "http"})
+    code, out = call("me.credential.clear", path_params={"provider": "api"})
     assert code == 400 and out["error"] == "wrong_credential_scope"
     assert "scope=org" in (out["detail"] or "")
 
@@ -244,7 +244,7 @@ def test_la_pose_envoie_vers_une_route_qui_existe(monkeypatch, vault):
     lui dire « rejoue avec scope=org » serait un remède inatteignable depuis sa face.
     Elle doit nommer la surface qui, elle, pose une clé d'org."""
     stub_authz(monkeypatch)
-    code, out = _post({"base_url": "https://x"}, provider="http")
+    code, out = _post({"base_url": "https://x"}, provider="api")
     assert code == 400 and out["error"] == "wrong_credential_scope"
     detail = out["detail"] or ""
     routes = {b.path for c in mc.CAPABILITIES for b in c.rest_bindings()}

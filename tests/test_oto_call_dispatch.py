@@ -215,19 +215,19 @@ def test_resolve_tool_sees_visibility_disabled_tool():
     real = FastMCP("t186")
 
     @real.tool()
-    def http_get(path: str) -> str:
+    def api_get(path: str) -> str:
         return path
 
-    for tr in create_visibility_transforms([{"enabled": False, "names": ["http_get"]}]):
+    for tr in create_visibility_transforms([{"enabled": False, "names": ["api_get"]}]):
         real.add_transform(tr)
 
     # Le listing serveur (même sans middleware) le filtre — c'était le piège…
     served = {t.name for t in asyncio.run(real.list_tools(run_middleware=False))}
-    assert "http_get" not in served
+    assert "api_get" not in served
     # …mais le dispatch le résout (catalogue brut).
     ctx = type("Ctx", (), {"fastmcp": real})()
-    tool = asyncio.run(meta._resolve_tool(ctx, "http_get"))
-    assert tool is not None and tool.name == "http_get"
+    tool = asyncio.run(meta._resolve_tool(ctx, "api_get"))
+    assert tool is not None and tool.name == "api_get"
 
 
 # --- 6. jeton `org=` (ADR 0038) : posé pendant run, nettoyé après ----------

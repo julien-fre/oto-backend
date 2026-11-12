@@ -1,13 +1,13 @@
-"""`http_doc` : route de documentation configurable sur la carte du connecteur
-`http`, pas un endpoint fixe côté oto — chaque org/bridge choisit la sienne
+"""`api_doc` : route de documentation configurable sur la carte du connecteur
+`api`, pas un endpoint fixe côté oto — chaque org/bridge choisit la sienne
 (ex. `/openapi.json` pour un bridge, derrière le même auth que le reste,
 aucune route publique à part). Cf. `_require_doc_path`, testable sans contexte
-MCP comme `_excerpt`/`_upstream_error` (test_http_upstream_error.py).
+MCP comme `_excerpt`/`_upstream_error` (test_api_upstream_error.py).
 """
 import pytest
 
 from oto_mcp.mcp_errors import McpError
-from oto_mcp.tools.http import _require_doc_path
+from oto_mcp.tools.api import _require_doc_path
 
 
 def test_doc_path_absent_leve_une_erreur_actionnable():

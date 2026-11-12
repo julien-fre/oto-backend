@@ -1,5 +1,5 @@
-"""`http` connector, third module: `http_act`, what ACTS on a custom connector (the
-pair's convention: `http` reads, `http_act` acts — the tool an MCP client confirms).
+"""`api` connector, third module: `api_act`, what ACTS on a custom connector (the
+pair's convention: `api` reads, `api_act` acts — the tool an MCP client confirms).
 
 - `op="call"` — one of its saved actions, by name. Without `_account`, the action is
   looked up across the org's custom connectors: a name that only one of them carries
@@ -11,7 +11,7 @@ pair's convention: `http` reads, `http_act` acts — the tool an MCP client conf
   NOT saved: it fetches a document the admin points at, and prepares a write.
 - `op="set_definition"` (admin) — saves the connector's definition for every member.
 
-The calls go through the same client as `http_get` (vault, egress guard, redirect
+The calls go through the same client as `api_get` (vault, egress guard, redirect
 refusal, upstream-error translation), with the definition's constant headers; `call`
 also fills an omitted argument from the definition's saved variables. Every verb is
 carried: oto-core's `HttpConnectorClient.request` takes GET/POST/PUT/PATCH/DELETE.
@@ -24,9 +24,9 @@ import requests
 from fastmcp import FastMCP
 
 from .. import custom_ops, session_org
-from ..connectors import http_operations as store
-from . import http as http_tool
-from .http_ops import (_auth_header, _bad, _definition, _org_connectors, _require_admin,
+from ..connectors import api_operations as store
+from . import api as api_tool
+from .api_ops import (_auth_header, _bad, _definition, _org_connectors, _require_admin,
                        _resolved, _sub, refuse_foreign)
 from .lecture import ACTE
 
@@ -55,24 +55,24 @@ def _account_for(sub: str, operation: str) -> Optional[str]:
 
 
 def _send(rc, headers: dict, plan: dict):
-    client = http_tool.client_from_fields(rc.fields, headers)
+    client = api_tool.client_from_fields(rc.fields, headers)
     try:
         return client.request(plan["method"], plan["path"], params=plan["query"] or None,
                               json=plan["body"])
     except requests.JSONDecodeError as e:
-        return http_tool.non_json_success(e)
+        return api_tool.non_json_success(e)
     except ValueError as e:
-        raise http_tool._value_error(e)
+        raise api_tool._value_error(e)
     except requests.HTTPError as e:
-        raise http_tool._upstream_error(e)
+        raise api_tool._upstream_error(e)
 
 
 def _action(sub: str, operation: Optional[str]):
     """`(row, definition, action)` of the saved action `operation` this call resolves
     to — refused (`McpError`) when there is none. Reads the database."""
     if not operation:
-        raise _bad("`http_act(op=\"call\")` needs `operation` — the action's name, "
-                   "from `http(op=\"list\")`.")
+        raise _bad("`api_act(op=\"call\")` needs `operation` — the action's name, "
+                   "from `api(op=\"list\")`.")
     rc = _resolved(_account_for(sub, operation))
     d = _definition(rc)
     found = custom_ops.find(d["operations"], operation)
@@ -85,12 +85,12 @@ def _action(sub: str, operation: Optional[str]):
 
 def methode_de_l_action(operation: Optional[str]) -> str:
     """The HTTP verb (`GET`, `POST`…) of the saved action `operation`, resolved as
-    `http_act(op="call")` resolves it (the call's `_account`, else the org's connector
+    `api_act(op="call")` resolves it (the call's `_account`, else the org's connector
     that carries it). Raises like the call itself — never a default verb.
 
     SYNCHRONOUS and it reads the database (`connector_instances.config`): from an
     `async def`, call it off the event loop (`await run_in_threadpool(...)`), never
-    directly. It is what `tools/effets` judges `http_act(op="call")` on."""
+    directly. It is what `tools/effets` judges `api_act(op="call")` on."""
     return _action(_sub(), operation)[2]["method"]
 
 
@@ -152,8 +152,8 @@ def _set_definition(sub: str, given: dict) -> dict:
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(name="http_act", annotations=ACTE)
-    def http_act(op: Literal["call", "request", "import", "set_definition"],
+    @mcp.tool(name="api_act", annotations=ACTE)
+    def api_act(op: Literal["call", "request", "import", "set_definition"],
                  operation: Optional[str] = None, args: Optional[dict] = None,
                  method: Optional[str] = None, path: Optional[str] = None,
                  params: Optional[dict] = None, body: Optional[dict | list] = None,
@@ -165,7 +165,7 @@ def register(mcp: FastMCP) -> None:
                  dry_run: bool = False) -> dict:
         """Act on a custom connector (Custom API) — ops: `call`, `request`, `import`,
         `set_definition`. Reads (the org's connectors, an action's input, the setup
-        link): `http`.
+        link): `api`.
 
         - `call`: an action by name (`operation`, `args`). `_account` is optional when
           only one of the org's custom connectors has this action. Arguments are
@@ -219,7 +219,7 @@ def register(mcp: FastMCP) -> None:
                  "description": description, "logo_domain": logo_domain,
                  "headers": headers, "variables": variables,
                  "dry_run": dry_run or None}
-        refuse_foreign("http_act", op, given, ARGS[op])
+        refuse_foreign("api_act", op, given, ARGS[op])
         sub = _sub()
         if op == "call":
             return _call(sub, operation, args, dry_run)

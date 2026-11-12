@@ -145,8 +145,8 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         except Exception:
             pass
 
-    from .connectors import http_operations     # les connecteurs PERSONNALISÉS de l'org
-    custom = http_operations.for_context(org_id, connectors)
+    from .connectors import api_operations     # les connecteurs PERSONNALISÉS de l'org
+    custom = api_operations.for_context(org_id, connectors)
 
     projects: list[str] = []
     try:
@@ -242,7 +242,7 @@ def _format_context(ctx: dict) -> str:
         lines.append(f"- Active team: {ctx['group_name']}")
     if ctx["connectors"]:
         lines.append(f"- Active connectors: {', '.join(ctx['connectors'])}")
-    from .connectors.http_operations import context_line
+    from .connectors.api_operations import context_line
     lines += [context_line(c) for c in ctx.get("custom_connectors") or []]
     if ctx["projects"]:
         lines.append(f"- Recent projects: {' · '.join(ctx['projects'])}")
@@ -257,9 +257,10 @@ def _format_context(ctx: dict) -> str:
             # handshake et croyait reprendre un travail que personne ne menait plus.
             bits.append(f"{label}{doc} {run_status.describe(r)}")
         lines.append(f"- Recent runs: {' · '.join(bits)}")
-    annonce = outils_retires.annonce_act_du_jour()
-    if annonce:
-        lines.append(f"- {annonce}")
+    for annonce in (outils_retires.annonce_act_du_jour(),
+                    outils_retires.annonce_connecteurs_du_jour()):
+        if annonce:
+            lines.append(f"- {annonce}")
     return "\n".join(lines)
 
 
