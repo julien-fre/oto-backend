@@ -58,14 +58,14 @@ def apply_call_trace(row: dict, trace: Optional[dict], traced_args: tuple) -> di
     Hors relevé : un appel arrivé sous un ANCIEN nom d'outil (`deprecations.TOOLS`)
     garde `tool` = le nom d'aujourd'hui, et porte `args.deprecated_name` = le nom
     demandé — c'est ce qui compte l'usage d'un alias avant son retrait."""
+    traced = {k: v for k, v in (trace or {}).items() if k in traced_args}
     ancien = session_org.nom_deprecie_de_l_appel()
     if ancien:
-        row["args"] = {**(row.get("args") or {}), "deprecated_name": ancien}
-    if not trace:
-        return row
-    traced = {k: v for k, v in trace.items() if k in traced_args}
+        traced["deprecated_name"] = ancien
     if traced:
         row["args"] = {**(row.get("args") or {}), **traced}
+    if not trace:
+        return row
     quantity = trace.get("quantity")
     if isinstance(quantity, int) and quantity >= 0:
         row["quantity"] = quantity
