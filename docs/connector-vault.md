@@ -628,11 +628,19 @@ Décision du propriétaire du produit : le connecteur s'appelle `api`, ses outil
 `api_post`, `api_doc` — mêmes ops, mêmes arguments. **Aucun alias** : l'ancien nom refuse en nommant le nouveau
 (outils : `outils_retires.RENOMMAGES_CONNECTEURS`, annonce servie un mois ; connecteur : `providers.CONNECTEURS_RENOMMES`,
 lu par les refus « connecteur inconnu » ; source de fichier `kind="http"` → `kind="api"`). Les routes REST
-deviennent `/api/orgs/{id}/connectors/api/{operations,definition}`. Les données suivent en deux temps : le
-**coffre** par une étape de démarrage (`api_operations.copier_depuis_http`, COPIE re-chiffrée — l'AAD porte le
-nom du connecteur — qui laisse les lignes `http` en place et recopie la définition de chaque instance) ; le reste
-(sélections, activations, réglages, kits, listes d'outils) par la révision `20261112_1200_connecteur_api`, à jouer
-après le tag. Les lignes `http` du coffre partent plus tard, par `oto-mcp maintenance orphelins`.
+deviennent `/api/orgs/{id}/connectors/api/{operations,definition}` ; les anciennes `…/connectors/http/…` ne
+servent plus rien et répondent **410 `connector_renamed`**, `details.path` = la nouvelle route (publiées
+`deprecated`, sans 200). Les données suivent en deux temps : le **coffre** par une étape de démarrage
+(`api_operations.copier_depuis_http`, COPIE re-chiffrée — l'AAD porte le nom du connecteur — qui laisse les
+lignes `http` en place, garde le partage de la ligne (`share_*`) et recopie la définition de chaque instance) ;
+le reste par la révision `20261112_1200_connecteur_api`, à jouer après le tag : sélections, activations,
+réglages, kits, listes d'outils, et ce qui DÉSIGNE une instance `http` — règles d'accès des comptes
+(`connector_account_rules`), arêtes `grants`, liens de projet (`target_ref`, `instance_ref`, `identity_ref`) —
+repointé vers la copie `api` du même propriétaire et du même compte. Pourquoi la révision et pas le démarrage :
+l'id de la copie s'y lit en base, et le démarrage du code neuf précède le tag sur une base partagée avec la
+prod, qui lirait encore ces désignations. Même règle de conflit partout (même sens : le doublon part ; sens
+différent : la révision s'arrête et n'écrit rien). Les lignes `http` du coffre partent plus tard, par
+`oto-mcp maintenance orphelins`.
 
 ### La `config` d'une instance — premier écrivain : les opérations d'un « Custom API » (17/10/2026)
 

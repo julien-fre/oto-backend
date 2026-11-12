@@ -652,6 +652,11 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
             # L'en-tête de run : LA passe qui le référence, sur les capacités et elles
             # seules ; les en-têtes de contexte, lus avant toute route `/api/*`, aussi.
             op["parameters"] = [*op.get("parameters", []), *_PARAMS_CONTEXTE, _PARAM_RUN_REF]
+            if cap.retiree:
+                # Un ancien chemin qui ne fait que refuser : déprécié, sans 200. Le tag
+                # `_deprecated` reste aux alias 308, qui ne lisent aucun en-tête.
+                op["responses"].pop(str(binding.status), None)
+                op["deprecated"] = True
             schemas.update(defs)
             item = paths.setdefault(_openapi_path(binding.path), {})
             item[binding.verb.lower()] = op          # la capacité prime sur le legacy

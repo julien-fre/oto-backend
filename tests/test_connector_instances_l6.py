@@ -111,6 +111,10 @@ _LECTEURS_ADMIS = {
     # les instances pour désigner le compte d'un partage. Rien ne lit encore les règles
     # (la bascule est le lot L3, qui retirera la ligne de L7 avec sa revue).
     "db/regles_de_comptes.py",
+    # Le renommage `http` → `api` (12/11/2026) : la révision de données apparie chaque
+    # instance `http` à sa copie `api` (même propriétaire, même compte) pour repointer
+    # ce qui la désigne par son id. Une fois, à la migration ; ne résout rien.
+    "db/migrations/versions/20261112_1200_connecteur_api.py",
 }
 
 # Dans le coffre, les SEULES fonctions admises à nommer une instance. Ce sont les

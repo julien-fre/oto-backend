@@ -68,6 +68,19 @@ def _semer(c):
                   (jid, statut, json.dumps({"tools": ["http_post"], "procedure": "p"})))
     c.execute("INSERT INTO user_disabled_tools (sub, org_id, tool_name) VALUES "
               "('u1', 0, 'http_doc')")
+    # Le compte `paie` de l'org, sous l'ancien nom et sous sa copie (la copie du coffre au
+    # démarrage l'a fait naître), et ce qui désigne l'instance `http`.
+    c.execute("INSERT INTO connector_instances (id, connector, owner_type, owner_id, account) "
+              "VALUES (95001, 'http', 'org', '95001', 'paie'), "
+              "(95002, 'api', 'org', '95001', 'paie')")
+    c.execute("INSERT INTO connector_account_rules (org_id, instance_id, subject_org, level) "
+              "VALUES (95001, 95001, true, 'write')")
+    c.execute("INSERT INTO grants (resource_id, grantor_kind, grantor_id, grantee_kind, "
+              "grantee_id) VALUES ('inst:95001', 'org', '95001', 'group', '7'), "
+              "('org:95001:http:paie', 'org', '95001', 'group', '8')")
+    c.execute("INSERT INTO project_links (project_id, target_type, target_ref, config, "
+              "identity_ref) VALUES (95001, 'connecteur', 'http', %s::jsonb, 'org:95001:http:paie')",
+              (json.dumps({"instance_ref": "inst:95001", "instructions_md": "x"}),))
 
 
 @pytest.fixture(scope="module")
@@ -113,6 +126,18 @@ def test_les_listes_d_outils_suivent(base_montee):
                               "WHERE sub = 'u1' AND org_id = 0") == [("api_doc",)]
 
 
+def test_ce_qui_designe_l_instance_http_designe_sa_copie(base_montee):
+    """Un partage posé sur le compte `http` reste effectif sur le compte `api` copié."""
+    assert _lire(base_montee, "SELECT instance_id, level FROM connector_account_rules "
+                              "WHERE org_id = 95001") == [(95002, "write")]
+    assert sorted(_lire(base_montee, "SELECT resource_id FROM grants "
+                                     "WHERE grantor_id = '95001'")) == [
+        ("inst:95002",), ("org:95001:api:paie",)]
+    assert _lire(base_montee, "SELECT target_ref, identity_ref, config FROM project_links "
+                              "WHERE project_id = 95001") == [
+        ("api", "org:95001:api:paie", {"instance_ref": "inst:95002", "instructions_md": "x"})]
+
+
 def test_un_travail_termine_n_est_pas_reecrit(base_montee):
     assert _lire(base_montee, "SELECT id, payload->'tools' FROM runner_jobs "
                               "WHERE id IN (95001, 95002) ORDER BY id") == [
@@ -134,7 +159,33 @@ def test_le_retour_arriere_retablit_les_noms(base_montee):
             (["http_get", "serper_search", "http_act"],)]
         assert _lire(base_montee, "SELECT tool_name FROM user_disabled_tools "
                                   "WHERE sub = 'u1' AND org_id = 0") == [("http_doc",)]
+        assert _lire(base_montee, "SELECT instance_id FROM connector_account_rules "
+                                  "WHERE org_id = 95001") == [(95001,)]
+        assert _lire(base_montee, "SELECT target_ref, identity_ref, config->>'instance_ref' "
+                                  "FROM project_links WHERE project_id = 95001") == [
+            ("http", "org:95001:http:paie", "inst:95001")]
     finally:
+        command.upgrade(_alembic(), _REVISION)
+
+
+def test_une_regle_de_sens_different_sur_la_copie_arrete_la_revision(base_montee):
+    import psycopg
+    from alembic import command
+
+    command.downgrade(_alembic(), _PRECEDENTE)
+    with psycopg.connect(base_montee, autocommit=True) as c:
+        c.execute("INSERT INTO connector_account_rules (org_id, instance_id, subject_org, "
+                  "level) VALUES (95001, 95002, true, 'read')")
+    try:
+        with pytest.raises(Exception, match="connector_account_rules.*sens différent"):
+            command.upgrade(_alembic(), _REVISION)
+        assert _lire(base_montee, "SELECT instance_id FROM connector_account_rules "
+                                  "WHERE org_id = 95001 ORDER BY instance_id") == [
+            (95001,), (95002,)], "rien n'est écrit : la révision est annulée en entier"
+    finally:
+        with psycopg.connect(base_montee, autocommit=True) as c:
+            c.execute("DELETE FROM connector_account_rules WHERE instance_id = 95002 "
+                      "AND level = 'read'")
         command.upgrade(_alembic(), _REVISION)
 
 

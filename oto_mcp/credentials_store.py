@@ -2051,12 +2051,15 @@ def suivre_les_accords_recus(conn, old_sub: str, new_sub: str) -> int:
     return len(rows)
 
 
-def copy_connector_rows(old: str, new: str, *, with_instance: bool = False) -> dict:
+def copy_connector_rows(old: str, new: str, *, renamed: bool = False) -> dict:
     """COPIES every vault row of connector `old` to connector `new` — when a card hands
     its credential over to a carrier (`sharepoint` → `microsoft`), or when a connector is
-    RENAMED (`http` → `api`, `with_instance=True`: the new row's instance also takes the
-    old one's `config`, `label` and `visibility` — the custom connector's definition
-    lives there, `connector_instances.copy_instance_definition`).
+    RENAMED (`http` → `api`, `renamed=True`: the new row keeps the old one's SHARING —
+    `share_mode`, `share_down`, `share_side`, `share_services`, the loans read today —
+    and its instance takes the old one's `config`, `label` and `visibility`, where the
+    custom connector's definition lives, `connector_instances.copy_instance_definition`.
+    What designates the old instance BY ID — account rules, `grants`, project pins —
+    moves in the data revision of the rename, once no served code reads `old`).
 
     A copy and not a move: the base is SHARED by prod and preprod, and the code still
     served on one of them reads `old` until its tag — moving would cut it off. Removing
@@ -2100,7 +2103,15 @@ def copy_connector_rows(old: str, new: str, *, with_instance: bool = False) -> d
                 continue
             meta = r["meta"] if isinstance(r["meta"], dict) else json.loads(r["meta"] or "{}")
             _upsert(conn, etype, eid, new, account, secret, r["set_by"], meta)
-            if with_instance:
+            if renamed:
+                conn.execute(
+                    "UPDATE connector_credentials n SET share_mode = o.share_mode, "
+                    "share_down = o.share_down, share_side = o.share_side, "
+                    "share_services = o.share_services FROM connector_credentials o "
+                    "WHERE o.entity_type = %s AND o.entity_id = %s AND o.connector = %s "
+                    "AND o.account = %s AND n.entity_type = o.entity_type "
+                    "AND n.entity_id = o.entity_id AND n.connector = %s "
+                    "AND n.account = o.account", (etype, eid, old, account, new))
                 connector_instances.copy_instance_definition(conn, etype, eid, old, new,
                                                              account)
             update_meta(etype, eid, old, account, {"copied_to": new}, conn=conn)

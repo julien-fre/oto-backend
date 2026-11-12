@@ -192,3 +192,47 @@ def test_un_champ_de_carte_ne_se_pose_pas_par_la_definition(org):
     """La carte (et sa clé) se pose par la route des secrets, jamais par ici."""
     code, out = _def_put("u-admin", {"token": "abc"})
     assert code == 400 and org["ecrit"] == []
+
+
+# --- les routes de l'ancien nom (`http`) : un refus nommé, jamais un 404 nu ----------
+
+_ANCIENNES = [("custom_api.renamed.http.operations", 0, "operations", None),
+              ("custom_api.renamed.http.operations", 1, "operations", {"operations": [OP]}),
+              ("custom_api.renamed.http.operations.import", 0, "operations/import",
+               {"source": "inline", "document": {}}),
+              ("custom_api.renamed.http.definition", 0, "definition", None),
+              ("custom_api.renamed.http.definition", 1, "definition", {"label": "x"})]
+
+
+@pytest.mark.parametrize("cle,index,suffixe,corps", _ANCIENNES)
+def test_l_ancienne_route_refuse_en_nommant_la_nouvelle(org, cle, index, suffixe, corps):
+    from oto_mcp.capabilities import registry
+    binding = next(c for c in registry.CAPABILITIES if c.key == cle).rest_bindings()[index]
+    assert binding.path == f"/api/orgs/{{id}}/connectors/http/{suffixe}"
+    code, out = call(cle, path_params={"id": str(ORG)}, query=b"account=paie",
+                     body=corps, binding_index=index, sub="u-admin")
+    assert code == 410 and out["error"] == "connector_renamed", out
+    assert f"/connectors/api/{suffixe}" in out["detail"]
+    assert out["details"] == {"connector": "api",
+                              "path": f"/api/orgs/{ORG}/connectors/api/{suffixe}"}
+    assert org["ecrit"] == [], "rien n'est servi ni écrit par l'ancienne route"
+
+
+def test_l_ancienne_route_reste_fermee_a_un_non_membre(org):
+    code, out = call("custom_api.renamed.http.operations", path_params={"id": str(ORG)},
+                     sub="u-dehors")
+    assert code == 403, out
+
+
+def test_le_contrat_publie_l_ancienne_route_depreciee_sans_reponse_heureuse():
+    from oto_mcp import openapi
+    doc = openapi.build()
+    for suffixe, verbes in (("operations", ("get", "put")), ("operations/import", ("post",)),
+                            ("definition", ("get", "put"))):
+        item = doc["paths"][f"/api/orgs/{{id}}/connectors/http/{suffixe}"]
+        for verbe in verbes:
+            op = item[verbe]
+            assert op["deprecated"] is True and "200" not in op["responses"], (suffixe, verbe)
+            assert "connector_renamed" in str(op["responses"]["410"])
+        assert "200" in doc["paths"][f"/api/orgs/{{id}}/connectors/api/{suffixe}"][verbes[0]][
+            "responses"]

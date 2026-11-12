@@ -126,8 +126,9 @@ def test_la_definition_et_la_liste_de_l_org_sans_dechiffrer(live):
 
 def test_le_coffre_de_l_ancien_nom_est_copie_avec_sa_definition(live):
     """Le connecteur s'appelait `http` : au démarrage, ses lignes de coffre sont COPIÉES
-    sous `api` (re-chiffrées, l'AAD porte le nom), l'instance neuve reprend la définition
-    de l'ancienne, et la ligne `http` reste. Rejouée, la copie ne refait rien."""
+    sous `api` (re-chiffrées, l'AAD porte le nom), avec leur partage ; l'instance neuve
+    reprend la définition de l'ancienne, et la ligne `http` reste. Rejouée, la copie ne
+    refait rien."""
     from oto_mcp import credentials_store as cs
     from oto_mcp.connectors import api_operations as store
     from oto_mcp.db import connector_instances as ci
@@ -141,7 +142,13 @@ def test_le_coffre_de_l_ancien_nom_est_copie_avec_sa_definition(live):
                   "AND account = 'ancienne' AND revoked_at IS NULL",
                   ('{"operations": [' + __import__("json").dumps(OP) + '], '
                    '"description": "la paie"}', str(ORG)))
+        # Un prêt posé sur le compte `http` (le partage lu aujourd'hui).
+        c.execute("UPDATE connector_credentials SET share_side = %s::jsonb "
+                  "WHERE entity_type = 'org' AND entity_id = %s AND connector = 'http' "
+                  "AND account = 'ancienne'", ('[{"sub": "usr_emprunteur"}]', str(ORG)))
     assert store.copier_depuis_http()["copied"] == 1
+    assert cs.get_instance_sharing("org", str(ORG), "api", "ancienne") == (
+        [], [{"sub": "usr_emprunteur"}]), "le partage suit la copie"
     assert store.load("org", str(ORG), "ancienne") == [OP]
     assert store.load_definition("org", str(ORG), "ancienne")["description"] == "la paie"
     assert ci.live_instance_config("org", str(ORG), "http", "ancienne") is not None
