@@ -625,12 +625,14 @@ la désignation d'une clé d'autre chose que du quadruplet ; c'est le lot L7, av
 ### Le renommage `http` → `api` (12/11/2026)
 
 Décision du propriétaire du produit : le connecteur s'appelle `api`, ses outils `api`, `api_act`, `api_get`,
-`api_post`, `api_doc` — mêmes ops, mêmes arguments. **Aucun alias** : l'ancien nom refuse en nommant le nouveau
-(outils : `outils_retires.RENOMMAGES_CONNECTEURS`, annonce servie un mois ; connecteur : `providers.CONNECTEURS_RENOMMES`,
-lu par les refus « connecteur inconnu » ; source de fichier `kind="http"` → `kind="api"`). Les routes REST
-deviennent `/api/orgs/{id}/connectors/api/{operations,definition}` ; les anciennes `…/connectors/http/…` ne
-servent plus rien et répondent **410 `connector_renamed`**, `details.path` = la nouvelle route (publiées
-`deprecated`, sans 200). Les données suivent en deux temps : le **coffre** par une étape de démarrage
+`api_post`, `api_doc` — mêmes ops, mêmes arguments. **Les surfaces se doublent** (`docs/alias-deprecies.md`) :
+les anciens noms d'outils `http*` restent servis en **alias dépréciés** (`deprecations.OUTILS_CONNECTEUR_API`),
+traduits au bord du protocole et par `oto_call`, chaque réponse portant l'avis en tête ; les routes REST
+deviennent `/api/orgs/{id}/connectors/api/{operations,definition}`, et les anciennes `…/connectors/http/…`
+répondent **308** vers elles (`deprecations.alias_rest_derives`). Retrait : quand les consommateurs déclarés ont
+suivi et que l'usage compté (`tool_calls.args.deprecated_name`) est nul, au plus tôt le 31/01/2027. Le NOM du
+connecteur, lui, n'a pas d'alias : `http` refuse en nommant `api` (`providers.CONNECTEURS_RENOMMES`, lu par les
+refus « connecteur inconnu » ; source de fichier `kind="http"` → `kind="api"`). Les données suivent en deux temps : le **coffre** par une étape de démarrage
 (`api_operations.copier_depuis_http`, COPIE re-chiffrée — l'AAD porte le nom du connecteur — qui laisse les
 lignes `http` en place, garde le partage de la ligne (`share_*`) et recopie la définition de chaque instance) ;
 le reste par la révision `20261112_1200_connecteur_api`, à jouer après le tag : sélections, activations,

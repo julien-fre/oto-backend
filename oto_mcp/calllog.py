@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from fastmcp.server.middleware import Middleware
 
-from . import geste, journal_secrets
+from . import geste, journal_secrets, session_org
 from .db._hors_boucle import HorsBoucle
 from .db.journal_calls import ARGS_CLIENT_KEY, ARGS_TRUNCATED_KEY
 
@@ -53,7 +53,14 @@ def apply_call_trace(row: dict, trace: Optional[dict], traced_args: tuple) -> di
       résolue → rien à facturer.
 
     Le reste du relevé (`resolved_connector`, `resolved_account`…) sert l'ÉCHO rendu à
-    l'agent, pas le journal : il n'est pas écrit."""
+    l'agent, pas le journal : il n'est pas écrit.
+
+    Hors relevé : un appel arrivé sous un ANCIEN nom d'outil (`deprecations.TOOLS`)
+    garde `tool` = le nom d'aujourd'hui, et porte `args.deprecated_name` = le nom
+    demandé — c'est ce qui compte l'usage d'un alias avant son retrait."""
+    ancien = session_org.nom_deprecie_de_l_appel()
+    if ancien:
+        row["args"] = {**(row.get("args") or {}), "deprecated_name": ancien}
     if not trace:
         return row
     traced = {k: v for k, v in trace.items() if k in traced_args}

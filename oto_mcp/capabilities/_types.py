@@ -278,10 +278,6 @@ class Capability:
     # pas exposée si le gate rend faux. Piloté par env par-déploiement (prod off,
     # canari on) sans divergence de branche. None = toujours exposé.
     gate: "Optional[Callable[[], bool]]" = None
-    # La capacité ne fait que REFUSER : l'ancien chemin d'une surface renommée, qui ne
-    # sert plus la requête et nomme son remplaçant (`connector_renamed`, 410). Publiée
-    # dépréciée dans `/openapi.json`, sans réponse heureuse — elle n'en a pas.
-    retiree: bool = False
 
     def __post_init__(self):
         if self.mcp is None and not self.rest:

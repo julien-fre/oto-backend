@@ -44,6 +44,14 @@ def test_chaque_outil_garde_son_suffixe_des_deux_cotes():
     assert descente == {v[0]: (k,) for k, v in attendu.items()}
 
 
+def test_la_table_figee_est_celle_des_alias_servis():
+    """La révision fige sa correspondance ; tant que les alias sont servis, c'est la
+    même : une liste réécrite nomme l'outil que l'ancien nom sert."""
+    from oto_mcp import deprecations
+    autorise, _ = _module().correspondances()
+    assert {a: v[0] for a, v in autorise.items()} == deprecations.OUTILS_CONNECTEUR_API
+
+
 def _semer(c):
     c.execute("INSERT INTO orgs (id, name, default_connectors) VALUES "
               "(95001, 'o1', ARRAY['serper','http','fr']), "

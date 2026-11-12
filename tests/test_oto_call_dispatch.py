@@ -331,3 +331,31 @@ def test_dispatch_strips_nonapplicable_axis(oto_call_fn, monkeypatch):
     _call(oto_call_fn, [target], name="folk_record",
           arguments={"query": "acme", "_account": "nope"})
     assert target.args_seen == {"query": "acme"}     # `_account` écarté, cible propre
+
+
+# --- un ancien nom DÉPRÉCIÉ est servi par l'outil d'aujourd'hui -------------
+
+def test_dispatch_serves_a_deprecated_name_by_today_s_tool(oto_call_fn, monkeypatch):
+    """`oto_call(name="http_get")` atteint `api_get`, mêmes arguments ; l'avis rejoint
+    la réponse (`session_org.noter_avis`) et l'ancien nom est lisible le temps de
+    l'appel (journal), pas après."""
+    from oto_mcp import deprecations, session_org
+    monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
+    vus = []
+
+    class _Cible(_FakeTool):
+        async def run(self, arguments):
+            vus.append((self.name, dict(arguments), session_org.nom_deprecie_de_l_appel()))
+            return _tool_result({"ok": 1})
+
+    avis: list = []
+    jeton = session_org.set_call_avis(avis)
+    try:
+        out = _call(oto_call_fn, [_Cible("api_get")], name="http_get",
+                    arguments={"path": "/teams"})
+    finally:
+        session_org.reset_call_avis(jeton)
+    assert out.structured_content == {"ok": 1}
+    assert vus == [("api_get", {"path": "/teams"}, "http_get")]
+    assert avis == [deprecations.avis_d_appel("http_get")]
+    assert session_org.nom_deprecie_de_l_appel() is None
