@@ -60,8 +60,15 @@ def _banc(monkeypatch, pa):
     from _mcp_app import static_mcp
 
     from oto_mcp.middleware import un_seul_canal
+    # `static_mcp` est un catalogue MIS EN CACHE pour toute la suite : construit ici sous
+    # le bundle du test, il enregistrait `oto_procedure_app` pour chaque test suivant du
+    # même worker, et `test_surface_outils_figee` y voyait un outil ajouté — rouge
+    # seulement quand la répartition les rapprochait.
+    with monkeypatch.context() as sans_bundle:
+        sans_bundle.delenv("OTO_PROCEDURE_APP_BUNDLE", raising=False)
+        middleware = static_mcp().middleware
     m = FastMCP("banc")
-    for mw in static_mcp().middleware:
+    for mw in middleware:
         m.add_middleware(mw)
     pa.register(m)
     un_seul_canal.retirer_les_schemas_vides(m)
@@ -458,10 +465,9 @@ def _ecrire(monkeypatch, *, op="create", version=1, body="# Veille\n\n1. Cherche
     monkeypatch.setattr(procedure_diagram, "client_affiche_les_apps", lambda: ui)
     monkeypatch.setattr(access, "current_org", lambda sub: 42)
     monkeypatch.setattr(org_store, "org_front", lambda org_id: ("https://app.example.com/", None))
-    if bundle:
-        monkeypatch.setenv("OTO_PROCEDURE_APP_BUNDLE", BUNDLE)
-    else:
-        monkeypatch.delenv("OTO_PROCEDURE_APP_BUNDLE", raising=False)
+    # Le bundle se simule à sa lecture, jamais par l'env : une écriture réelle monte le
+    # registre d'outils (mis en cache), qui enregistrerait l'app pour toute la suite.
+    monkeypatch.setattr(procedure_diagram, "bundle_du_graphe", lambda: BUNDLE if bundle else None)
 
     async def execute(_dispatch, _args):
         return None, {"ok": True, "slug": "veille", "version": version, "set": True}
@@ -510,7 +516,7 @@ def test_pas_de_consigne_quand_un_trace_est_deja_la(monkeypatch):
 
 def _naissance_banc(monkeypatch, ui=False):
     from oto_mcp import access, org_store, procedure_diagram, tool_alias
-    monkeypatch.setenv("OTO_PROCEDURE_APP_BUNDLE", BUNDLE)
+    monkeypatch.setattr(procedure_diagram, "bundle_du_graphe", lambda: BUNDLE)
     monkeypatch.setattr(tool_alias, "prefix_for", lambda sub: "")
     monkeypatch.setattr(tool_alias, "sert_un_worker", lambda: False)
     monkeypatch.setattr(procedure_diagram, "client_affiche_les_apps", lambda: ui)
