@@ -243,9 +243,10 @@ def fetch_public_document(url: str) -> Any:
     return _parse(bytes(data))
 
 
-def fetch_doc_path_document(fields: dict) -> Any:
+def fetch_doc_path_document(fields: dict, row: Optional[tuple[str, str, str]] = None) -> Any:
     """The API's own description at the card's `doc_path`, read WITH the
-    credential's auth through the same client as every call."""
+    credential's auth through the same client as every call. `row` = the card's vault
+    row, which a card in session mode needs (its cookie jar lives there)."""
     doc_path = (fields.get("doc_path") or "").strip()
     if not doc_path.startswith("/"):
         raise ImportFailed("no `doc_path` on this account's Custom API card (e.g. "
@@ -255,7 +256,7 @@ def fetch_doc_path_document(fields: dict) -> Any:
         # egress guard of every free-host connector lives (`tests/test_egress_guard.py`).
         # Imported here, not at the top: `tools/api` imports this module.
         from ..tools.api import client_for
-        raw, _ = client_for(fields).get_raw(doc_path, max_bytes=MAX_DOC_BYTES)
+        raw, _ = client_for(fields, row=row).get_raw(doc_path, max_bytes=MAX_DOC_BYTES)
     except egress.EgressRefused as e:
         raise ImportFailed(str(e)) from None
     except requests.HTTPError as e:
@@ -270,10 +271,12 @@ def fetch_doc_path_document(fields: dict) -> Any:
 
 def import_candidates(source: str, *, url: Optional[str] = None,
                       document: Any = None,
-                      fields: Optional[dict] = None) -> tuple[list[dict], list[dict]]:
+                      fields: Optional[dict] = None,
+                      row: Optional[tuple[str, str, str]] = None,
+                      ) -> tuple[list[dict], list[dict]]:
     """Candidate operations from `doc_path` | `url` | `inline`. Saves nothing."""
     if source == "doc_path":
-        doc = fetch_doc_path_document(fields or {})
+        doc = fetch_doc_path_document(fields or {}, row)
     elif source == "url":
         if not url:
             raise ImportFailed("`url` is required with source=url")

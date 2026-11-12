@@ -708,6 +708,28 @@ ici sans attendre oto 2 ; il ne fixe rien pour oto 2. Point par point :
 Le jour où oto 2 sert les connecteurs privés, une définition d'ici s'y convertit champ à champ
 (`GET …/http/definition`, sans secret) : ses champs sont ceux de `function`, à plat.
 
+### Le mode `session` du Custom API : un état propre au compte, scellé dans `meta` (12/11/2026)
+
+Pour un service sans clé d'API, la carte `api` prend `auth_mode=session` : un identifiant, un mot de passe
+(secret) et des **étapes** (`session`, un objet JSON lu strictement par oto-core, `oto.tools.http.session`) —
+un POST JSON de login, puis, au besoin, le GET de l'URL que la réponse nomme et ses redirections. Chaque saut
+reste sur l'hôte de la `base_url`, un hôte listé ou le domaine déclaré, et passe par `egress.check_url`
+(`connectors/api_session.guard` ; les exceptions nommées ne valent que pour l'hôte de la `base_url`). Un 401
+ou un renvoi vers une page de login déclenche un login complet et un seul rejeu ; refusé encore, la clé passe
+au rouge (`credential_rejected`). Le mode **ne fait que lire** : `api_post` et les verbes d'écriture
+d'`api_act` sont refusés par nom (`api_session_read_only`) avant tout envoi, `dry_run` compris.
+
+**Le jar de cookies** est un état du compte qui change à l'usage, pas à la pose. Il ne va donc pas dans
+`secret_enc` (que seule la pose réécrit, sous verrou optimiste) mais dans un **satellite scellé** de la même
+ligne : `meta.session_jar_enc`, chiffré AES-GCM sous la clé du coffre, AAD = celle de la ligne suivie de
+`#session_jar` (`credentials_store.seal_satellite` / `unseal_satellite`, jeu fermé `SEALED_SATELLITES`, retiré
+des surfaces de statut comme un bearer). Écrit par fusion JSONB : ni `version` ni `set_at` ne bougent. Le
+scellé porte l'empreinte des champs qui décident qui se connecte (base, identifiant, mot de passe, étapes) :
+un jar scellé pour d'autres champs n'est pas resservi. Une repose remplace `meta`, donc efface le jar. Entre
+processus, **le dernier écrivain gagne** — au pire un login de plus, jamais un autre compte. Un scellé qui ne
+se déchiffre plus (ligne déplacée, renommée, copiée vers une autre instance) est un cache perdu : journalisé,
+et l'appel se reconnecte. Le jar n'est jamais rendu à l'agent ni journalisé.
+
 ### `inst:{id}` — la forme de fil
 
 `instance_refs.make_instance_ref(id)` rend `inst:{id}`, et `parse_ref` accepte désormais

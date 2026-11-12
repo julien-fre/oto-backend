@@ -12,6 +12,7 @@ Ce qui est figé ici :
 - `append` et le plafond de taille.
 """
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -54,11 +55,13 @@ def connecteur_http(monkeypatch):
 
     resolutions = []
 
-    def resolve(provider):
+    def resolve(provider, want="auto", **k):
         resolutions.append(provider)
-        return {"base_url": "https://api.exemple.test", "auth_mode": "bearer", "token": CLE}
+        return SimpleNamespace(
+            fields={"base_url": "https://api.exemple.test", "auth_mode": "bearer",
+                    "token": CLE}, entity_type="group", entity_id="7", account="")
 
-    monkeypatch.setattr(access, "resolve_credential_fields", resolve)
+    monkeypatch.setattr(access, "resolve_credential", resolve)
     monkeypatch.setattr(H, "current_user_sub_from_token", lambda: "sub-1")
     monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
     appels = []
@@ -120,7 +123,7 @@ def test_un_csv_du_connecteur_http_part_type_sans_passer_par_le_modele(connecteu
 
 def test_la_cle_est_celle_que_resout_http_get(connecteur_http, feuille, monkeypatch):
     """Même fabrique (`tools.api._client`) : la source ne résout pas la clé à sa
-    façon. `resolve_credential_fields("api")` est ce qui sert l'instance épinglée
+    façon. `resolve_credential("api")` est ce qui sert l'instance épinglée
     par `_project` — y compris une instance d'équipe — à `api_get` comme ici."""
     from oto_mcp.tools import api as H
     fabriques = []

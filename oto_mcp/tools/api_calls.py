@@ -14,7 +14,9 @@ pair's convention: `api` reads, `api_act` acts — the tool an MCP client confir
 The calls go through the same client as `api_get` (vault, egress guard, redirect
 refusal, upstream-error translation), with the definition's constant headers; `call`
 also fills an omitted argument from the definition's saved variables. Every verb is
-carried: oto-core's `HttpConnectorClient.request` takes GET/POST/PUT/PATCH/DELETE.
+carried: oto-core's `HttpConnectorClient.request` takes GET/POST/PUT/PATCH/DELETE —
+except on a card in session mode (login and password), which only reads: a write verb
+is refused by name before anything is sent, `dry_run` included (`api.refuse_write`).
 """
 from __future__ import annotations
 
@@ -54,8 +56,12 @@ def _account_for(sub: str, operation: str) -> Optional[str]:
     return porteurs[0]["account"] if porteurs else None
 
 
+def _row(rc) -> tuple[str, str, str]:
+    return rc.entity_type, str(rc.entity_id), rc.account or ""
+
+
 def _send(rc, headers: dict, plan: dict):
-    client = api_tool.client_from_fields(rc.fields, headers)
+    client = api_tool.client_from_fields(rc.fields, headers, row=_row(rc))
     try:
         return client.request(plan["method"], plan["path"], params=plan["query"] or None,
                               json=plan["body"])
@@ -101,6 +107,7 @@ def _call(sub: str, operation: Optional[str], args: Optional[dict],
         plan = custom_ops.plan_call(found, args, d["variables"])
     except custom_ops.CallRefused as e:
         raise _bad(str(e))
+    api_tool.refuse_write(rc.fields, plan["method"])
     if dry_run:
         return {"dry_run": True, "account": rc.account, **plan}
     return _send(rc, d["headers"], plan)
@@ -115,6 +122,7 @@ def _request(method: Optional[str], path: Optional[str], params: Optional[dict],
     if errs:
         raise _bad("; ".join(errs))
     rc = _resolved()
+    api_tool.refuse_write(rc.fields, verb)
     plan = {"method": verb, "path": path, "query": params or {}, "body": body}
     if dry_run:
         return {"dry_run": True, "account": rc.account, **plan}
@@ -130,7 +138,7 @@ def _import(sub: str, source: Optional[str], url: Optional[str],
     try:
         cands, skipped = store.import_candidates(
             source or "", url=url, document=document,
-            fields=rc.fields if source == "doc_path" else None)
+            fields=rc.fields if source == "doc_path" else None, row=_row(rc))
     except store.ImportFailed as e:
         raise _bad(f"import: {e}")
     return {"account": rc.account, "operations": cands, "skipped": skipped,

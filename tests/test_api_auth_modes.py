@@ -17,6 +17,15 @@ from oto_mcp.providers.api import AUTH_MODES, CONNECTOR
 
 BASE = {"base_url": "https://api.acme.test"}
 
+# Ce que la lib attend du mode `session` : une configuration lisible, l'URL de base et
+# la garde de l'hôte. Les autres modes n'en ont pas l'usage.
+VALEURS = {"session": '{"login": {"path": "/api/login"}}'}
+CONTEXTE = {"session": {"base_url": BASE["base_url"], "guard": lambda url: None}}
+
+
+def _build(mode: str, fields: dict):
+    return build_auth(mode, fields, **CONTEXTE.get(mode, {}))
+
 
 def _required_for(mode: str) -> list:
     return [f for f in CONNECTOR.fields_for({"auth_mode": mode})
@@ -33,7 +42,7 @@ def test_le_jeu_de_modes_recopie_celui_doto_core():
 def test_les_champs_declares_suffisent_a_construire_lauth(mode):
     """Ce que le registre demande de saisir CONSTRUIT l'auth : pas de sous-déclaration
     (un formulaire complet qui échoue quand même au premier appel)."""
-    build_auth(mode, {f.name: "x" for f in _required_for(mode)})
+    _build(mode, {f.name: VALEURS.get(f.name, "x") for f in _required_for(mode)})
 
 
 @pytest.mark.parametrize("mode", AUTH_MODES)
@@ -43,9 +52,10 @@ def test_aucun_champ_declare_nest_superflu(mode):
     pourrait exiger des champs que personne ne lit."""
     required = _required_for(mode)
     for dropped in required:
-        partial = {f.name: "x" for f in required if f.name != dropped.name}
+        partial = {f.name: VALEURS.get(f.name, "x") for f in required
+                   if f.name != dropped.name}
         with pytest.raises(ValueError):
-            build_auth(mode, partial)
+            _build(mode, partial)
 
 
 # --- Ce que le mode rend pertinent ------------------------------------------
@@ -53,6 +63,24 @@ def test_aucun_champ_declare_nest_superflu(mode):
 def test_bearer_ne_montre_pas_les_champs_doauth2_et_de_basic():
     names = [f.name for f in CONNECTOR.fields_for({"auth_mode": "bearer"})]
     assert names == ["base_url", "auth_mode", "label", "doc_path", "token"]
+
+
+def test_session_demande_identifiant_mot_de_passe_et_etapes():
+    by_name = {f.name: f for f in CONNECTOR.fields_for({"auth_mode": "session"})}
+    assert list(by_name) == ["base_url", "auth_mode", "label", "doc_path", "username",
+                             "password", "session"]
+    assert by_name["password"].secret is True
+    assert by_name["session"].secret is False
+
+
+def test_les_etapes_de_session_gardent_leurs_espaces():
+    """Le JSON des étapes peut porter une constante avec un espace : il n'est pas
+    nettoyé comme une clé."""
+    etapes = '{"login": {"path": "/l", "constants": {"client": "Mon espace"}}}'
+    kept = credentials_store.validate_fields("api", {
+        **BASE, "auth_mode": "session", "username": "u", "password": "p",
+        "session": etapes})
+    assert kept["session"] == etapes
 
 
 def test_none_ne_demande_aucun_secret():

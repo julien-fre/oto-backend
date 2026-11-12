@@ -123,8 +123,9 @@ def _import(ctx: ResolvedCtx, inp: ImportInput) -> dict:
             credentials_store.ORG, str(inp.org_id), store.CONNECTOR, account)
         fields = credentials_store.unpack_secret(store.CONNECTOR, row["secret"]) if row else {}
     try:
-        cands, skipped = store.import_candidates(inp.source, url=inp.url,
-                                                 document=inp.document, fields=fields)
+        cands, skipped = store.import_candidates(
+            inp.source, url=inp.url, document=inp.document, fields=fields,
+            row=(credentials_store.ORG, str(inp.org_id), account))
     except store.ImportFailed as e:
         raise AuthzDenied(400, "import_failed", str(e))
     return {"account": account, "operations": cands, "skipped": skipped}

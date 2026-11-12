@@ -9,6 +9,7 @@ simulé.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 import requests
@@ -31,7 +32,8 @@ def _reponse(corps: bytes, statut: int = 200) -> requests.Response:
 @pytest.fixture()
 def outils(monkeypatch):
     monkeypatch.setattr(H, "current_user_sub_from_token", lambda: "u-1")
-    monkeypatch.setattr(H, "_resolve_fields", lambda: dict(CARTE))
+    monkeypatch.setattr(H, "_resolve", lambda: SimpleNamespace(
+        fields=dict(CARTE), entity_type="org", entity_id="1", account=""))
     monkeypatch.setattr(egress, "resolved_addresses", lambda h, p: {"93.184.216.34"})
     m = FastMCP("t")
     H.register(m)

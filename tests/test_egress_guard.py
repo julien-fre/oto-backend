@@ -31,6 +31,7 @@ import ast
 import pathlib
 
 import pytest
+from types import SimpleNamespace
 
 from oto_mcp import egress
 
@@ -449,6 +450,12 @@ def test_salesforce_garde_son_serveur_d_auth(monkeypatch):
     assert salesforce._login_url("") == "https://login.salesforce.com"
 
 
+def _carte(fields: dict) -> SimpleNamespace:
+    """La ligne de coffre que `tools.api._resolve()` rend : ses champs et la ligne."""
+    return SimpleNamespace(fields=dict(fields), entity_type="org", entity_id="1",
+                           account="")
+
+
 def test_api_refuse_la_carte_et_le_dit_en_McpError(monkeypatch):
     """Le vecteur le plus large, de bout en bout : credential résolu → refus
     traduit pour l'appelant, sans qu'aucun client ne soit construit."""
@@ -456,9 +463,9 @@ def test_api_refuse_la_carte_et_le_dit_en_McpError(monkeypatch):
     from oto_mcp.tools import api as tool_http
 
     monkeypatch.setattr(tool_http, "current_user_sub_from_token", lambda: "u-1")
-    monkeypatch.setattr(tool_http, "_resolve_fields",
-                        lambda: {"base_url": "https://pont.acme.test",
-                                 "auth_mode": "bearer", "token": "t"})
+    monkeypatch.setattr(tool_http, "_resolve",
+                        lambda: _carte({"base_url": "https://pont.acme.test",
+                                 "auth_mode": "bearer", "token": "t"}))
     monkeypatch.setattr(egress, "resolved_addresses",
                         _resolution(**{"pont.acme.test": ["127.0.0.1"]}))
     monkeypatch.delenv(egress.ALLOW_VAR, raising=False)
@@ -474,11 +481,11 @@ def test_api_garde_aussi_le_serveur_de_jetons_oauth2(monkeypatch):
     from oto_mcp.tools import api as tool_http
 
     monkeypatch.setattr(tool_http, "current_user_sub_from_token", lambda: "u-1")
-    monkeypatch.setattr(tool_http, "_resolve_fields",
-                        lambda: {"base_url": "https://api.acme.test",
+    monkeypatch.setattr(tool_http, "_resolve",
+                        lambda: _carte({"base_url": "https://api.acme.test",
                                  "auth_mode": "oauth2",
                                  "token_url": "http://127.0.0.1:8200/token",
-                                 "client_id": "c", "client_secret": "s"})
+                                 "client_id": "c", "client_secret": "s"}))
     monkeypatch.setattr(egress, "resolved_addresses",
                         _resolution(**{"api.acme.test": ["93.184.216.34"],
                                        "127.0.0.1": ["127.0.0.1"]}))
@@ -494,9 +501,9 @@ def test_api_laisse_passer_une_carte_publique(monkeypatch):
     from oto_mcp.tools import api as tool_http
 
     monkeypatch.setattr(tool_http, "current_user_sub_from_token", lambda: "u-1")
-    monkeypatch.setattr(tool_http, "_resolve_fields",
-                        lambda: {"base_url": "https://api.acme.test",
-                                 "auth_mode": "bearer", "token": "t"})
+    monkeypatch.setattr(tool_http, "_resolve",
+                        lambda: _carte({"base_url": "https://api.acme.test",
+                                 "auth_mode": "bearer", "token": "t"}))
     monkeypatch.setattr(egress, "resolved_addresses",
                         _resolution(**{"api.acme.test": ["93.184.216.34"]}))
     assert tool_http._client() is not None
@@ -545,9 +552,9 @@ def test_api_refuse_une_carte_qui_vise_l_instance(monkeypatch):
     from oto_mcp.tools import api as tool_http
 
     monkeypatch.setattr(tool_http, "current_user_sub_from_token", lambda: "u-1")
-    monkeypatch.setattr(tool_http, "_resolve_fields",
-                        lambda: {"base_url": "https://mcp.exemple.test",
-                                 "auth_mode": "bearer", "token": "t"})
+    monkeypatch.setattr(tool_http, "_resolve",
+                        lambda: _carte({"base_url": "https://mcp.exemple.test",
+                                 "auth_mode": "bearer", "token": "t"}))
     monkeypatch.setattr(egress, "resolved_addresses", lambda h, p: {"93.184.216.34"})
     with pytest.raises(McpError) as pris:
         tool_http._client()

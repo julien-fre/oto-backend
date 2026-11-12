@@ -4,7 +4,12 @@ To be distinguished from the bridge (`tools/remote.py`, ADR 0034): the bridge fo
 remote service that HOLDS the credential (custody outside the platform, M2M token);
 here oto holds the target API's secret (AES-encrypted vault, byo_org) and calls
 the API **directly**. The org configures on the Custom API card: `base_url`, `auth_mode`
-(bearer/header/query/basic/oauth2/none) + the mode's secret(s).
+(bearer/header/query/basic/oauth2/session/none) + the mode's secret(s).
+
+The `session` mode signs in with an account's login and password and reads with the
+session cookie the service sets (`connectors/api_session.py`: the guard of each login
+hop, the jar sealed in the vault). It only reads: a write verb is refused here, by name,
+before the client is even built (`refuse_write`), and again by oto-core.
 
 Thin adapter (ADR 0037): the engine (auth + forward) lives in oto-core
 (`oto.tools.http`); here we resolve the org credential and translate errors
@@ -28,10 +33,10 @@ import requests
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
-from oto.tools.http import HttpConnectorClient
+from oto.tools.http import HttpConnectorClient, SessionHopRefused, SessionRejected
 
 from .. import access, egress
-from ..connectors import api_operations
+from ..connectors import api_operations, api_session
 from ..texte_tiers import cloture
 from .lecture import LECTURE
 from ..auth.hooks import current_user_sub_from_token
@@ -60,7 +65,9 @@ def register(mcp: FastMCP) -> None:
             "Read-only HTTP GET call to the API configured for your org "
             "(`api` connector). `path` = path relative to the base_url (starts "
             "with /). `params` = optional query params. The configured auth (bearer, "
-            "API key, basic, oauth2) is injected automatically."
+            "API key, basic, oauth2, session) is injected automatically. In session "
+            "mode oto signs in with the account's login and password and reuses the "
+            "session cookie; it is never returned to you."
         ),
     )
     def api_get(path: str, params: dict | None = None) -> dict:
@@ -87,7 +94,8 @@ def register(mcp: FastMCP) -> None:
             "body (dict/list). `params` = optional query params. The configured auth "
             "is injected automatically. Use for endpoints that require "
             "a POST (paginated search, write operations); what the POST is "
-            "allowed to do depends on the target API."
+            "allowed to do depends on the target API. Refused on a card in session "
+            "mode (login and password), which only reads: use `api_get`."
         ),
     )
     def api_post(path: str, body: dict | list | None = None,
@@ -97,7 +105,9 @@ def register(mcp: FastMCP) -> None:
                 code=INVALID_PARAMS,
                 message="`path` must start with / (path relative to base_url).",
             ))
-        client = _client()
+        rc = _resolve()
+        refuse_write(rc.fields if rc else {}, "POST")
+        client = _client_of(rc)
         try:
             return client.post(path, json=body, params=params)
         except requests.JSONDecodeError as e:
@@ -118,8 +128,9 @@ def register(mcp: FastMCP) -> None:
         ),
     )
     def api_doc() -> dict:
-        client = _client()
-        doc_path = _require_doc_path(_resolve_fields())
+        rc = _resolve()
+        client = _client_of(rc)
+        doc_path = _require_doc_path(rc.fields)
         try:
             return client.get(doc_path)
         except requests.JSONDecodeError as e:
@@ -130,14 +141,15 @@ def register(mcp: FastMCP) -> None:
             raise _upstream_error(e)
 
 
-def _resolve_fields() -> dict:
-    """Raw fields of the org's `api` credential — same resolution as `_client()`,
-    split out so `api_doc` can read `doc_path` without rebuilding the client."""
+def _resolve():
+    """The vault row of the call's `api` credential (`ResolvedCredential`: its fields
+    AND the row that holds them — the session mode keeps its jar there), or None.
+    Resolved once per call, by the cascade (`_account`, project pin, team, org)."""
     try:
-        return access.resolve_credential_fields("api")
+        return access.resolve_credential("api", want="byo")
     # noqa: SILENT — same declared debt as _client() (#424, verdict C)
     except Exception:
-        return {}
+        return None
 
 
 def _require_doc_path(fields: dict) -> str:
@@ -168,25 +180,57 @@ def _client() -> HttpConnectorClient:
     ranges remained reachable from an org `base_url`. The guard now
     exists, in `oto_mcp/egress.py` — it refuses an undeclared internal
     destination, `base_url` as well as `token_url` (oauth2 mode)."""
+    return _client_of(_resolve())
+
+
+def _client_of(rc) -> HttpConnectorClient:
+    """The client of a resolved row (`_resolve()`), refusals translated — `_client()`
+    and the tools that need the row's fields too."""
     sub = current_user_sub_from_token()
     if sub is None:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message="http connector unavailable in local stdio (org credential required).",
         ))
-    return client_from_fields(_resolve_fields())
+    if rc is None:
+        return client_from_fields({})
+    return client_from_fields(rc.fields, row=(rc.entity_type, str(rc.entity_id),
+                                              rc.account or ""))
 
 
-def client_for(fields: dict, headers: dict | None = None) -> HttpConnectorClient:
+#: The verbs a card in session mode lets through (oto-core: `READ_METHODS`).
+SESSION_READ_METHODS = ("GET", "HEAD")
+
+
+def refuse_write(fields: dict, method: str) -> None:
+    """A card in `session` mode signs in with a person's login and password: its agent
+    only reads. Any other verb is refused HERE, by name, before a client is built —
+    oto-core refuses it too, this one says why in the agent's terms."""
+    verb = (method or "").strip().upper()
+    if api_session.is_session(fields) and verb not in SESSION_READ_METHODS:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(f"Refusal `api_session_read_only`: this Custom API signs in with an "
+                     f"account's login and password (session mode), so it only reads "
+                     f"(GET, HEAD). {verb} was not sent. Read with `api_get`, or a GET "
+                     f"action."),
+            data={"code": "api_session_read_only", "retryable": False,
+                  "method": verb}))
+
+
+def client_for(fields: dict, headers: dict | None = None, *,
+               row: "api_session.Row | None" = None) -> HttpConnectorClient:
     """THE oto-core client for these credential fields — the only place one is built,
     for the agent's calls (`client_from_fields`) as for the REST import of a `doc_path`
     (`connectors/api_operations.fetch_doc_path_document`). The TWO destinations a
     card carries are guarded: the called base, and — in oauth2 mode — the token
     server, which goes out via `requests.post` from oto-core without passing through
     `base_url`. Guarding only the first would leave an entire outbound path outside the
-    guard. `headers` = the saved definition's constant headers. Raises
-    `egress.EgressRefused` or `ValueError` (incomplete or invalid config): each caller
-    translates them for its face."""
+    guard. In `session` mode, every hop of the login is guarded as it goes
+    (`api_session.guard`), and `row` — the vault row of these fields, required in that
+    mode — keeps the session's cookie jar (`api_session`). `headers` = the saved
+    definition's constant headers. Raises `egress.EgressRefused` or `ValueError`
+    (incomplete or invalid config): each caller translates them for its face."""
     base_url = (fields.get("base_url") or "").strip()
     mode = (fields.get("auth_mode") or "").strip()
     if not base_url or not mode:
@@ -196,11 +240,20 @@ def client_for(fields: dict, headers: dict | None = None) -> HttpConnectorClient
     token_url = (fields.get("token_url") or "").strip()
     if mode.lower() == "oauth2" and token_url:
         egress.check_url(token_url, connector="api", field="token_url")
+    session = {}
+    if api_session.is_session(fields):
+        if row is None:
+            raise ValueError("the session mode keeps its cookie in the card's vault row, "
+                             "and none was given for this call")
+        session = {"guard": api_session.guard(base_url),
+                   "jar": api_session.read_jar(row, fields),
+                   "on_jar": api_session.jar_writer(row, fields)}
     return api_operations.with_constant_headers(
-        HttpConnectorClient(base_url, mode, fields, timeout=TIMEOUT), headers)
+        HttpConnectorClient(base_url, mode, fields, timeout=TIMEOUT, **session), headers)
 
 
-def client_from_fields(f: dict, headers: dict | None = None) -> HttpConnectorClient:
+def client_from_fields(f: dict, headers: dict | None = None, *,
+                       row: "api_session.Row | None" = None) -> HttpConnectorClient:
     """The client for these credential fields, refusals translated into actionable
     McpErrors — `_client()` for the call's credential, `api_act` for the row it
     resolved. Built by the single constructor, `client_for`; only the translation
@@ -214,7 +267,7 @@ def client_from_fields(f: dict, headers: dict | None = None) -> HttpConnectorCli
             ),
         ))
     try:
-        return client_for(f, headers)
+        return client_for(f, headers, row=row)
     except egress.EgressRefused as e:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
     except ValueError as e:
@@ -256,7 +309,27 @@ def _excerpt(response) -> str:
 def _value_error(e: ValueError) -> McpError:
     """A refusal raised by the client before or instead of a response. A redirect
     (`RedirectRefused`, which carries `location`) is never followed — the injected
-    auth would leave with it — so say where the API pointed and how to go there."""
+    auth would leave with it — so say where the API pointed and how to go there.
+
+    Session mode: `SessionRejected` (the service refused the login, or the session
+    right after a fresh one) declares `credential_rejected`, which marks the served
+    card red (`error_taxonomy.credential_rejected_in_chain`) — the caller raises the
+    result `from e`; `SessionHopRefused` names the host the login was sent to."""
+    if isinstance(e, SessionRejected):
+        err = McpError(ErrorData(code=INVALID_PARAMS, message=(
+            "The service refused this Custom API's sign-in (session mode): the login "
+            "or password on the card is no longer accepted. Nothing was retried beyond "
+            "one fresh sign-in. Have the card's owner set the login and password again "
+            "on the Custom API card."),
+            data={"code": "credential_rejected", "retryable": False}))
+        err.credential_rejected = True
+        return err
+    if isinstance(e, SessionHopRefused):
+        return McpError(ErrorData(code=INVALID_PARAMS, message=(
+            f"Refusal `api_session_hop_refused`: {e}. Nothing was sent to that host. If "
+            "it belongs to the service, add it to `hosts` (or its registrable domain to "
+            "`domain`) in the card's session steps."),
+            data={"code": "api_session_hop_refused", "retryable": False}))
     location = getattr(e, "location", None)
     if location is not None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=(

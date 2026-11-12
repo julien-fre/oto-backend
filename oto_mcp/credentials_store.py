@@ -724,6 +724,14 @@ def clear_dedicated_app(owner_type: str, owner_id: int, connector: str) -> bool:
 # access_token_for) gardent `meta` entier ; les surfaces de statut servent le
 # `meta` public.
 _SECRET_META_KEYS = ("access_token", "refresh_token", "id_token")
+# Les satellites SCELLÉS (`seal_satellite`) : un état propre au compte, secret, qui
+# change à l'usage et non à la pose — le jar de cookies du mode `session` du connecteur
+# `api`. Rangé chiffré dans `meta` sous `<nom>_enc` (pas dans `secret_enc`, que seule la
+# pose réécrit : une écriture d'usage ne bumpe ni `version` ni `set_at`, et ne peut pas
+# écraser une carte reposée entre-temps). Jeu FERMÉ, et retiré des surfaces de statut
+# comme les bearers.
+SEALED_SATELLITES = ("session_jar",)
+_SECRET_META_KEYS += tuple(f"{nom}_enc" for nom in SEALED_SATELLITES)
 
 
 def _public_meta(meta: Optional[dict]) -> dict:
@@ -1232,6 +1240,41 @@ def update_meta(entity_type: str, entity_id: str, connector: str, account: str,
         return _do(conn)
     with _connect() as c:
         return _do(c)
+
+
+def _satellite(nom: str) -> str:
+    if nom not in SEALED_SATELLITES:
+        raise ValueError(f"satellite scellé inconnu : {nom!r} "
+                         f"(attendu : {', '.join(SEALED_SATELLITES)})")
+    return f"{nom}_enc"
+
+
+def seal_satellite(entity_type: str, entity_id: str, connector: str, account: str,
+                   nom: str, valeur: str) -> bool:
+    """Range `valeur` CHIFFRÉE dans `meta.<nom>_enc` de la ligne, par fusion JSONB
+    (`update_meta`) : ni le secret ni les autres satellites ne bougent. L'AAD est celle
+    de la ligne suivie du nom du satellite — un chiffré ne se transplante ni vers une
+    autre ligne, ni vers `secret_enc`. Dernier écrivain gagnant entre processus. False
+    si la ligne n'existe plus (clé retirée pendant l'appel)."""
+    cle = _satellite(nom)
+    enc = crypto.encrypt(valeur, f"{_aad(entity_type, entity_id, connector, account)}#{nom}")
+    return update_meta(entity_type, entity_id, connector, account, {cle: enc})
+
+
+def unseal_satellite(entity_type: str, entity_id: str, connector: str, account: str,
+                     nom: str) -> Optional[str]:
+    """La valeur en clair de `meta.<nom>_enc`, ou None si la ligne n'en porte pas. Un
+    chiffré qui ne se relit pas LÈVE (`crypto.decrypt`) : à l'appelant de dire ce que
+    vaut son état perdu."""
+    cle = _satellite(nom)
+    with _connect() as c:
+        row = c.execute(
+            "SELECT meta->>%s AS enc FROM connector_credentials "
+            "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=%s",
+            (cle, entity_type, entity_id, connector, account)).fetchone()
+    if not row or not row["enc"]:
+        return None
+    return crypto.decrypt(row["enc"], f"{_aad(entity_type, entity_id, connector, account)}#{nom}")
 
 
 @lecture_d_appel

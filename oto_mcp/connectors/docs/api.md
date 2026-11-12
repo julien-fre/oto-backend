@@ -2,7 +2,7 @@
 
 the Custom API connector connects a tool that has **no card of its own** in the catalogue (a payroll, an ERP, an internal service) as long as it offers an API. Gather, from the tool's API documentation:
 - the **base URL** of its API (e.g. `https://api.acme.test/v1`) — the paths of its documentation are relative to it
-- how it authenticates: a bearer token, a key in a header (and the header's name) or in a query parameter, a basic login, OAuth2 client credentials, or nothing
+- how it authenticates: a bearer token, a key in a header (and the header's name) or in a query parameter, a basic login, OAuth2 client credentials, a session (an account's login and password, for a service with no API key), or nothing
 - the key itself, created in the tool's settings — **paste it only in this form**: never in a chat, never in an email. If a key was pasted in a conversation, revoke it at the provider and create a new one
 - optionally, the path of its OpenAPI description in JSON (e.g. `/openapi.json`), to import its operations
 
@@ -26,3 +26,4 @@ the Custom API connector connects a tool that has **no card of its own** in the 
 
 - oto calls the API directly with the key you stored: what a POST, PUT, PATCH or DELETE does is decided by the target API and the rights of the key — give it the narrowest rights the tool allows
 - redirects are never followed (the key would leave with them); header and cookie parameters, form bodies and YAML documents are not imported — they are listed as skipped, with the reason
+- session mode: oto signs in with the account's login and password as the card's `session` steps describe (a JSON login, then optionally the URL the login answer names and its redirects), keeps the session cookie encrypted in the vault, and signs in again once when the service asks; it only reads (GET), and every sign-in step stays on the base URL's host, the hosts the card lists or its declared domain. The login body is JSON only. A refused login marks the card red: set the login and password again
