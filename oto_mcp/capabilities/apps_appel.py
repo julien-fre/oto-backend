@@ -154,6 +154,9 @@ class AppCallInput(BaseModel):
     consent: Optional[str] = Field(
         default=None, description="write_cell, add_row, start_agent: the token "
         "`POST /api/me/apps/{app_id}/consent` returned for this exact gesture.")
+    draft: bool = Field(
+        default=False, description="The app's DRAFT is open, not its published version "
+        "(its editors only): judged against the draft's manifest and its author.")
 
 
 class AppRun(BaseModel):
@@ -224,11 +227,22 @@ def _refus(status: int, code: str, msg: str) -> AuthzDenied:
     return AuthzDenied(status, code, msg)
 
 
-def _app_pour(ctx: ResolvedCtx, app_id: int) -> dict:
+def _app_pour(ctx: ResolvedCtx, app_id: int, draft: bool = False) -> dict:
     app = db.apps.get_for_call(int(app_id))
     if (app is None or app.get("archived_at") is not None
             or not ownership.can_access(ctx.sub, APP_RTYPE, str(app["id"]), "read")):
         raise _refus(404, "unknown_app", f"App {app_id} doesn't exist or isn't shared with you.")
+    if draft:
+        # L'APERÇU du brouillon (`docs/apps.md` § Brouillon et publication) : ses seuls
+        # éditeurs l'ouvrent, et il se juge comme une app à part entière — SON
+        # manifeste, SON auteur (le dernier à l'avoir écrit) ∩ le lecteur. Un lecteur
+        # reçoit le même refus qu'il y ait un brouillon ou non.
+        if not ownership.can_access(ctx.sub, APP_RTYPE, str(app["id"]), "write"):
+            raise _refus(403, "draft_editors_only", "Only the app's editors open its draft.")
+        brouillon = db.app_versions.draft(int(app["id"]))
+        if brouillon is None:
+            raise _refus(404, "no_draft", "This app has no draft.")
+        app = {**app, "manifest": brouillon["manifest"], "updated_by": brouillon["by"]}
     if not app.get("updated_by"):
         raise _refus(403, "app_author_unknown",
                      "Nobody is known to have written this app, so it can't act for anyone.")
@@ -316,6 +330,11 @@ def _empreinte(inp: AppCallInput) -> str:
     corps = {k: getattr(inp, k) for k in ("action", "table", "agent", "row_id", "field",
                                            "value", "expected_revision", "values", "input",
                                            "files", "file")}
+    if inp.draft:
+        # Un jeton émis pour l'aperçu du brouillon ne se brûle pas sur l'app publiée
+        # (ni l'inverse) : leurs manifestes et leurs auteurs diffèrent. Absente quand
+        # elle est fausse, l'empreinte d'un geste sur l'app publiée ne change pas.
+        corps["draft"] = True
     if isinstance(inp.file, dict):
         # Le type tel qu'un navigateur le recopie dans l'en-tête d'une partie multipart
         # peut différer d'un octet du `File.type` annoncé (casse, paramètres) : le même.
@@ -545,14 +564,14 @@ def _remis_a_l_agent(app: dict, fichiers: list[dict], handoff: Optional[str]) ->
 
 
 def deposer(ctx: ResolvedCtx, app_id: int, consent: Optional[str], name: str,
-            declared_type: Optional[str], data: bytes) -> dict:
+            declared_type: Optional[str], data: bytes, draft: bool = False) -> dict:
     """Le dépôt d'un fichier dans une app (`POST /api/me/apps/{app_id}/files`) : tout le
     jugement est ICI, la route n'adapte que le multipart. L'annonce (nom, taille, type
     déclaré) est ce que le consentement a signé ; les octets reçus doivent y répondre,
     et leur type se juge sur eux (`type_servi`)."""
-    app = _app_pour(ctx, app_id)
+    app = _app_pour(ctx, app_id, draft)
     annonce = {"name": name, "size": len(data), "media_type": _type_normal(declared_type)}
-    inp = AppCallInput(app_id=app_id, action="upload_file", file=annonce)
+    inp = AppCallInput(app_id=app_id, action="upload_file", file=annonce, draft=draft)
     _annonce(app, annonce)
     _place(app, ctx.sub, len(data))
     media_type = _type_pris(data, declared_type)
@@ -693,7 +712,7 @@ def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     _depuis_l_hote(ctx)
     if inp.action not in GESTES:
         raise AuthzDenied(400, "consent_not_needed", f"`{inp.action}` doesn't take a consent.")
-    app = _app_pour(ctx, inp.app_id)
+    app = _app_pour(ctx, inp.app_id, inp.draft)
     _, resume = _geste(ctx, app, inp)
     jeton = secrets.token_urlsafe(32)
     ttl = CONSENT_TTL_UPLOAD if inp.action == "upload_file" else CONSENT_TTL
@@ -706,7 +725,7 @@ def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
 def _call(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     from .datastore import rows as R
 
-    app = _app_pour(ctx, inp.app_id)
+    app = _app_pour(ctx, inp.app_id, inp.draft)
     o = inp.options or {}
 
     if inp.action == "upload_file":
