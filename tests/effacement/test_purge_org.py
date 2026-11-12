@@ -141,8 +141,11 @@ def test_les_objets_de_l_org_sont_tous_trouves_et_rien_du_voisin(base):
     with _conn(base) as c:
         cles = purge.cles_d_objet(c, figer(c, base[A]["org"]), BASE_SOURCE)
     a, b = set(base[A]["objets"]), set(base[B]["objets"])
-    # L'avatar d'alice reste : elle GARDE son compte (membre d'une autre org).
-    assert cles == a - {k for k in a if k.startswith("avatars/")}
+    # Les objets de l'org partent (logo, fichier de projet, audio) ; ce qui est à alice,
+    # qui GARDE son compte, reste — son avatar, et ses images citées par URL (une ligne
+    # qui reste pourrait les citer aussi).
+    a_alice = {k for k in a if k.startswith(("avatars/", "images/"))}
+    assert cles == a - a_alice
     assert not cles & b
 
 
@@ -181,11 +184,9 @@ def test_la_purge_efface_l_org_et_rien_d_autre(base):
         ecrit = purge.purger(c, inst)
         assert ecrit["tool_calls"] >= 2 and ecrit["users"] == 1
         assert purge.residu(c, inst) == {}
-        # Rien d'autrui : le voisin est intact, ligne pour ligne — sauf le partage qu'il
-        # avait DÉRIVÉ d'un partage de l'org effacée (vérifié plus bas).
-        attendu = dict(base["avant_b"])
-        attendu["grants"] -= 1
-        assert _marquees(c, B) == {t: n for t, n in attendu.items() if n}
+        # Rien d'autrui : le voisin est intact, ligne pour ligne — son partage DÉRIVÉ
+        # d'un partage de l'org effacée reste, révoqué (vérifié plus bas).
+        assert _marquees(c, B) == base["avant_b"]
         # Rien d'oublié : le marqueur ne survit que là où on le garde à dessein.
         reste = _marquees(c, A)
         # Le contrat du voisin porte le marqueur du voisin seulement ; celui de l'org reste.
@@ -206,10 +207,12 @@ def test_la_purge_efface_l_org_et_rien_d_autre(base):
         assert c.execute("SELECT org_id, is_active FROM org_members WHERE sub = %s",
                          (base["carol"],)).fetchall() == [{"org_id": base[B]["org"],
                                                             "is_active": True}]
-        # Le partage dérivé du voisin est parti avec son parent.
+        # Le partage dérivé du voisin reste, RÉVOQUÉ et détaché : il n'ouvre plus rien,
+        # et un partage s'archive, il ne se supprime pas.
         assert ecrit.get("grants.descendants") == 1
-        assert c.execute("SELECT count(*) AS n FROM grants WHERE id = %s",
-                         (base["derive"],)).fetchone()["n"] == 0
+        r = c.execute("SELECT revoked_at, parent_id FROM grants WHERE id = %s",
+                      (base["derive"],)).fetchone()
+        assert r["revoked_at"] is not None and r["parent_id"] is None
 
 
 def test_la_pierre_tombale_ne_garde_rien_de_personnel(base):

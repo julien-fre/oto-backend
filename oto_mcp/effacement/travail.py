@@ -100,8 +100,10 @@ def avancer(d: dict) -> bool:
                 (list(inst.partants), inst.org_id)).fetchone()
             noter("depuis_mois", r["m"] if r else "0000-00")
         if "objets" not in recu:
-            cles = purge.cles_d_objet(conn, inst, media_store.public_base())
-            noter("objets", {"supprimes": externes.supprimer_objets(cles)})
+            gardees: set[str] = set()
+            cles = purge.cles_d_objet(conn, inst, media_store.public_base(), gardees)
+            noter("objets", {"supprimes": externes.supprimer_objets(cles),
+                             "cites_gardes": len(gardees - cles)})
         if "unipile" not in recu:
             noter("unipile", externes.liberer_sieges_unipile(inst.org_id))
         if "logto_org" not in recu:

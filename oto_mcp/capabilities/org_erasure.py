@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from .. import config, org_store, org_suspension
 from ..db import _connect
-from ..effacement import demandes, purge
+from ..effacement import demandes, purge, travail
 from ..effacement.courriels import send_org_erasure_confirm_email
 from ..effacement.perimetre import EffacementRefuse, Instantane, figer, titulaire
 from ._authz import COMMERCE_SERVICE, ORG_ADMIN_OF, SUB_ONLY
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 _PLAFOND_DU_PLAN = 100_000
 _MOTIF_MAX = 500
-_MOTIF_DE_SUSPENSION = "effacement confirmé (demande #{id})"
+_MOTIF_DE_SUSPENSION = org_suspension.MOTIF_EFFACEMENT + " (demande #{id})"
 
 
 class OrgErasureInput(BaseModel):
@@ -118,6 +118,14 @@ def _lien(front_base: Optional[str], jeton: str) -> str:
     return f"{base}/erasure/{jeton}"
 
 
+def _ouvert() -> None:
+    """Une instance qui ne purge pas (`OTO_EFFACEMENTS` absente) n'accepte ni demande ni
+    confirmation : l'org serait suspendue sans jamais être effacée."""
+    if not travail.actif():
+        raise AuthzDenied(409, "erasure_disabled",
+                          "L'effacement d'org n'est pas ouvert sur cette instance.")
+
+
 def _est_membre_admin(sub: str, org_id: int) -> bool:
     return org_store.get_org_role(org_id, sub) == "org_admin"
 
@@ -144,6 +152,7 @@ def _org_erasure(ctx: ResolvedCtx, inp: OrgErasureInput) -> dict:
         logger.warning("effacement %s annulé org=%s par=%s", d["id"], inp.org_id, ctx.sub)
         return {"org_id": inp.org_id, "erasure": _vue(annulee)}
     # op=request
+    _ouvert()
     via = "owner" if _est_membre_admin(ctx.sub, inp.org_id) else "operator"
     motif = (inp.reason or "").strip() or None
     if via == "operator" and not motif:
@@ -186,6 +195,7 @@ _ERREURS = (
     DeclaredError(409, "operator_account", "un compte d'opérateur n'a que cette org"),
     DeclaredError(409, "tenant_admin_account", "un compte d'admin de tenant n'a que cette org"),
     DeclaredError(409, "no_owner", "aucun admin de l'org n'est joignable par mail"),
+    DeclaredError(409, "erasure_disabled", "l'instance ne purge pas (`OTO_EFFACEMENTS`)"),
 )
 
 CAPABILITIES += [
@@ -235,6 +245,7 @@ def _org_erasure_confirm(ctx: ResolvedCtx, inp: ErasureConfirmInput) -> dict:
            "grace_days": demandes.DELAI_DE_GRACE.days, "erasure": _vue(d)}
     if inp.op == "preview":
         return out
+    _ouvert()
     if not destinataire:
         raise AuthzDenied(403, "not_recipient",
                           "Seul le titulaire à qui le lien a été envoyé peut confirmer : se "
@@ -260,7 +271,8 @@ CAPABILITIES += [
             DeclaredError(404, "invalid_link", "jeton inconnu, consommé ou échu"),
             DeclaredError(403, "not_recipient", "op=confirm par un autre compte que le titulaire"),
             *(e for e in _ERREURS if e.code in ("already_erased", "subscription_active",
-                                                 "operator_account", "tenant_admin_account")),
+                                                 "operator_account", "tenant_admin_account",
+                                                 "erasure_disabled")),
         ),
         description=(
             "The owner's side of an org erasure, from the emailed link. op=preview → the "

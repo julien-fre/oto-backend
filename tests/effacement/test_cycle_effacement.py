@@ -43,6 +43,8 @@ _ENVOYES: list[dict] = []
 
 @pytest.fixture
 def mails(monkeypatch):
+    # Une instance qui purge : sans l'interrupteur, demander et confirmer sont refusés.
+    monkeypatch.setenv(travail.ENV_ACTIF, "1")
     envoyes = _ENVOYES
     monkeypatch.setattr(cap, "send_org_erasure_confirm_email",
                         lambda to, **kw: envoyes.append({"to": to, **kw}) or True)
@@ -65,6 +67,13 @@ def _jeton(mails) -> str:
 
 def _confirmer(sub, jeton, op="confirm"):
     return cap._org_erasure_confirm(_ctx(sub), cap.ErasureConfirmInput(op=op, token=jeton))
+
+
+def test_une_instance_qui_ne_purge_pas_refuse_la_demande(base, mails, monkeypatch):
+    monkeypatch.delenv(travail.ENV_ACTIF)
+    with pytest.raises(AuthzDenied) as e:
+        _demander(base["org"])
+    assert e.value.code == "erasure_disabled"
 
 
 def test_le_lien_part_chez_le_titulaire_et_lui_seul_confirme(base, mails):
@@ -113,6 +122,9 @@ def test_l_org_reste_suspendue_tant_que_l_effacement_est_confirme(base, mails):
                                                                         org_id=base["org"]))
     assert e.value.code == "erasure_scheduled"
     assert org_store.get_org_suspension(base["org"]) is not None
+    # Le message servi aux membres dit « restaurer », pas « prendre un plan ».
+    from oto_mcp import org_suspension as garde
+    assert "restaurer" in garde.message(base["org"])
 
 
 def test_sans_l_interrupteur_le_travail_n_ecrit_rien(base, mails, monkeypatch):

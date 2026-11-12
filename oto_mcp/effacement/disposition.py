@@ -160,15 +160,17 @@ NON_EXPORTEES: dict[str, Decision] = {
 # (ou, en cascade, partirait sans décision). Chacune est tranchée :
 # - `cascade`  : la clé est `ON DELETE CASCADE` et ses descendants sont de toute façon
 #                du périmètre (une sous-page suit sa page) ;
-# - `supprimer`: les descendants hors périmètre partent aussi — un partage dérivé d'un
-#                partage effacé ne doit jamais survivre seul, il ÉLARGIRAIT un accès ;
+# - `revoquer` : les descendants hors périmètre sont RÉVOQUÉS et détachés — un partage
+#                dérivé d'un partage effacé ne doit jamais survivre actif (il élargirait
+#                un accès), et un partage ne se supprime jamais : il s'archive
+#                (`revoked_at`, 0053-D7), sa consommation reste ;
 # - `detacher` : les descendants hors périmètre restent, leur lien vers le parent est
 #                vidé (une instance de connecteur d'une autre org héritée d'une des siennes) ;
 # - `set_null` : la base le fait elle-même (`ON DELETE SET NULL`) — une copie publiée
 #                par une autre org reste, sans son « copiée de ».
 AUTO_REFERENCES: dict[str, str] = {
     "docs": "cascade",
-    "grants": "supprimer",
+    "grants": "revoquer",
     "connector_instances": "detacher",
     "procedure_comments": "cascade",
     "doctrine_library": "set_null",     # la table derrière la vue `guide_library`

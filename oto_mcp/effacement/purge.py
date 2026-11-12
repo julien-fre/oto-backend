@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from urllib.parse import quote
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
@@ -136,9 +137,16 @@ def plan(conn, inst: Instantane, *, plafond: int | None = None) -> dict:
             "plafond": plafond, "tables": out}
 
 
-def cles_d_objet(conn, inst: Instantane, base_publique: str | None) -> set[str]:
-    """Les objets du stockage que l'org désigne : colonnes de clé, et URL de NOTRE
-    stockage public dans les colonnes d'URL (avatar d'un compte qui part, logo)."""
+def cles_d_objet(conn, inst: Instantane, base_publique: str | None,
+                 gardees: set[str] | None = None) -> set[str]:
+    """Les objets du stockage que l'org désigne : colonnes de clé, URL de NOTRE stockage
+    public dans les colonnes d'URL (avatar d'un compte qui part, logo), et images citées
+    dans le texte des lignes effacées.
+
+    ⚠️ Une image citée par URL peut l'être AUSSI par une ligne qui reste (une procédure
+    copiée, une entrée de bibliothèque) et le seau n'est pas versionné : seule part une
+    image déposée par un compte qui PART (`images/<sub>/…`). Les autres restent — `gardees`
+    les reçoit, le reçu les compte."""
     schema, classement = preparer(conn)
     tout = cibles(classement)
     pred, params = compilateur(tout), inst.parametres()
@@ -151,6 +159,7 @@ def cles_d_objet(conn, inst: Instantane, base_publique: str | None) -> set[str]:
                 params)}
     if base_publique:
         prefixe = base_publique.rstrip("/") + "/"
+        a_eux = tuple(f"images/{quote(sub, safe='')}/" for sub in inst.partants)
         # Une image déposée par un agent (`images/<sub>/…`) n'a d'autre trace que son
         # URL collée dans une page, une ligne de tableau, un JSON : comme l'export, on la
         # cherche dans le TEXTE de chaque ligne effacée — sauf le journal, que personne
@@ -162,7 +171,11 @@ def cles_d_objet(conn, inst: Instantane, base_publique: str | None) -> set[str]:
             for r in cur.stream(f"SELECT row_to_json(x)::text AS j FROM {t} x "
                                 f"WHERE {pred(t)}", params):
                 if prefixe in r["j"]:
-                    cles |= cles_dans(r["j"], base_publique)
+                    for cle in cles_dans(r["j"], base_publique):
+                        if any(cle.startswith(p) for p in a_eux):
+                            cles.add(cle)
+                        elif gardees is not None:
+                            gardees.add(cle)
         for nom in sorted(COLONNES_D_URL):
             t, col = nom.split(".")
             for r in conn.execute(
@@ -195,24 +208,23 @@ def _pierre_tombale(conn, schema: Schema, org_id: int) -> int:
 
 def _descendants(conn, schema: Schema, t: str, cond: str, params: dict) -> int:
     """Les lignes HORS périmètre qui descendent (clé vers la même table) d'une ligne
-    effacée : supprimées ou détachées selon `AUTO_REFERENCES`."""
+    effacée : révoquées ou détachées selon `AUTO_REFERENCES` — jamais supprimées, ce
+    sont celles d'un autre."""
     cle = next(k for k in schema.cles_de(t) if k.cible == t)
     col, = cle.colonnes
-    desc = (f"WITH RECURSIVE d AS (SELECT id FROM {t} WHERE {col} IN "
-            f"(SELECT id FROM {t} WHERE {cond}) AND NOT ({cond}) "
-            f"UNION SELECT x.id FROM {t} x JOIN d ON x.{col} = d.id) SELECT id FROM d")
+    enfants = (f"{col} IN (SELECT id FROM {t} WHERE {cond}) AND NOT ({cond})")
     if dp.AUTO_REFERENCES[t] == "detacher":
-        return conn.execute(f"UPDATE {t} SET {col} = NULL WHERE {col} IN "
-                            f"(SELECT id FROM {t} WHERE {cond}) AND NOT ({cond})",
-                            params).rowcount
-    ids = [r["id"] for r in conn.execute(desc, params)]
+        return conn.execute(f"UPDATE {t} SET {col} = NULL WHERE {enfants}", params).rowcount
+    # `revoquer` : toute la descendance hors périmètre, puis le lien vers le parent effacé.
+    ids = [r["id"] for r in conn.execute(
+        f"WITH RECURSIVE d AS (SELECT id FROM {t} WHERE {enfants} "
+        f"UNION SELECT x.id FROM {t} x JOIN d ON x.{col} = d.id) SELECT id FROM d", params)]
     if not ids:
         return 0
-    for enfant in schema.cles:          # leurs enfants d'abord (compteurs d'un partage)
-        if enfant.cible == t and enfant.table != t:
-            conn.execute(f"DELETE FROM {enfant.table} WHERE {enfant.colonnes[0]} = ANY(%s)",
-                         (ids,))
-    return conn.execute(f"DELETE FROM {t} WHERE id = ANY(%s)", (ids,)).rowcount
+    conn.execute(f"UPDATE {t} SET revoked_at = COALESCE(revoked_at, NOW()) "
+                 f"WHERE id = ANY(%s)", (ids,))
+    conn.execute(f"UPDATE {t} SET {col} = NULL WHERE {enfants}", params)
+    return len(ids)
 
 
 def _basculer_les_restants(conn, inst: Instantane) -> int:
@@ -251,7 +263,7 @@ def purger(conn, inst: Instantane, *, arret: Callable[[], bool] = lambda: False,
             break
         if t in sauf:
             continue
-        if c.decision.action == dp.EFFACER and dp.AUTO_REFERENCES.get(t) in ("supprimer",
+        if c.decision.action == dp.EFFACER and dp.AUTO_REFERENCES.get(t) in ("revoquer",
                                                                             "detacher"):
             n_desc = _descendants(conn, schema, t, pred(t), params)
             if n_desc:
