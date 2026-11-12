@@ -97,6 +97,13 @@ def figer(conn, org_id: int) -> Instantane:
         conn, "SELECT DISTINCT sub AS v FROM org_members "
               "WHERE sub = ANY(%s) AND org_id <> %s", (membres, org_id)))
     partants = tuple(s for s in membres if s not in ailleurs)
+    _refuser_comptes(conn, partants)
+    return Instantane(org_id, groupes, partants,
+                      tuple(s for s in membres if s in ailleurs))
+
+
+def _refuser_comptes(conn, partants: tuple[str, ...]) -> None:
+    """Un compte qui partirait avec l'org mais qu'on ne supprime pas par ce geste."""
     operateurs = _valeurs(
         conn, "SELECT sub AS v FROM users WHERE sub = ANY(%s) "
               "AND role IN ('admin', 'super_admin')", (list(partants),))
@@ -114,8 +121,21 @@ def figer(conn, org_id: int) -> Instantane:
             f"{len(admins)} compte(s) d'admin de tenant n'ont que cette org : leur compte "
             "partirait avec elle, et le tenant perdrait un admin. Le retirer d'abord "
             "(`oto_admin_tenant op=admin_remove`), ou l'ajouter à une autre org.")
-    return Instantane(org_id, groupes, partants,
-                      tuple(s for s in membres if s in ailleurs))
+
+
+def rafraichir(conn, inst: Instantane) -> Instantane:
+    """Le périmètre figé à la confirmation, REVU au début de la purge. Pendant le délai
+    de grâce, un partant a pu rejoindre une autre org (une invitation reste acceptable) :
+    il devient restant et garde son compte. La liste des partants ne fait que
+    RÉTRÉCIR — un compte arrivé depuis n'est pas ajouté à ceux qu'on supprime. Les refus
+    sur les comptes se rejouent sur ce qui reste."""
+    ailleurs = set(_valeurs(
+        conn, "SELECT DISTINCT sub AS v FROM org_members WHERE sub = ANY(%s) AND org_id <> %s",
+        (list(inst.partants), inst.org_id)))
+    partants = tuple(s for s in inst.partants if s not in ailleurs)
+    _refuser_comptes(conn, partants)
+    return Instantane(inst.org_id, inst.groupes, partants,
+                      tuple(sorted(set(inst.restants) | ailleurs)))
 
 
 def titulaire(conn, org_id: int) -> dict:

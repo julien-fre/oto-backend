@@ -155,6 +155,25 @@ NON_EXPORTEES: dict[str, Decision] = {
     "upload_tokens_used": expire("anti-rejeu de jetons signés, jusqu'à leur échéance"),
 }
 
+# Les tables qui se désignent ELLES-MÊMES (une clé étrangère vers leur propre table) :
+# une ligne qui RESTE peut y descendre d'une ligne effacée, et sa clé bloquerait la purge
+# (ou, en cascade, partirait sans décision). Chacune est tranchée :
+# - `cascade`  : la clé est `ON DELETE CASCADE` et ses descendants sont de toute façon
+#                du périmètre (une sous-page suit sa page) ;
+# - `supprimer`: les descendants hors périmètre partent aussi — un partage dérivé d'un
+#                partage effacé ne doit jamais survivre seul, il ÉLARGIRAIT un accès ;
+# - `detacher` : les descendants hors périmètre restent, leur lien vers le parent est
+#                vidé (une instance de connecteur d'une autre org héritée d'une des siennes) ;
+# - `set_null` : la base le fait elle-même (`ON DELETE SET NULL`) — une copie publiée
+#                par une autre org reste, sans son « copiée de ».
+AUTO_REFERENCES: dict[str, str] = {
+    "docs": "cascade",
+    "grants": "supprimer",
+    "connector_instances": "detacher",
+    "procedure_comments": "cascade",
+    "doctrine_library": "set_null",     # la table derrière la vue `guide_library`
+}
+
 # Les colonnes de CLÉ d'objet que l'export ne connaît pas (il ne part pas avec ces
 # tables), et que l'effacement doit retirer du stockage.
 CLES_D_OBJET_EN_PLUS = frozenset({"copilot_attachments.s3_key"})
@@ -181,9 +200,14 @@ def regle_de(entree: Table, d: Decision) -> Regle | None:
 
 
 def verifier(classement: dict[str, Table] = CLASSEMENT,
-             colonnes: dict[str, tuple[str, ...]] | None = None) -> None:
-    """Refuse, en les listant toutes, les anomalies de la disposition."""
+             colonnes: dict[str, tuple[str, ...]] | None = None,
+             auto_references: set[str] | None = None) -> None:
+    """Refuse, en les listant toutes, les anomalies de la disposition. `auto_references` :
+    les tables du schéma réel qui portent une clé étrangère vers elles-mêmes."""
     anomalies: list[str] = []
+    for t in sorted((auto_references or set()) - set(AUTO_REFERENCES)):
+        anomalies.append(f"{t} : se désigne elle-même sans décision "
+                         "(`effacement/disposition.py::AUTO_REFERENCES`)")
     for t, e in sorted(classement.items()):
         if e.classe in EXPORTEES:
             if t in NON_EXPORTEES:

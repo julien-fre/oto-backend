@@ -90,8 +90,15 @@ de l'org — l'export exige les deux.
 ## La purge (`effacement/purge.py`, `effacement/travail.py`)
 
 Hors du processus MCP : le timer quotidien de maintenance (**prod seulement** — la préprod
-partage la base et ne doit jamais purger). Dans l'ordre, chaque étape notée au reçu :
+partage la base et ne doit jamais purger), **fermé par `OTO_EFFACEMENTS`** : absente, le
+travail liste ce qu'il ferait et n'écrit rien. Dans l'ordre, chaque étape notée au reçu :
 
+0. **périmètre revu** : un partant qui a rejoint une autre org pendant le délai de grâce
+   devient restant et garde son compte (la liste ne fait que rétrécir) ; les refus sur
+   les comptes (opérateur, admin de tenant) se rejouent ;
+   **répétition** : la purge entière jouée puis ANNULÉE dans une seule transaction
+   (journal sauté) — une clé étrangère qu'une ligne restante pose sur une ligne effacée
+   lève ici, nommée, AVANT tout geste irréversible hors base ;
 1. **objets** du stockage que l'org désigne (clés de fichiers, pièces jointes de l'agent
    intégré, avatar d'un partant, logo) — `media_store.supprimer_objet`, qui LÈVE ;
 2. **Unipile** : un siège sur la clé plateforme que plus aucune org ne sert est rendu
@@ -103,20 +110,36 @@ partage la base et ne doit jamais purger). Dans l'ordre, chaque étape notée au
    (`a_faire_par_le_tenant`). ⚠️ Puis **attente d'une heure** (`ATTENTE_APRES_COMPTES`) :
    un JWT déjà émis vit encore, et son premier appel recréerait la ligne `users` — la
    purge se termine donc au tir du lendemain ;
-5. **base** : les ENFANTS avant leurs parents (FK et `Via`), par lots de 5 000 (`ctid`),
-   chaque lot sa transaction ; la pierre tombale en dernier ; puis le recomptage — un
-   résidu relance une passe, un résidu après deux passes est un échec nommé ;
+5. **base** : un restant dont l'org active était l'org effacée bascule sur sa plus
+   ancienne org non archivée (le geste d'`archive_org`) ; la pierre tombale EN PREMIER
+   (elle vide des colonnes qui désignent des lignes effacées, `kb_project_id`) ; puis les
+   ENFANTS avant leurs parents (FK et `Via`), par lots de 5 000 (`ctid`), chaque lot sa
+   transaction ; enfin le recomptage — un résidu relance une passe, un résidu après deux
+   passes est un échec nommé. Une table qui se désigne ELLE-MÊME est tranchée dans
+   `AUTO_REFERENCES` (refus sinon) : un partage dérivé d'un partage effacé part aussi
+   (il élargirait un accès), une instance de connecteur héritée est détachée ;
 6. **archives froides du journal** (`effacement/archives.py`) : chaque mois archivé depuis
    la création de l'org est relu en flux et redéposé SANS ses lignes, sous une clé neuve
    (une archive n'est jamais écrasée), recompté, repointé dans `journal_archives`, puis
    l'ancien objet retiré — sous le verrou consultatif de l'archivage ;
 7. **done**.
 
+Les objets du stockage sont ceux des colonnes de clé, des colonnes d'URL, ET de toute URL
+de notre stockage citée dans le TEXTE d'une ligne effacée (une image déposée par un agent
+n'a d'autre trace) ; les archives froides sont recopiées OCTET POUR OCTET pour les lignes
+gardées (le CSV de PostgreSQL distingue NULL de `""`, le module `csv` non).
+
+Pendant le délai de grâce, la suspension posée par la confirmation **ne se lève que par
+l'annulation** : `op=resume` (super admin, commerce) refuse en 409 `erasure_scheduled`.
+
 Ce que l'effacement ne touche pas, et le dit : les **sauvegardes** de la base expirent selon
-leur rétention (dépôt `infra`) ; les événements **Sentry** selon la leur.
+leur rétention (dépôt `infra`) ; les événements **Sentry** selon la leur ; le **bac à
+sable** d'un abonnement de modèle (`user_model_subscriptions.sandbox_id`) vit hors base et
+n'est pas détruit par ce geste. Un passage en échec est journalisé (Sentry) et rejoué ;
+au-delà de 5, la demande passe en `failed` et attend un opérateur — aucune alerte dédiée.
 
 ## Le commerce
 
-`service.org.erasures` liste ce qu'il n'a pas acquitté : `scheduled`/`running` → cesser de
-facturer, résilier ; `done` → effacer sa part (ses tables par org, le client Stripe — les
+`service.org.erasures` liste ce qu'il n'a pas acquitté : `scheduled` → rien (encore
+restaurable) ; `running` → résilier ; `done` → effacer sa part (ses tables par org, le client Stripe — les
 factures émises restent chez Stripe), puis `service.org.erasure_ack`.

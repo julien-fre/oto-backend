@@ -159,6 +159,12 @@ def noter(id_: int, recu: dict) -> None:
                      "WHERE id = %s", (Jsonb(recu), id_))
 
 
+def maj_snapshot(id_: int, snapshot: dict) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE org_erasures SET snapshot = %s WHERE id = %s AND state = 'running'",
+                     (Jsonb(snapshot), id_))
+
+
 def echec(id_: int, erreur: str) -> str:
     """Note l'échec d'un passage ; rend l'état (`running`, ou `failed` au-delà de
     `ESSAIS_MAX`)."""
@@ -172,13 +178,13 @@ def echec(id_: int, erreur: str) -> str:
 
 def terminer(id_: int, recu: dict) -> None:
     """`running` → `done`. Ce qui était personnel est retiré de la demande : le nom de
-    l'org, l'adresse de confirmation, les comptes du périmètre (seuls leurs nombres
-    restent, dans le plan)."""
+    l'org, l'adresse et le compte du titulaire, les comptes du périmètre (seuls leurs
+    nombres restent, dans le plan et le reçu)."""
     with _connect() as conn:
         conn.execute(
             "UPDATE org_erasures SET state = 'done', finished_at = NOW(), last_error = NULL, "
             "  receipt = COALESCE(receipt, '{}'::jsonb) || %s, org_name = NULL, "
-            "  confirm_email = NULL, snapshot = NULL, token_hash = NULL "
+            "  confirm_email = NULL, confirm_sub = NULL, snapshot = NULL, token_hash = NULL "
             "WHERE id = %s AND state = 'running'", (Jsonb(recu), id_))
 
 

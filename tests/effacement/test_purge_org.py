@@ -62,8 +62,22 @@ def base(live, pg_module_dsn):
         # Un appel de bob hors de toute org, et une acceptation légale de bob.
         c.execute("INSERT INTO legal_acceptance_events (sub, doc_slug, version, ip, user_agent) "
                   "VALUES (%s, 'cgu', '1', '203.0.113.7', %s)", (a["bob"], f"navigateur {A}"))
+        # carol travaille DANS l'org effacée : elle doit basculer sur l'autre.
+        c.execute("UPDATE org_members SET is_active = (org_id = %s) WHERE sub = %s",
+                  (a["org"], carol))
+        # Un partage accordé par l'org, et un partage DÉRIVÉ accordé par le voisin : le
+        # dérivé ne doit pas survivre à son parent (il élargirait un accès).
+        racine = c.execute(
+            "INSERT INTO grants (resource_id, grantor_kind, grantor_id, grantee_kind, "
+            "grantee_id) VALUES ('1', 'org', %s, 'org', %s) RETURNING id",
+            (str(a["org"]), str(b["org"]))).fetchone()["id"]
+        derive = c.execute(
+            "INSERT INTO grants (resource_id, grantor_kind, grantor_id, grantee_kind, "
+            "grantee_id, parent_id) VALUES ('1', 'org', %s, 'user', %s, %s) RETURNING id",
+            (str(b["org"]), b["alice"], racine)).fetchone()["id"]
         avant_b = _marquees(c, B)
-        yield {"dsn": pg_module_dsn, A: a, B: b, "carol": carol, "avant_b": avant_b}
+        yield {"dsn": pg_module_dsn, A: a, B: b, "carol": carol, "avant_b": avant_b,
+               "derive": derive}
 
 
 def _conn(base, autocommit=True):
@@ -108,6 +122,37 @@ def test_le_plan_compte_sans_rien_ecrire(base):
     assert p["tables"][dp.PIERRE_TOMBALE] == {"orgs": 1}
 
 
+def test_un_partant_qui_rejoint_une_autre_org_garde_son_compte(base):
+    from oto_mcp.effacement.perimetre import rafraichir
+    with _conn(base) as c:
+        inst = figer(c, base[A]["org"])
+        c.execute("INSERT INTO org_members (org_id, sub, org_role) VALUES (%s, %s, "
+                  "'org_member')", (base[B]["org"], base[A]["bob"]))
+        try:
+            revu = rafraichir(c, inst)
+        finally:
+            c.execute("DELETE FROM org_members WHERE org_id = %s AND sub = %s",
+                      (base[B]["org"], base[A]["bob"]))
+    assert revu.partants == () and base[A]["bob"] in revu.restants
+
+
+def test_les_objets_de_l_org_sont_tous_trouves_et_rien_du_voisin(base):
+    from perimetre_banc import BASE_SOURCE
+    with _conn(base) as c:
+        cles = purge.cles_d_objet(c, figer(c, base[A]["org"]), BASE_SOURCE)
+    a, b = set(base[A]["objets"]), set(base[B]["objets"])
+    # L'avatar d'alice reste : elle GARDE son compte (membre d'une autre org).
+    assert cles == a - {k for k in a if k.startswith("avatars/")}
+    assert not cles & b
+
+
+def test_la_repetition_ne_laisse_aucune_trace(base):
+    with _conn(base) as c:
+        avant = _marquees(c, A)
+        assert purge.repeter(c, figer(c, base[A]["org"]))["lignes"] > 0
+        assert _marquees(c, A) == avant
+
+
 def test_un_abonnement_qui_preleve_refuse(base):
     with _conn(base) as c:
         o = org(c, f"payante {A}", base[A]["tenant"])
@@ -136,8 +181,11 @@ def test_la_purge_efface_l_org_et_rien_d_autre(base):
         ecrit = purge.purger(c, inst)
         assert ecrit["tool_calls"] >= 2 and ecrit["users"] == 1
         assert purge.residu(c, inst) == {}
-        # Rien d'autrui : le voisin est intact, ligne pour ligne.
-        assert _marquees(c, B) == base["avant_b"]
+        # Rien d'autrui : le voisin est intact, ligne pour ligne — sauf le partage qu'il
+        # avait DÉRIVÉ d'un partage de l'org effacée (vérifié plus bas).
+        attendu = dict(base["avant_b"])
+        attendu["grants"] -= 1
+        assert _marquees(c, B) == {t: n for t, n in attendu.items() if n}
         # Rien d'oublié : le marqueur ne survit que là où on le garde à dessein.
         reste = _marquees(c, A)
         # Le contrat du voisin porte le marqueur du voisin seulement ; celui de l'org reste.
@@ -154,9 +202,14 @@ def test_la_purge_efface_l_org_et_rien_d_autre(base):
                          (a["bob"],)).fetchone()["n"] == 0
         assert c.execute("SELECT count(*) AS n FROM users WHERE sub = ANY(%s)",
                          ([a["alice"], base["carol"]],)).fetchone()["n"] == 2
-        # carol reste membre de l'AUTRE org.
-        assert c.execute("SELECT org_id FROM org_members WHERE sub = %s",
-                         (base["carol"],)).fetchall() == [{"org_id": base[B]["org"]}]
+        # carol reste membre de l'AUTRE org, qui devient son org active.
+        assert c.execute("SELECT org_id, is_active FROM org_members WHERE sub = %s",
+                         (base["carol"],)).fetchall() == [{"org_id": base[B]["org"],
+                                                            "is_active": True}]
+        # Le partage dérivé du voisin est parti avec son parent.
+        assert ecrit.get("grants.descendants") == 1
+        assert c.execute("SELECT count(*) AS n FROM grants WHERE id = %s",
+                         (base["derive"],)).fetchone()["n"] == 0
 
 
 def test_la_pierre_tombale_ne_garde_rien_de_personnel(base):

@@ -90,6 +90,23 @@ def test_les_lignes_de_l_org_et_des_partants_sortent_le_reste_demeure(conn):
                              partants=(PARTANT,), depuis_mois="2026-01")["mois_reecrits"] == 0
 
 
+def test_les_lignes_gardees_sont_recopiees_octet_pour_octet(conn):
+    """NULL (champ vide) et chaîne vide (`""`) ne se confondent pas, et un champ sur
+    plusieurs lignes reste entier : la ligne gardée est celle de la source, telle quelle."""
+    seau = Seau()
+    garde = 'g1,t,voisin,7,oto_doc,"multi\nligne ""guillemets"""\r\n' \
+            'g2,t,,7,"",\r\n'
+    brut = ("id,created_at,sub,org_id,tool,args\r\n" + garde +
+            f'x1,t,x,{ORG},oto_doc,"secret"\r\n').encode()
+    seau.objets["journal/tool_calls/2026-08.csv.gz"] = gzip.compress(brut)
+    conn.execute("INSERT INTO journal_archives (mois, cle, lignes) VALUES "
+                 "('2026-08', 'journal/tool_calls/2026-08.csv.gz', 3)")
+    archives.reecrire(conn, seau, "seau", id_effacement=9, org_id=ORG, partants=(),
+                      depuis_mois="2026-01")
+    neuf = gzip.decompress(seau.objets["journal/tool_calls/2026-08.effacement-9.csv.gz"])
+    assert neuf.decode() == "id,created_at,sub,org_id,tool,args\r\n" + garde
+
+
 def test_un_compte_qui_ne_tombe_pas_juste_ne_reecrit_rien(conn):
     seau = Seau()
     seau.objets["journal/tool_calls/2026-08.csv.gz"] = _archive([["1", "t", "x", str(ORG), "t", "{}"]])

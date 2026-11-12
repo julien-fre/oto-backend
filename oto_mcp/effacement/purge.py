@@ -27,9 +27,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
 
-from ..export_perimetre.classement import CLASSEMENT, Table
+from ..export_perimetre.classement import CLASSEMENT, JOURNAL, Table
 from ..export_perimetre.decouverte import Schema, lire_schema, verifier_classement
-from ..export_perimetre.objets import COLONNES_D_URL, COLONNES_DE_CLES, cle_du_chemin
+from ..export_perimetre.objets import COLONNES_D_URL, COLONNES_DE_CLES, cle_du_chemin, cles_dans
 from ..export_perimetre.regles import vias
 from . import disposition as dp
 from .perimetre import Instantane
@@ -54,7 +54,8 @@ def preparer(conn) -> tuple[Schema, dict[str, Table]]:
     ou une disposition incomplets AVANT de toucher quoi que ce soit."""
     schema = lire_schema(conn)
     classement = verifier_classement(schema, CLASSEMENT)
-    dp.verifier(classement, schema.colonnes)
+    dp.verifier(classement, schema.colonnes,
+                {k.table for k in schema.cles if k.table == k.cible})
     return schema, classement
 
 
@@ -79,7 +80,7 @@ def compilateur(tout: dict[str, Cible]) -> Callable[[str], str]:
 
 def ordre_d_effacement(schema: Schema, tout: dict[str, Cible]) -> list[str]:
     """Les tables qui s'écrivent, chaque ENFANT avant son parent ; la pierre tombale de
-    l'org en dernier."""
+    l'org en premier."""
     ecrites = {t for t, c in tout.items() if c.decision.action in dp.ECRIVENT}
     deps = {t: ({k.cible for k in schema.cles_de(t) if k.cible in ecrites}
                 | {v.parent for v in vias(dp.regle_de(tout[t].entree, tout[t].decision))
@@ -94,8 +95,11 @@ def ordre_d_effacement(schema: Schema, tout: dict[str, Cible]) -> list[str]:
         for t in prets:
             del deps[t]
     ordre.reverse()
+    # La pierre tombale EN PREMIER : elle ne supprime rien, elle vide la ligne `orgs`
+    # — dont des colonnes désignent des lignes qu'on s'apprête à effacer
+    # (`kb_project_id → projects`). Les règles d'appartenance ne lisent pas `orgs`.
     tombes = [t for t in ordre if tout[t].decision.action == dp.PIERRE_TOMBALE]
-    return [t for t in ordre if t not in tombes] + tombes
+    return tombes + [t for t in ordre if t not in tombes]
 
 
 def _encore_nommees(c: Cible) -> str:
@@ -147,6 +151,18 @@ def cles_d_objet(conn, inst: Instantane, base_publique: str | None) -> set[str]:
                 params)}
     if base_publique:
         prefixe = base_publique.rstrip("/") + "/"
+        # Une image déposée par un agent (`images/<sub>/…`) n'a d'autre trace que son
+        # URL collée dans une page, une ligne de tableau, un JSON : comme l'export, on la
+        # cherche dans le TEXTE de chaque ligne effacée — sauf le journal, que personne
+        # ne cite et qui pèse l'essentiel des lignes.
+        for t in sorted(tout):
+            if tout[t].decision.action != dp.EFFACER or t in JOURNAL:
+                continue
+            cur = conn.cursor()
+            for r in cur.stream(f"SELECT row_to_json(x)::text AS j FROM {t} x "
+                                f"WHERE {pred(t)}", params):
+                if prefixe in r["j"]:
+                    cles |= cles_dans(r["j"], base_publique)
         for nom in sorted(COLONNES_D_URL):
             t, col = nom.split(".")
             for r in conn.execute(
@@ -177,18 +193,69 @@ def _pierre_tombale(conn, schema: Schema, org_id: int) -> int:
                         {"nom": dp.PIERRE_TOMBALE_NOM, "org": org_id}).rowcount
 
 
-def purger(conn, inst: Instantane, *, arret: Callable[[], bool] = lambda: False) -> dict:
+def _descendants(conn, schema: Schema, t: str, cond: str, params: dict) -> int:
+    """Les lignes HORS périmètre qui descendent (clé vers la même table) d'une ligne
+    effacée : supprimées ou détachées selon `AUTO_REFERENCES`."""
+    cle = next(k for k in schema.cles_de(t) if k.cible == t)
+    col, = cle.colonnes
+    desc = (f"WITH RECURSIVE d AS (SELECT id FROM {t} WHERE {col} IN "
+            f"(SELECT id FROM {t} WHERE {cond}) AND NOT ({cond}) "
+            f"UNION SELECT x.id FROM {t} x JOIN d ON x.{col} = d.id) SELECT id FROM d")
+    if dp.AUTO_REFERENCES[t] == "detacher":
+        return conn.execute(f"UPDATE {t} SET {col} = NULL WHERE {col} IN "
+                            f"(SELECT id FROM {t} WHERE {cond}) AND NOT ({cond})",
+                            params).rowcount
+    ids = [r["id"] for r in conn.execute(desc, params)]
+    if not ids:
+        return 0
+    for enfant in schema.cles:          # leurs enfants d'abord (compteurs d'un partage)
+        if enfant.cible == t and enfant.table != t:
+            conn.execute(f"DELETE FROM {enfant.table} WHERE {enfant.colonnes[0]} = ANY(%s)",
+                         (ids,))
+    return conn.execute(f"DELETE FROM {t} WHERE id = ANY(%s)", (ids,)).rowcount
+
+
+def _basculer_les_restants(conn, inst: Instantane) -> int:
+    """Un membre qui GARDE son compte et avait l'org effacée pour org active bascule sur
+    sa plus ancienne org non archivée — le geste d'`org_store.archive_org` : sans lui,
+    son appartenance effacée le laisserait sans org active."""
+    n = 0
+    for r in conn.execute("SELECT sub FROM org_members WHERE org_id = %s AND is_active "
+                          "AND sub = ANY(%s)", (inst.org_id, list(inst.restants))).fetchall():
+        conn.execute("UPDATE org_members SET is_active = FALSE WHERE sub = %s AND org_id = %s",
+                     (r["sub"], inst.org_id))
+        n += conn.execute(
+            "UPDATE org_members SET is_active = TRUE WHERE sub = %(s)s AND org_id = ("
+            "  SELECT m.org_id FROM org_members m JOIN orgs o ON o.id = m.org_id "
+            "   WHERE m.sub = %(s)s AND m.org_id <> %(o)s AND o.archived_at IS NULL "
+            "   ORDER BY m.joined_at ASC LIMIT 1)", {"s": r["sub"], "o": inst.org_id}).rowcount
+    return n
+
+
+def purger(conn, inst: Instantane, *, arret: Callable[[], bool] = lambda: False,
+           sauf: frozenset[str] = frozenset()) -> dict:
     """Efface, anonymise, pose la pierre tombale. `conn` est en AUTOCOMMIT : chaque lot
     est une transaction. Rend les lignes écrites par table. `arret()` vrai interrompt
-    proprement entre deux lots (la purge se reprend en la rejouant)."""
+    proprement entre deux lots (la purge se reprend en la rejouant). `sauf` : tables
+    laissées de côté (la répétition saute le journal)."""
     schema, classement = preparer(conn)
     tout = cibles(classement)
     pred, params = compilateur(tout), inst.parametres()
     fait: dict[str, int] = {}
+    bascules = _basculer_les_restants(conn, inst)
+    if bascules:
+        fait["org_active_basculee"] = bascules
     for t in ordre_d_effacement(schema, tout):
         c = tout[t]
         if arret():
             break
+        if t in sauf:
+            continue
+        if c.decision.action == dp.EFFACER and dp.AUTO_REFERENCES.get(t) in ("supprimer",
+                                                                            "detacher"):
+            n_desc = _descendants(conn, schema, t, pred(t), params)
+            if n_desc:
+                fait[f"{t}.descendants"] = n_desc
         if c.decision.action == dp.EFFACER:
             n = _par_lots(conn, f"DELETE FROM {t} WHERE ctid = ANY(ARRAY("
                                 f"SELECT ctid FROM {t} WHERE {pred(t)} LIMIT %(lot)s))",
@@ -228,3 +295,17 @@ def residu(conn, inst: Instantane) -> dict[str, int]:
         if n:
             reste[t] = n
     return reste
+
+
+def repeter(conn, inst: Instantane) -> dict:
+    """La purge entière, JOUÉE puis ANNULÉE dans une seule transaction — avant tout geste
+    irréversible hors base. Une clé étrangère qu'une ligne restante pose sur une ligne
+    effacée (une page d'une autre org qui pointe vers une page de celle-ci) y lève ici,
+    nommée, pendant qu'il est encore temps : rien n'a été supprimé, ni dans la base ni
+    dehors. Le journal est sauté (rien ne le désigne, et il pèse l'essentiel)."""
+    with conn.transaction(force_rollback=True):
+        fait = purger(conn, inst, sauf=frozenset(JOURNAL))
+        reste = {t: n for t, n in residu(conn, inst).items() if t not in JOURNAL}
+    if reste:
+        raise RuntimeError(f"répétition de la purge : résidu {reste}")
+    return {"tables": len(fait), "lignes": sum(fait.values())}

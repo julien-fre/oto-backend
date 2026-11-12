@@ -105,8 +105,31 @@ def test_un_super_admin_non_membre_doit_donner_un_motif(base, mails):
     assert mails[-1]["par_operateur"] is True
 
 
-def test_le_travail_purge_au_terme_du_delai_puis_retire_le_personnel(base, mails, monkeypatch):
+def test_l_org_reste_suspendue_tant_que_l_effacement_est_confirme(base, mails):
+    from oto_mcp.capabilities import org_suspension as susp
     _confirmer(TITULAIRE, _jeton(mails))
+    with pytest.raises(AuthzDenied) as e:
+        susp._org_suspension(_ctx("operateur"), susp.OrgSuspensionInput(op="resume",
+                                                                        org_id=base["org"]))
+    assert e.value.code == "erasure_scheduled"
+    assert org_store.get_org_suspension(base["org"]) is not None
+
+
+def test_sans_l_interrupteur_le_travail_n_ecrit_rien(base, mails, monkeypatch):
+    monkeypatch.delenv(travail.ENV_ACTIF, raising=False)
+    d = demandes.vivante(base["org"])
+    with psycopg.connect(base["dsn"], autocommit=True) as c:
+        c.execute("UPDATE org_erasures SET scheduled_for = NOW() - interval '1 second' "
+                  "WHERE id = %s", (d["id"],))
+    assert travail.passer() == {"actif": False, "a_faire": [d["id"]]}
+    assert demandes.lire(d["id"])["state"] == "scheduled"
+    with psycopg.connect(base["dsn"], autocommit=True) as c:
+        c.execute("UPDATE org_erasures SET scheduled_for = NOW() + interval '7 days' "
+                  "WHERE id = %s", (d["id"],))
+
+
+def test_le_travail_purge_au_terme_du_delai_puis_retire_le_personnel(base, mails, monkeypatch):
+    monkeypatch.setenv(travail.ENV_ACTIF, "1")
     d = demandes.vivante(base["org"])
     # Avant le terme : rien ne bouge.
     monkeypatch.setattr(externes, "supprimer_objets", lambda cles: len(cles))
@@ -126,13 +149,17 @@ def test_le_travail_purge_au_terme_du_delai_puis_retire_le_personnel(base, mails
     # Les comptes de connexion partent, puis la base ATTEND l'échéance des jetons émis.
     assert travail.passer()["en_attente"] == 1
     assert sorted(supprimes) == sorted([TITULAIRE, MEMBRE])
+    from datetime import datetime, timedelta, timezone
+    il_y_a_2h = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     with psycopg.connect(base["dsn"], autocommit=True) as c:
         c.execute("UPDATE org_erasures SET receipt = jsonb_set(receipt, '{comptes,le}', "
-                  "to_jsonb((NOW() - interval '2 hours')::text)) WHERE id = %s", (d["id"],))
+                  "to_jsonb(%s::text)) WHERE id = %s", (il_y_a_2h, d["id"]))
     assert travail.passer()["terminees"] == 1
     fin = demandes.lire(d["id"])
     assert fin["state"] == "done"
     assert fin["org_name"] is None and fin["confirm_email"] is None and fin["snapshot"] is None
+    assert fin["confirm_sub"] is None
+    assert fin["receipt"]["repetition"]["lignes"] > 0
     assert fin["receipt"]["base"]["total"] > 0
     assert {"fin": d["id"]} in mails
     with psycopg.connect(base["dsn"], row_factory=dict_row) as c:

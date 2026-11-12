@@ -74,23 +74,45 @@ def cle_neuve(cle: str, id_effacement: int) -> str:
 
 def _filtrer(s3, seau: str, cle: str, org_id: int, partants: set[str],
              chemin: str) -> tuple[int, int]:
-    """Écrit dans `chemin` l'archive sans l'org ; rend (gardées, retirées)."""
-    lignes = _lignes(s3.get_object(Bucket=seau, Key=cle)["Body"])
-    entete = next(lignes, None)
-    if not entete:
-        raise ArchiveNonReecrite(f"archive {cle} vide ou illisible")
-    i_org, i_sub = entete.index("org_id"), entete.index("sub")
-    org = str(org_id)
-    gardees = retirees = 0
-    with gzip.open(chemin, "wt", encoding="utf-8", newline="") as gz:
-        ecrivain = csv.writer(gz)
-        ecrivain.writerow(entete)
-        for rec in lignes:
-            if rec[i_org] == org or (rec[i_org] == "" and rec[i_sub] in partants):
-                retirees += 1
-                continue
-            ecrivain.writerow(rec)
-            gardees += 1
+    """Écrit dans `chemin` l'archive sans l'org ; rend (gardées, retirées).
+
+    Les lignes GARDÉES sont recopiées OCTET POUR OCTET, jamais re-sérialisées : le CSV
+    de PostgreSQL distingue NULL (champ vide) de la chaîne vide (`""`), ce que le
+    module `csv` confond — réécrire un enregistrement d'une autre org l'altérerait. Le
+    lecteur ne sert qu'à DÉCIDER ; le texte brut de chaque enregistrement (qui peut
+    tenir sur plusieurs lignes) est capté au passage."""
+    limite = csv.field_size_limit(10_000_000)
+    brut: list[str] = []
+
+    def lignes_brutes(texte):
+        for ligne in texte:
+            brut.append(ligne)
+            yield ligne
+
+    try:
+        corps = s3.get_object(Bucket=seau, Key=cle)["Body"]
+        with gzip.GzipFile(fileobj=corps) as gz, \
+                gzip.open(chemin, "wt", encoding="utf-8", newline="") as sortie:
+            lecteur = csv.reader(lignes_brutes(io.TextIOWrapper(gz, encoding="utf-8",
+                                                                newline="")))
+            entete = next(lecteur, None)
+            if not entete:
+                raise ArchiveNonReecrite(f"archive {cle} vide ou illisible")
+            sortie.write("".join(brut))
+            brut.clear()
+            i_org, i_sub = entete.index("org_id"), entete.index("sub")
+            org = str(org_id)
+            gardees = retirees = 0
+            for rec in lecteur:
+                texte = "".join(brut)
+                brut.clear()
+                if rec[i_org] == org or (rec[i_org] == "" and rec[i_sub] in partants):
+                    retirees += 1
+                    continue
+                sortie.write(texte)
+                gardees += 1
+    finally:
+        csv.field_size_limit(limite)
     return gardees, retirees
 
 

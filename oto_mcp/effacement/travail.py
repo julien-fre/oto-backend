@@ -8,6 +8,8 @@ Pour chaque demande échue (`scheduled`, `scheduled_for` passé) ou en cours (`r
 les étapes s'enchaînent dans cet ordre, chacune notée au reçu (`receipt`) quand elle
 est faite — un passage coupé reprend à la première étape non notée :
 
+0. `perimetre` — les partants revus (un compte entré dans une autre org reste) ;
+   `repetition` — la purge jouée puis ANNULÉE, avant tout geste irréversible ;
 1. `objets`   — les objets du stockage que l'org désigne (lus en base, donc AVANT elle) ;
 2. `unipile`  — les sièges de messagerie de l'org sur la clé plateforme ;
 3. `logto_org` — l'organisation Logto miroir de l'org ;
@@ -23,14 +25,22 @@ est faite — un passage coupé reprend à la première étape non notée :
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from . import archives, demandes, externes, purge
-from .perimetre import Instantane
+from .perimetre import Instantane, rafraichir
 
 _log = logging.getLogger("oto_mcp.effacement")
 
 ATTENTE_APRES_COMPTES = timedelta(minutes=65)
+# L'interrupteur : absent, le travail dit ce qu'il ferait et n'écrit RIEN — même règle
+# que les autres travaux qui agissent dehors (`maintenance._ALL`).
+ENV_ACTIF = "OTO_EFFACEMENTS"
+
+
+def actif() -> bool:
+    return os.environ.get(ENV_ACTIF, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _maintenant() -> datetime:
@@ -40,8 +50,8 @@ def _maintenant() -> datetime:
 def passer(*, dry_run: bool = False) -> dict:
     """Un passage : fait échoir les liens, fait avancer chaque demande due."""
     dues = demandes.dues()
-    if dry_run:
-        return {"a_faire": [d["id"] for d in dues]}
+    if dry_run or not actif():
+        return {"actif": actif(), "a_faire": [d["id"] for d in dues]}
     expirees = demandes.expirer()
     out = {"expirees": expirees, "terminees": 0, "en_attente": 0, "echecs": 0}
     for d in dues:
@@ -73,6 +83,16 @@ def avancer(d: dict) -> bool:
     with _connect_autocommit(bornee=False) as conn:
         r = conn.execute("SELECT front_brand FROM orgs WHERE id = %s", (inst.org_id,)).fetchone()
         marque = r["front_brand"] if r else None
+        if "perimetre" not in recu:
+            # Revu au début de la purge : un partant a pu rejoindre une autre org pendant
+            # le délai de grâce — il garde alors son compte.
+            inst = rafraichir(conn, inst)
+            demandes.maj_snapshot(d["id"], inst.vers_json())
+            noter("perimetre", {"partants": len(inst.partants), "restants": len(inst.restants)})
+        if "repetition" not in recu:
+            # La purge jouée puis annulée, AVANT tout geste irréversible hors base : une
+            # clé étrangère qui la ferait échouer à mi-chemin lève ici.
+            noter("repetition", purge.repeter(conn, inst))
         if "depuis_mois" not in recu:
             r = conn.execute(
                 "SELECT to_char(LEAST(o.created_at, (SELECT min(created_at) FROM users "
