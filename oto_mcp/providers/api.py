@@ -34,8 +34,9 @@ CONNECTOR = _c(
     "api", ["api"], auth_modes={"byo_org"}, secret_kind="fields",
     # Presented as "Custom API": the connector a person looks for when the tool they
     # use (a payroll or ERP SaaS…) is not in the catalogue. Named `http` until
-    # 12/11/2026: the old name and its tools refuse, naming `api`
-    # (`providers.CONNECTEURS_RENOMMES`, `outils_retires.RENOMMAGES_CONNECTEURS`).
+    # 12/11/2026: the old connector name refuses, naming `api`
+    # (`providers.CONNECTEURS_RENOMMES`); its old tool names and REST routes still
+    # answer as deprecated aliases (`deprecations.OUTILS_CONNECTEUR_API`).
     label="Custom API",
     # The pair (`tests/test_convention_act.py`): `tools/api_ops.py` serves `api`
     # (reads: custom connectors, definition, setup link), `tools/api_calls.py` serves

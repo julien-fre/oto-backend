@@ -378,6 +378,19 @@ def _surviving_siblings(name: str) -> Optional[list[str]]:
         return None
 
 
+def _refus_nomme_hors_http(exc):
+    """The refusal a connector DESCRIPTION names (`tools.decrits.RefusNomme`), when no HTTP error status carries it:
+    a refusal read in a 200 answer's body (DataForSEO's `status_code` 40101, 40602…) or a check of the arguments or
+    of the answer (`status_code` None). Its message is the description's, written by us, never the vendor's body.
+    Matched by name, as `UnipileError`: `tools.decrits` imports this module's world, not the reverse. With a 4xx/5xx
+    status, path (3) of `classify` reads it as any upstream error."""
+    for e in _chain(exc):
+        if type(e).__name__ == "RefusNomme":
+            sc = getattr(e, "status_code", None)
+            return e if sc is None or sc < 400 else None
+    return None
+
+
 def _is_expected_error(exc) -> bool:
     """Handled error, NOT to be reported to Sentry: upstream 4xx OR user input/config
     refusal OR rejected args OR OAuth exchange refusal OR unmounted tool (toolbox
@@ -388,6 +401,7 @@ def _is_expected_error(exc) -> bool:
             or _is_arg_validation_error(exc)
             or _is_upstream_managed_error(exc)
             or _is_oauth_exchange_refused(exc)
+            or _refus_nomme_hors_http(exc) is not None
             or _unknown_tool_name(exc) is not None)
 
 
@@ -498,6 +512,21 @@ def classify(exc, parametres: Optional[list] = None) -> ErrorInfo:
                          curated or scrub(_first_upstream_message(exc))
                          or "Credits exhausted on the upstream service.",
                          QUOTA_HINT)
+
+    # (0b) A refusal a connector description names, carried by no HTTP error status (a 200 answer whose body
+    # refuses, a check of the arguments or of the answer): its message is ours, written in the description, so it is
+    # served as is, under its own code. Without this, path (5) answered "Internal server error." to "the task is not
+    # done yet: read it again later" (DataForSEO, 12/11/2026).
+    refus = _refus_nomme_hors_http(exc)
+    if refus is not None:
+        message = str(refus)
+        if refus.marks_account == "quota_exhausted":
+            return ErrorInfo("quota_exhausted", False, message, QUOTA_HINT)
+        if refus.marks_account == "credential_rejected":
+            return ErrorInfo("not_authorized", False, message,
+                             "check that the connector is connected and authorized")
+        return ErrorInfo(refus.code, bool(refus.retryable), message,
+                         "retry in a moment" if refus.retryable else None)
 
     # (1) McpError curated by a tool/capability: message already agent-facing.
     for e in _chain(exc):

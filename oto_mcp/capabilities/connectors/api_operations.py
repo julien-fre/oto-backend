@@ -273,54 +273,5 @@ CAPABILITIES += [
 ]
 
 
-# --- the routes of the connector's OLD name ---------------------------------------
-# The connector was `http` until 12/11/2026 (`providers.CONNECTEURS_RENOMMES`). Its old
-# routes do not serve the request (no alias): they REFUSE, with a stable code, naming
-# the route that replaced them — never a bare 404 that reads as "nothing here".
-
-class ConnectorRenamed(BaseModel):
-    """Never returned: these routes always answer 410 `connector_renamed`."""
-    model_config = ConfigDict(extra="forbid")
-    connector: str
-    path: str
-
-
-class RenamedInput(BaseModel):
-    org_id: int
-    account: str = Field(default="", description="Ignored: the route moved.")
-    body: Optional[Any] = Field(default=None, description="Ignored: the route moved.")
-
-
-def _refus_renomme(ancien: str, suffixe: str):
-    nouveau = providers.CONNECTEURS_RENOMMES[ancien]
-    chemin = f"/api/orgs/{{id}}/connectors/{nouveau}/{suffixe}"
-
-    def _handler(ctx: ResolvedCtx, inp: RenamedInput) -> dict:
-        raise AuthzDenied(410, "connector_renamed", (
-            f"The `{ancien}` connector is now `{nouveau}`: this route moved to `{chemin}` "
-            "— same method, same body, same answer. Nothing was read or written."),
-            details={"connector": nouveau,
-                     "path": chemin.replace("{id}", str(inp.org_id))})
-    return _handler
-
-
-_RENAMED = DeclaredError(410, "connector_renamed",
-                         "the connector was renamed: `details.path` is the route to call")
-
-for _ancien, _nouveau in providers.CONNECTEURS_RENOMMES.items():
-    if _nouveau != store.CONNECTOR:
-        continue
-    for _suffixe, _verbes in (("operations", ("GET", "PUT")), ("operations/import", ("POST",)),
-                              ("definition", ("GET", "PUT"))):
-        _vieux = f"/api/orgs/{{id}}/connectors/{_ancien}/{_suffixe}"
-        CAPABILITIES.append(Capability(
-            key=f"custom_api.renamed.{_ancien}.{_suffixe.replace('/', '.')}",
-            handler=_refus_renomme(_ancien, _suffixe), Input=RenamedInput,
-            authz=ORG_MEMBER_OF("org_id"), Output=ConnectorRenamed,
-            description=(f"Former route of the Custom API connector (`{_ancien}`, now "
-                         f"`{_nouveau}`): always refuses, naming the new route."),
-            errors=(_RENAMED,), retiree=True,
-            rest=tuple(RestBinding(v, _vieux, _ID,
-                                   body_field="body" if v != "GET" else None)
-                       for v in _verbes),
-        ))
+# The routes of the connector's OLD name (`http`, until 12/11/2026) are not capabilities:
+# they answer 308 to these ones, derived from them (`deprecations._alias_connecteur_api`).

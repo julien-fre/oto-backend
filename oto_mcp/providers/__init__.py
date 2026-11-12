@@ -524,9 +524,10 @@ def connector_for_provider(name: str) -> Connector | None:
     return REGISTRY.get(name)
 
 
-#: Connectors RENAMED: old name → new name. No alias: the old name designates nothing,
-#: and the refusal that meets it names the new one (`refus_renomme`). The tools follow
-#: (`outils_retires.RENOMMAGES_CONNECTEURS`), the stored rows move by a data revision.
+#: Connectors RENAMED: old name → new name. The old CONNECTOR name designates nothing,
+#: and the refusal that meets it names the new one (`refus_renomme`). Its old tool names
+#: and REST routes stay served as deprecated aliases (`deprecations.OUTILS_CONNECTEUR_API`,
+#: `deprecations.alias_rest_derives`); the stored rows move by a data revision.
 CONNECTEURS_RENOMMES: dict[str, str] = {"http": "api"}
 
 

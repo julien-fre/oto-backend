@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 
-from . import outils_retires, ownership, providers, run_status, tool_alias
+from . import deprecations, outils_retires, ownership, providers, run_status, tool_alias
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ def _format_context(ctx: dict) -> str:
             bits.append(f"{label}{doc} {run_status.describe(r)}")
         lines.append(f"- Recent runs: {' · '.join(bits)}")
     for annonce in (outils_retires.annonce_act_du_jour(),
-                    outils_retires.annonce_connecteurs_du_jour()):
+                    deprecations.annonce_connecteur_api_du_jour()):
         if annonce:
             lines.append(f"- {annonce}")
     return "\n".join(lines)

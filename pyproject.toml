@@ -55,6 +55,10 @@ dependencies = [
     # de connexion déclarées, cookie rendu à l'hôte qui le garde chiffré, lecture seule) ;
     # emporte v1.220.0–v1.223.0 (dataforseo 1.0.2 à 1.0.4, client gemini, linkedin_unipile
     # 1.3.1).
+    # v1.223.0 = linkedin_unipile 1.3.1 : corps de /v2/auth/link conformes au schéma
+    # createAuthLink v2 (création = providers, reconnexion = account_id) ; la connexion LinkedIn répondait 502.
+    # v1.222.0 = dataforseo 1.0.4 (file standard des résultats organiques, résolution des liens
+    # goto), 1.0.3, 1.0.2 (réponses compactes) et client gemini ; servi par le lecteur générique.
     # v1.219.0 = dataforseo 1.0.1 décrit (59 fonctions, auth `basic`, modes byo et plateforme,
     # coût relu dans la réponse en microdollars par `settle.scale`, corps en liste par
     # `call.body_list`) : servi par le lecteur générique, `tools/dataforseo*.py` retirés.

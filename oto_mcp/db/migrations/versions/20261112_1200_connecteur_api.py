@@ -2,9 +2,11 @@
 
 Le 12/11/2026, le connecteur `http` est renommé `api`, et ses outils `http`, `http_act`,
 `http_get`, `http_post`, `http_doc` deviennent `api`, `api_act`, `api_get`, `api_post`,
-`api_doc` — mêmes ops, mêmes arguments, même effet. Aucun alias : l'ancien nom refuse en
-nommant le nouveau (`providers.CONNECTEURS_RENOMMES`,
-`outils_retires.RENOMMAGES_CONNECTEURS`, que cette révision lit sans la recopier).
+`api_doc` — mêmes ops, mêmes arguments, même effet. Les anciens noms d'outils restent
+servis en alias dépréciés (`deprecations.OUTILS_CONNECTEUR_API`) : une liste enregistrée
+qui nomme encore `http_get` continue de fonctionner. Cette révision fige sa propre
+correspondance (`_OUTILS`) : une révision est une histoire, elle ne suit pas une table
+vivante appelée à disparaître au retrait des alias.
 
 **Ce que la révision réécrit**, le nom seul, le reste de chaque ligne tel quel :
 
@@ -34,8 +36,8 @@ une étape de démarrage, `api_operations.copier_depuis_http`, COPIE re-chiffré
 les lignes `http` en place (base partagée par la prod et la préprod) et recopie la
 définition de chaque instance (opérations, en-têtes, variables). Ni l'histoire (journal des
 appels, travaux terminés, journaux de partage), ni le texte libre des tenants (procédures,
-guides, recettes, consignes d'agent) : l'ancien nom y refuse en nommant le nouveau, et
-l'annonce servie aux agents le dit pendant un mois.
+guides, recettes, consignes d'agent) : l'ancien nom y répond en alias déprécié, et
+chaque réponse dit le nom d'aujourd'hui.
 
 **Conflit.** Une ligne `api` peut déjà exister sous la même clé (la préprod sert le code
 neuf avant le tag de prod). Identique en sens (même état, même activation, même valeur) :
@@ -97,12 +99,15 @@ def _revision_des_messageries():
     return module
 
 
+#: Les outils renommés avec le connecteur, figés au jour du renommage.
+_OUTILS = {f"http{suffixe}": f"api{suffixe}"
+           for suffixe in ("", "_act", "_get", "_post", "_doc")}
+
+
 def correspondances(sens: str = "montee") -> tuple[dict, dict]:
     """`(autorise, masque)` des outils renommés — le même outil des deux côtés.
     `sens="descente"` : la table inversée, pour le retour arrière."""
-    from oto_mcp import outils_retires
-    paires = [(r.ancien, r.outil) for r in outils_retires.RENOMMAGES_CONNECTEURS
-              if r.depuis == outils_retires.LOT_CONNECTEUR_API]
+    paires = list(_OUTILS.items())
     if sens == "descente":
         paires = [(n, a) for a, n in paires]
     table = {de: (vers,) for de, vers in paires}

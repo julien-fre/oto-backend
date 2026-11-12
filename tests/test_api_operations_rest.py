@@ -194,45 +194,52 @@ def test_un_champ_de_carte_ne_se_pose_pas_par_la_definition(org):
     assert code == 400 and org["ecrit"] == []
 
 
-# --- les routes de l'ancien nom (`http`) : un refus nommé, jamais un 404 nu ----------
+# --- les routes de l'ancien nom (`http`) : un alias 308, daté, vers la nouvelle --------
 
-_ANCIENNES = [("custom_api.renamed.http.operations", 0, "operations", None),
-              ("custom_api.renamed.http.operations", 1, "operations", {"operations": [OP]}),
-              ("custom_api.renamed.http.operations.import", 0, "operations/import",
-               {"source": "inline", "document": {}}),
-              ("custom_api.renamed.http.definition", 0, "definition", None),
-              ("custom_api.renamed.http.definition", 1, "definition", {"label": "x"})]
+_ANCIENNES = [("GET", "operations"), ("PUT", "operations"), ("POST", "operations/import"),
+              ("GET", "definition"), ("PUT", "definition")]
 
 
-@pytest.mark.parametrize("cle,index,suffixe,corps", _ANCIENNES)
-def test_l_ancienne_route_refuse_en_nommant_la_nouvelle(org, cle, index, suffixe, corps):
-    from oto_mcp.capabilities import registry
-    binding = next(c for c in registry.CAPABILITIES if c.key == cle).rest_bindings()[index]
-    assert binding.path == f"/api/orgs/{{id}}/connectors/http/{suffixe}"
-    code, out = call(cle, path_params={"id": str(ORG)}, query=b"account=paie",
-                     body=corps, binding_index=index, sub="u-admin")
-    assert code == 410 and out["error"] == "connector_renamed", out
-    assert f"/connectors/api/{suffixe}" in out["detail"]
-    assert out["details"] == {"connector": "api",
-                              "path": f"/api/orgs/{ORG}/connectors/api/{suffixe}"}
-    assert org["ecrit"] == [], "rien n'est servi ni écrit par l'ancienne route"
+@pytest.fixture(scope="module")
+def client_rest():
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from oto_mcp.api import routes as api_routes
+
+    class _FauxVerifieur:
+        """`make_routes` ne fait que CAPTURER le verifier."""
+
+    return TestClient(Starlette(routes=api_routes.make_routes(_FauxVerifieur(),
+                                                               mcp_instance=None)))
 
 
-def test_l_ancienne_route_reste_fermee_a_un_non_membre(org):
-    code, out = call("custom_api.renamed.http.operations", path_params={"id": str(ORG)},
-                     sub="u-dehors")
-    assert code == 403, out
+def test_chaque_route_du_connecteur_a_son_ancien_chemin():
+    from oto_mcp import deprecations
+    derives = {(a.verbe, a.ancien, a.nouveau) for a in deprecations._alias_connecteur_api()}
+    assert derives == {(v, f"/api/orgs/{{id}}/connectors/http/{s}",
+                        f"/api/orgs/{{id}}/connectors/api/{s}") for v, s in _ANCIENNES}
 
 
-def test_le_contrat_publie_l_ancienne_route_depreciee_sans_reponse_heureuse():
-    from oto_mcp import openapi
+@pytest.mark.parametrize("verbe,suffixe", _ANCIENNES)
+def test_l_ancienne_route_redirige_en_308_vers_la_nouvelle(client_rest, verbe, suffixe):
+    """Même méthode, même corps, query string reportée : la page d'hier aboutit."""
+    from oto_mcp import deprecations
+    r = client_rest.request(verbe, f"/api/orgs/{ORG}/connectors/http/{suffixe}?account=paie",
+                            follow_redirects=False)
+    assert r.status_code == 308, (verbe, suffixe, r.status_code)
+    assert r.headers["location"] == f"/api/orgs/{ORG}/connectors/api/{suffixe}?account=paie"
+    assert r.headers["deprecation"] == "true"
+    assert r.headers["sunset"] == deprecations.RETRAIT_CONNECTEUR_API.strftime("%d/%m/%Y")
+
+
+def test_le_contrat_publie_l_ancienne_route_depreciee_et_datee():
+    from oto_mcp import deprecations, openapi
     doc = openapi.build()
-    for suffixe, verbes in (("operations", ("get", "put")), ("operations/import", ("post",)),
-                            ("definition", ("get", "put"))):
-        item = doc["paths"][f"/api/orgs/{{id}}/connectors/http/{suffixe}"]
-        for verbe in verbes:
-            op = item[verbe]
-            assert op["deprecated"] is True and "200" not in op["responses"], (suffixe, verbe)
-            assert "connector_renamed" in str(op["responses"]["410"])
-        assert "200" in doc["paths"][f"/api/orgs/{{id}}/connectors/api/{suffixe}"][verbes[0]][
-            "responses"]
+    date = deprecations.RETRAIT_CONNECTEUR_API.strftime("%d/%m/%Y")
+    for verbe, suffixe in _ANCIENNES:
+        op = doc["paths"][f"/api/orgs/{{id}}/connectors/http/{suffixe}"][verbe.lower()]
+        assert op["deprecated"] is True and "308" in op["responses"], (suffixe, verbe)
+        assert f"/connectors/api/{suffixe}" in op["summary"] and date in op["summary"]
+        assert "200" in doc["paths"][f"/api/orgs/{{id}}/connectors/api/{suffixe}"][
+            verbe.lower()]["responses"]

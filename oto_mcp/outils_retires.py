@@ -466,69 +466,10 @@ def _retrait_decrit(ancien: str) -> Retrait:
     )
 
 
-# --- 12/11/2026 : un connecteur RENOMMÉ -------------------------------------------------
-# Décision du propriétaire du produit : le connecteur « Custom API » s'appelait `http`, un
-# nom de protocole qui ne dit pas ce qu'il sert ; il s'appelle `api`
-# (`providers.CONNECTEURS_RENOMMES`). Ses outils changent de préfixe, rien d'autre : mêmes
-# ops, mêmes arguments, même effet. Aucun alias : l'ancien nom refuse en nommant le
-# nouveau, et la révision `20261112_1200_connecteur_api` réécrit les listes enregistrées
-# (le même outil des deux côtés, qu'elle autorise ou masque).
-
-
-class RenommageDeNom(NamedTuple):
-    ancien: str                 # l'outil retiré
-    outil: str                  # le même outil, sous son nouveau nom
-    depuis: datetime.date       # le jour du renommage
-
-
-#: Le jour du renommage du connecteur Custom API.
-LOT_CONNECTEUR_API = datetime.date(2026, 11, 12)
-
-#: Les outils renommés avec leur connecteur, que la révision `20261112_1200_connecteur_api`
-#: lit.
-RENOMMAGES_CONNECTEURS: tuple[RenommageDeNom, ...] = tuple(
-    RenommageDeNom(f"http{suffixe}", f"api{suffixe}", LOT_CONNECTEUR_API)
-    for suffixe in ("", "_act", "_get", "_post", "_doc"))
-
-#: L'annonce du renommage est servie aux agents (même place que `annonce_act`) jusqu'à ce
-#: jour inclus — un mois.
-ANNONCE_CONNECTEURS_JUSQU_AU = datetime.date(2026, 12, 12)
-
-
-def remplacant_de_nom(ancien: str) -> Optional[str]:
-    """Le nouveau nom d'un outil renommé avec son connecteur, ou None."""
-    return next((r.outil for r in RENOMMAGES_CONNECTEURS if r.ancien == ancien), None)
-
-
-def _retrait_de_nom(ancien: str) -> Retrait:
-    r = next(r for r in RENOMMAGES_CONNECTEURS if r.ancien == ancien)
-    return Retrait(
-        message=(
-            f"`{ancien}` is renamed `{r.outil}` ({r.depuis:%d/%m/%Y}): the Custom API "
-            "connector is now called `api`, and its tools changed prefix — same ops, same "
-            f"arguments, same effect. Call `{r.outil}` instead, with the same arguments. If "
-            f"a procedure or a page told you to call `{ancien}`, it predates this change: "
-            "take the path above — this name only returns this refusal, called directly or "
-            "through `oto_call`."),
-        hint=f"call `{r.outil}` with the same arguments",
-    )
-
-
-def annonce_connecteurs_du_jour(aujourd_hui: Optional[datetime.date] = None) -> Optional[str]:
-    """La ligne servie aux agents tant que le renommage est récent, None ensuite."""
-    jour = aujourd_hui or datetime.date.today()
-    if jour > ANNONCE_CONNECTEURS_JUSQU_AU:
-        return None
-    return ("Tools renamed with their connector (Custom API is now `api`) — "
-            + " · ".join(f"`{r.ancien}` → `{r.outil}`" for r in RENOMMAGES_CONNECTEURS)
-            + ". Same arguments; the old names refuse, naming the new one.")
-
-
 RETIRES: dict[str, Retrait] = {
     "oto_kb": KB,
     **{a: _retrait_act(a) for a in dict.fromkeys(r.ancien for r in RENOMMAGES)},
     **{a: _retrait_decrit(a) for a in dict.fromkeys(r.ancien for r in RENOMMAGES_DECRITS)},
-    **{r.ancien: _retrait_de_nom(r.ancien) for r in RENOMMAGES_CONNECTEURS},
 }
 
 
