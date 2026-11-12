@@ -526,6 +526,7 @@ tests = [
   "tests/**/test_partage_par_defaut.py",
   "tests/**/test_tours_au_cout*.py",
   "tests/**/test_regions_de_modeles*.py",
+  "tests/api/test_regions_de_modeles_rest.py",
   "tests/**/test_modeles_ouverts_openrouter.py",
 ]
 
