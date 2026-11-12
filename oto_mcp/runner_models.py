@@ -69,8 +69,10 @@ MODELES: tuple[Modele, ...] = (
     # même nom) : la voie bon marché des agents hébergés, en Chat Completions sur
     # `https://openrouter.ai/api/v1`. Placés APRÈS les familles d'avant : le défaut se dérive
     # du premier modèle servi, et un worker OpenRouter qui démarre ne le déplace pas.
-    # Hôtes épinglés en fp8 ou au fournisseur d'origine, jamais fp4 ni alias `~` :
-    # la liste borne le prix réglé (le plus cher d'entre eux) et la quantification.
+    # Hôtes épinglés en fp8, jamais fp4 ni alias `~`, et de prix VOISINS (écart ≤ 11 %
+    # sur la liste du 12/11/2026) : le tour se règle au plus cher d'entre eux, donc une
+    # liste large vendrait au-dessus du coût l'hôte le moins cher. Un hôte qu'on ajoute
+    # ou retire ici re-dérive la ligne du barème chez le commerce.
     # Le raisonnement partage le plafond de complétion avec la réponse : chacun déclare
     # le sien (`max_output_tokens`), comme les modèles Mistral qui raisonnent.
     #
@@ -78,16 +80,16 @@ MODELES: tuple[Modele, ...] = (
     # procédures, s'arrête sur une donnée manquante, ~×0,2 le coût de Claude. Contexte 1M.
     Modele("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "openrouter",
            effort="medium", max_output_tokens=16000,
-           providers=("deepinfra/fp8", "stepfun/fp8", "streamlake/fp8", "deepseek")),
+           providers=("stepfun/fp8", "streamlake/fp8")),
     Modele("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "openrouter",
            effort="medium", max_output_tokens=16000,
-           providers=("streamlake/fp8", "baidu/fp8", "gmicloud/fp8", "deepinfra/fp8")),
+           providers=("streamlake/fp8", "baidu/fp8", "gmicloud/fp8")),
     Modele("z-ai/glm-5.3", "GLM-5.3", "openrouter",
            effort="medium", max_output_tokens=16000,
            providers=("novita/fp8", "siliconflow/fp8", "gmicloud/fp8")),
     Modele("minimax/minimax-m3", "MiniMax M3", "openrouter",
            effort="medium", max_output_tokens=16000,
-           providers=("gmicloud/fp8", "deepinfra/fp8", "parasail/fp8", "minimax")),
+           providers=("parasail/fp8", "streamlake/fp8")),
     # ⚠️ L'ABONNEMENT de la personne (OTO-130), pas une clé : ces travaux tournent
     # dans SON sandbox, sur le programme Claude Code officiel où elle s'est
     # connectée elle-même. La famille est donc un dépôt qu'AUCUNE org ne dépose et

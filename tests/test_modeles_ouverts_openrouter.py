@@ -54,7 +54,7 @@ def test_le_travail_emporte_les_hotes_epingles():
     c = runner_models.charge(FLASH)
     assert c["model_family"] == "openrouter" and c["effort"] == "medium"
     assert c["max_output_tokens"] == 16000
-    assert c["providers"] == ["deepinfra/fp8", "stepfun/fp8", "streamlake/fp8", "deepseek"]
+    assert c["providers"] == ["stepfun/fp8", "streamlake/fp8"]
     assert "providers" not in runner_models.charge("claude-sonnet-5")
 
 
@@ -74,7 +74,7 @@ def test_openrouter_est_un_porteur_de_cle_a_cle_de_plateforme_fermee():
 def bareme(monkeypatch):
     vu = {"reserve": [], "lignes": [
         {"connector": "openrouter", "function": f"messages:{FLASH}", "unit": u,
-         "budget": 5, "per_n": 346} for u in tours.UNITES_DU_MODELE]}
+         "budget": 5, "per_n": 346} for u in tours.UNITES_DU_MODELE]}  # forme seule
     monkeypatch.setattr(db_credits, "version_du_bareme", lambda: 1)
     monkeypatch.setattr(db_credits, "lignes_du_bareme", lambda v: vu["lignes"])
     monkeypatch.setattr(db_credits, "orgs_en_mode_personne", lambda: set())
