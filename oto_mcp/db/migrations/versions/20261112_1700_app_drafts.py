@@ -1,5 +1,5 @@
 """Apps : brouillon et versions publiées (`apps.drafts_enabled`, `published_at`,
-`version_note`, `draft_*` ; `app_revisions.published_at`, `note`).
+`version_note`, `draft_*` ; `app_revisions.published_at`, `note`, `saved_at`).
 
 Des colonnes NEUVES sur des tables déjà posées — le DDL est le fragment
 `db/schema/apps.py::VERSIONS`, exécuté tel quel (`ADD COLUMN IF NOT EXISTS`) : le
@@ -48,5 +48,5 @@ def downgrade() -> None:
     for col in ("drafts_enabled", "published_at", "version_note", "draft_manifest",
                 "draft_html", "draft_by", "draft_at"):
         op.execute(f"ALTER TABLE apps DROP COLUMN IF EXISTS {col}")
-    for col in ("published_at", "note"):
+    for col in ("published_at", "note", "saved_at"):
         op.execute(f"ALTER TABLE app_revisions DROP COLUMN IF EXISTS {col}")

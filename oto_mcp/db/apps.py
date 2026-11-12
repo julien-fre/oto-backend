@@ -245,14 +245,20 @@ def ecrire_sous_verrou(conn, prior: dict, *, by: str, title: Optional[str] = Non
     marque de version publiée et sa note), purge, écrit. Partagé par `update` et la
     publication d'un brouillon (`db/app_versions.publish`), qui le fait dans SA
     transaction. Changer le manifeste ou le HTML sans publier fait de l'état vivant
-    une écriture ordinaire : il perd sa marque de version publiée."""
+    une écriture ordinaire : il perd sa marque de version publiée.
+
+    La révision ne garde la marque de version publiée que si cette écriture REMPLACE
+    la version (manifeste, HTML, ou une publication) : changer la carte d'une version
+    publiée la garde vivante, et en ferait sinon une deuxième copie épinglée."""
     app_id = prior["id"]
+    remplace = published or manifest is not None or html is not None
     conn.execute(
         "INSERT INTO app_revisions (app_id, title, manifest, html, thumbnail, edited_by, "
-        "published_at, note) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        "published_at, note, saved_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (app_id, prior["title"], Jsonb(prior["manifest"]), prior["html"],
          Jsonb(prior["thumbnail"]) if prior["thumbnail"] is not None else None,
-         prior["updated_by"], prior.get("published_at"), prior.get("version_note")),
+         prior["updated_by"], prior.get("published_at") if remplace else None,
+         prior.get("version_note") if remplace else None, prior.get("updated_at")),
     )
     # Deux bornes : les révisions ordinaires, puis les versions publiées — jamais l'une
     # ne pousse l'autre dehors.
@@ -302,7 +308,7 @@ def revisions(app_id: int, limit: int = MAX_REVISIONS + MAX_PUBLISHED) -> list[d
     révisions ordinaires gardées ET les versions publiées, que la purge garde à part."""
     with _connect() as conn:
         return conn.execute(
-            "SELECT id, app_id, title, edited_by, created_at, published_at, note "
+            "SELECT id, app_id, title, edited_by, created_at, published_at, note, saved_at "
             "FROM app_revisions WHERE app_id = %s ORDER BY id DESC LIMIT %s",
             (app_id, limit),
         ).fetchall()
@@ -314,7 +320,7 @@ def revision(app_id: int, revision_id: int) -> Optional[dict]:
     with _connect() as conn:
         return conn.execute(
             "SELECT id, app_id, title, manifest, html, thumbnail, edited_by, created_at, "
-            "published_at, note FROM app_revisions WHERE id = %s AND app_id = %s",
+            "published_at, note, saved_at FROM app_revisions WHERE id = %s AND app_id = %s",
             (revision_id, app_id),
         ).fetchone()
 

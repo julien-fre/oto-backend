@@ -107,6 +107,11 @@ def publier(ctx: ResolvedCtx, row: dict, expected_rev: Optional[str], note: Opti
              "Name the draft you publish: `expected_rev`, the draft's rev from op=get draft=true.")
     courant = db.app_versions.draft(row["id"])
     _require(courant is not None, "no_draft", "This app has no draft to publish.", 409)
+    # Le brouillon LU doit être celui que la personne a vu, AVANT de juger son
+    # manifeste : sinon un brouillon changé entre-temps ferait juger un manifeste et
+    # publier le HTML d'un autre (la base le refuserait, mais après le jugement).
+    if courant["rev"] != expected_rev:
+        raise _conflit(db.app_versions.DraftConflict(courant["rev"]))
     manifest = checked_manifest(ctx, org_de_l_app(row), courant["manifest"])
     extra = avertir(manifest, courant["html"])
     try:
@@ -146,4 +151,5 @@ def version(row: dict, revision_id: Optional[int]) -> dict[str, Any]:
     old = db.apps.revision(row["id"], int(revision_id))
     _require(old is not None, "unknown_revision", "No such revision of this app.", 404)
     return {k: old.get(k) for k in ("id", "title", "manifest", "html", "thumbnail",
-                                    "edited_by", "created_at", "published_at", "note")}
+                                    "edited_by", "created_at", "saved_at", "published_at",
+                                    "note")}

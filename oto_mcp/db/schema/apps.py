@@ -158,4 +158,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS draft_at TIMESTAMPTZ;
 -- versions publiées échappent à la purge des `MAX_REVISIONS` (bornées à part).
 ALTER TABLE app_revisions ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
 ALTER TABLE app_revisions ADD COLUMN IF NOT EXISTS note TEXT;
+-- Quand l'état gardé a été ÉCRIT (son `updated_at`) — `created_at` dit quand il a été
+-- remplacé. NULL pour les révisions d'avant cette colonne.
+ALTER TABLE app_revisions ADD COLUMN IF NOT EXISTS saved_at TIMESTAMPTZ;
 """

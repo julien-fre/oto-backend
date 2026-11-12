@@ -89,6 +89,18 @@ def test_changer_la_carte_garde_la_marque_de_version_publiee(projet):
     db.app_versions.publish(app["id"], by=MOI, expected_rev=d["rev"], manifest={}, note="n")
     v = db.apps.update(app["id"], by=MOI, title="Renamed")
     assert v["published_at"] is not None and v["version_note"] == "n"
+    # La version publiée reste VIVANTE : l'état gardé par ce changement de carte n'est
+    # pas une deuxième copie épinglée (elle userait la borne des versions publiées).
+    dernier = db.apps.revisions(app["id"])[0]
+    assert dernier["published_at"] is None and dernier["note"] is None
+
+
+def test_une_revision_dit_quand_son_etat_a_ete_ecrit(projet):
+    app = _app(projet)
+    db.apps.update(app["id"], by=MOI, html="<p>2</p>")
+    (r,) = db.apps.revisions(app["id"])
+    assert r["saved_at"] == app["updated_at"]
+    assert r["created_at"] >= r["saved_at"]
 
 
 def test_couper_le_brouillon_avec_un_brouillon_en_cours(projet):

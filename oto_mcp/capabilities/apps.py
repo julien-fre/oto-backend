@@ -156,6 +156,8 @@ class AppRevision(BaseModel):
     edited_by: Optional[str] = None
     # `created_at` : quand cet état a été REMPLACÉ (la révision s'écrit alors).
     created_at: Optional[Any] = None
+    # Quand cet état a été ÉCRIT ; absent pour les révisions d'avant la colonne.
+    saved_at: Optional[Any] = None
     # Cet état était une version publiée (`op=publish`, `op=restore`), et sa note.
     published_at: Optional[Any] = None
     note: Optional[str] = None
@@ -574,11 +576,15 @@ def _update_brouillon(ctx: ResolvedCtx, row: dict, inp: AppInput,
     base_html = courant["html"] if courant else row["html"]
     extra = _avertir(manifest if manifest is not None else base_manifest,
                      inp.html if inp.html is not None else base_html)
+    # La carte se juge AVANT d'écrire quoi que ce soit : une vignette refusée ou un
+    # auteur qui casserait l'app publiée ne laisse pas un brouillon écrit à moitié.
+    thumb = _thumb_of(inp)
+    carte = inp.title is not None or thumb is not ...
+    if carte:
+        _devenir_auteur_ou_refus(ctx, row)
     V.ecrire(ctx, row, expected_rev=inp.expected_rev, manifest=manifest, html=inp.html,
              auteur_ou_refus=_devenir_auteur_ou_refus)
-    thumb = _thumb_of(inp)
-    if inp.title is not None or thumb is not ...:
-        _devenir_auteur_ou_refus(ctx, row)
+    if carte:
         row = _update(ctx.sub, row, None, title=inp.title.strip() if inp.title else None,
                       thumbnail=thumb)
     return {"app": _view(ctx.sub, row), "target": "draft",
