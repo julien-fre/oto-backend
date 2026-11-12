@@ -775,9 +775,10 @@ def test_dataforseo_serves_one_tool_that_simulates(dataforseo):
     outils, _ = dataforseo
     assert set(outils) == {"dataforseo"}
     ops = outils["dataforseo"].parameters["properties"]["op"]["enum"]
-    assert len(ops) == 59 and {"keyword_overview", "domain_technologies", "user_data"} <= set(ops)
+    assert len(ops) == 62 and {"keyword_overview", "domain_technologies", "user_data", "serp_organic_post",
+                               "serp_organic_get", "goto_url_resolve"} <= set(ops)
     assert outils["dataforseo"].annotations == SIMULATION
-    assert effets.EFFETS["dataforseo"]["ecrire"] == "onpage_crawl_start google_reviews_post"
+    assert effets.EFFETS["dataforseo"]["ecrire"] == "onpage_crawl_start serp_organic_post google_reviews_post"
     assert effets_recette.classer("dataforseo", "keyword_overview") == "lire"
 
 
