@@ -54,7 +54,7 @@ def test_le_travail_emporte_les_hotes_epingles():
     c = runner_models.charge(FLASH)
     assert c["model_family"] == "openrouter" and c["effort"] == "medium"
     assert c["max_output_tokens"] == 16000
-    assert c["providers"] == ["stepfun/fp8", "streamlake/fp8"]
+    assert c["providers"] == ["stepfun/fp8", "streamlake/fp8", "deepinfra/fp8"]
     assert "providers" not in runner_models.charge("claude-sonnet-5")
 
 

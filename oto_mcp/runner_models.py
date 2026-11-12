@@ -72,7 +72,9 @@ MODELES: tuple[Modele, ...] = (
     # Hôtes épinglés en fp8, jamais fp4 ni alias `~`, et de prix VOISINS (écart ≤ 11 %
     # sur la liste du 12/11/2026) : le tour se règle au plus cher d'entre eux, donc une
     # liste large vendrait au-dessus du coût l'hôte le moins cher. Un hôte qu'on ajoute
-    # ou retire ici re-dérive la ligne du barème chez le commerce.
+    # ou retire ici re-dérive la ligne du barème chez le commerce. Le DERNIER hôte d'une
+    # liste est un secours de capacité, moins cher que les autres sur l'entrée et la
+    # sortie : `order` ne l'atteint que si les précédents refusent (429, panne).
     # Le raisonnement partage le plafond de complétion avec la réponse : chacun déclare
     # le sien (`max_output_tokens`), comme les modèles Mistral qui raisonnent.
     #
@@ -80,7 +82,7 @@ MODELES: tuple[Modele, ...] = (
     # procédures, s'arrête sur une donnée manquante, ~×0,2 le coût de Claude. Contexte 1M.
     Modele("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "openrouter",
            effort="medium", max_output_tokens=16000,
-           providers=("stepfun/fp8", "streamlake/fp8")),
+           providers=("stepfun/fp8", "streamlake/fp8", "deepinfra/fp8")),
     Modele("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "openrouter",
            effort="medium", max_output_tokens=16000,
            providers=("streamlake/fp8", "baidu/fp8", "gmicloud/fp8")),
@@ -89,7 +91,7 @@ MODELES: tuple[Modele, ...] = (
            providers=("novita/fp8", "siliconflow/fp8", "gmicloud/fp8")),
     Modele("minimax/minimax-m3", "MiniMax M3", "openrouter",
            effort="medium", max_output_tokens=16000,
-           providers=("parasail/fp8", "streamlake/fp8")),
+           providers=("parasail/fp8", "streamlake/fp8", "gmicloud/fp8")),
     # ⚠️ L'ABONNEMENT de la personne (OTO-130), pas une clé : ces travaux tournent
     # dans SON sandbox, sur le programme Claude Code officiel où elle s'est
     # connectée elle-même. La famille est donc un dépôt qu'AUCUNE org ne dépose et
