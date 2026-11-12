@@ -82,6 +82,10 @@ OUVERTES = frozenset({
     "me.unipile.status", "me.unipile.disconnect",
     "me.federation.google.status", "me.federation.google.revoke",
     "me.model_subscriptions.list", "me.model_subscriptions.remove",
+    # EFFACER l'org (`org.erasure`) : la confirmation la suspend, et c'est suspendue
+    # qu'un admin doit pouvoir suivre ou annuler ; une org arrêtée en fin d'essai est
+    # aussi la première à vouloir être effacée. Le geste retire, il n'ouvre rien.
+    "org.erasure", "org.erasure_confirm",
 })
 
 
