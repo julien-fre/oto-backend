@@ -674,6 +674,11 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         # déclarée. La pose le refuse désormais (`_modele.exige_un_modele`) ; ceci
         # arrête ce qui a été posé avant, ou enfilé à la main, raison écrite.
         return _refuser_sans_cle(job, appelant, _SANS_MODELE)
+    if _modele.region_bloquee(job["org_id"], (job.get("payload") or {}).get("model")):
+        # L'org a ÉCARTÉ la région où tourne ce modèle (`orgs.allow_cn_models`) depuis
+        # que le travail a été posé : il n'est servi sur AUCUNE clé, la sienne comme la
+        # nôtre — ses données ne partent pas là où l'org l'a refusé. Arrêté, raison écrite.
+        return _refuser_sans_cle(job, appelant, _modele.RAISON_REGION_CN)
     if _abonnement.est_abonnement(famille):
         # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
         # ce travail tournera dans le sandbox de SON DEMANDEUR, sur le programme
@@ -967,7 +972,10 @@ def _journaliser_un_tour(job_id: int, tour: int, usage: dict, postes: dict,
             tokens={k: v for k, v in postes.items() if v is not None},
             key_mode=est.get("mode"),
             meta={"runner_job_id": int(job_id), "attempt": prise["attempts"],
-                  "turn": int(tour)})
+                  "turn": int(tour),
+                  # L'hôte qui a servi ce tour (OpenRouter le nomme) : où il est parti.
+                  **({"host": usage["usage_host"]}
+                     if isinstance(usage.get("usage_host"), str) else {})})
     except Exception:
         logger.exception("travail %s : tour %s NON journalisé (clé partagée `%s`)", job_id,
                          tour, est.get("depot"))
@@ -1445,6 +1453,7 @@ def charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
         if model is not None and not isinstance(model, str):
             raise AuthzDenied(400, "invalid_model", "`payload.model` est un nom de modèle")
         _modele.famille_declaree(model)
+        _modele.exige_region_permise(ctx.org_id, model)
         charge.update(runner_models.charge(model))
         # Le QUATRIÈME chemin de pose (revue du 23/09/2026) : un travail enfilé à la
         # main sur un modèle d'abonnement passe la même garde qu'un agent posé —

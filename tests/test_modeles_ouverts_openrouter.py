@@ -140,3 +140,84 @@ def test_un_tour_sans_cout_declare_arrete_le_travail(tour_partage):
     with pytest.raises(AuthzDenied) as e:
         runner_jobs._regler_un_tour(_Ctx(), 7, 3, {**_USAGE, "usage_cost_usd": None})
     assert e.value.status == 422 and tour_partage["lignes"] == []
+
+
+def test_l_hote_qui_a_servi_le_tour_part_au_journal(tour_partage):
+    runner_jobs._regler_un_tour(_Ctx(), 7, 3, {**_USAGE, "usage_host": "StepFun"})
+    (ligne,) = tour_partage["lignes"]
+    assert ligne["args"]["host"] == "StepFun"
+
+
+# ── 4. où tourne un modèle ───────────────────────────────────────────────────
+
+def test_chaque_hote_epingle_dit_ou_il_tourne():
+    """Un hôte ajouté à une liste sans sa région ferait servir un modèle sans dire où il
+    tourne : `hebergement` lève, et ce banc le voit."""
+    for m in runner_models.MODELES:
+        h = runner_models.hebergement(m.id)
+        assert h and h["region"] in ("us", "eu", "cn") and h["hosts"], m.id
+
+
+def test_la_region_d_un_modele_est_la_pire_de_ses_hotes():
+    assert runner_models.hebergement("claude-sonnet-5")["region"] == "us"
+    assert runner_models.hebergement("mistral-large-2512")["region"] == "eu"
+    flash = runner_models.hebergement(FLASH)
+    assert flash["region"] == "cn" and flash["router"] == {"name": "OpenRouter", "region": "us"}
+    assert [(h["name"], h["region"], h["role"]) for h in flash["hosts"]] == [
+        ("StepFun", "cn", "first"), ("StreamLake", "cn", "backup"),
+        ("DeepInfra", "us", "last_backup")]
+    # Premier hôte aux US, un secours en Chine : la Chine, dite.
+    minimax = runner_models.hebergement("minimax/minimax-m3")
+    assert minimax["hosts"][0]["region"] == "us" and minimax["region"] == "cn"
+    assert runner_models.hebergement("inconnu") is None
+
+
+def test_un_hote_inconnu_leve(monkeypatch):
+    m = runner_models._PAR_ID[FLASH]
+    monkeypatch.setitem(runner_models._PAR_ID, FLASH, m._replace(providers=("nouveau/fp8",)))
+    with pytest.raises(KeyError):
+        runner_models.hebergement(FLASH)
+
+
+# ── 5. l'org qui écarte les modèles qui tournent en Chine ────────────────────
+
+@pytest.fixture
+def chine(monkeypatch):
+    from oto_mcp import db
+    vu = {"permise": True}
+    from oto_mcp.capabilities import _cle_exigee
+    monkeypatch.setattr(db.regions_de_modeles, "chine_permise", lambda org: vu["permise"])
+    monkeypatch.setattr(_cle_exigee, "manquantes", lambda *a, **k: [])
+    return vu
+
+
+def test_ecartee_la_chine_n_est_plus_proposee_ni_posable(chine):
+    from oto_mcp.capabilities import _modele
+    chine["permise"] = False
+    etat = _modele.etat_servi({"families": ["openrouter", "anthropic"]}, 42)
+    par_id = {m["id"]: m for m in etat["models"]}
+    assert par_id[FLASH]["allowed"] is False and par_id[FLASH]["default"] is False
+    assert "allowed" not in par_id["claude-sonnet-5"]  # rien d'écarté hors de Chine
+    with pytest.raises(AuthzDenied) as e:
+        _modele.exige_region_permise(42, FLASH)
+    assert (e.value.status, e.value.code) == (403, "model_region_blocked")
+    _modele.exige_region_permise(42, "claude-sonnet-5")
+    _modele.exige_region_permise(42, "mistral-large-2512")
+
+
+def test_permise_par_defaut_rien_ne_change(chine):
+    from oto_mcp.capabilities import _modele
+    etat = _modele.etat_servi({"families": ["openrouter"]}, 42)
+    assert all(m.get("allowed", True) for m in etat["models"])
+    _modele.exige_region_permise(42, FLASH)
+
+
+def test_un_travail_deja_en_file_est_arrete_a_la_reservation(chine, monkeypatch):
+    chine["permise"] = False
+    arrete = {}
+    monkeypatch.setattr(runner_jobs.db, "arreter_definitivement",
+                        lambda jid, qui, raison: arrete.update(jid=jid, raison=raison))
+    job = {"id": 5, "org_id": 42, "payload": {"model": FLASH, "model_family": "openrouter"}}
+    out = runner_jobs._avec_cle(job, "openrouter", "worker:x", worker=True, metre=True)
+    assert arrete["jid"] == 5 and "Chine" in arrete["raison"]
+    assert out["delegation_refusee"] == arrete["raison"]

@@ -1114,6 +1114,24 @@ l'épingle rend le tour prévisible et borne son prix. Les modèles
 ouverts sont placés APRÈS les familles d'avant : le défaut proposé ne bouge pas tant qu'une
 famille antérieure est servie.
 
+### Où tourne un modèle, et l'org qui écarte la Chine (12/11/2026)
+
+Chaque modèle du catalogue dit OÙ il tourne (`runner_models.hebergement`, servi par
+`runner.models[].hosting`) : ses hôtes dans l'ordre où ils sont essayés, chacun avec sa
+région (`us`, `eu`, `cn`), qui l'a construit, et le routeur entre les deux quand il y en a
+un (OpenRouter). La région du modèle est la PIRE de ses hôtes : `cn` dès qu'un seul, un
+secours compris, est en Chine. Les régions des hôtes viennent de
+`GET https://openrouter.ai/api/v1/providers` (`headquarters`, `datacenters`) et des
+conditions des hôtes, lus le 12/11/2026 (`runner_models.HOTES`) ; un hôte épinglé sans
+région fait échouer un banc. Le worker rapporte l'hôte qui a servi chaque tour
+(`usage_host`), écrit au journal du tour au coût (`args.host`).
+
+Une org peut écarter les modèles qui tournent en Chine (`orgs.allow_cn_models`, TRUE par
+défaut ; `oto_org_settings domain=model_regions`, REST `/api/orgs/{id}/model-regions`,
+admin de l'org). Écartés : `allowed: false` au catalogue (l'écran ne les propose pas),
+refusés à la pose (`model_region_blocked`, 403), et un travail déjà en file sur l'un d'eux
+est arrêté à la réservation, sur la clé de l'org comme sur la nôtre, raison écrite.
+
 ### Un agent tourne sur la clé de SON org — ou ne tourne pas (12/09/2026)
 
 La remise de clé (#874, ci-dessus) avait un envers que rien ne gardait : **une org

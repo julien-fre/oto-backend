@@ -123,6 +123,71 @@ FAMILLES_PERSONNELLES = frozenset(f for f in FAMILLES if f.endswith("_subscripti
 MODELES_PERSONNELS = tuple(m.id for m in MODELES if m.family in FAMILLES_PERSONNELLES)
 
 
+#: OÙ TOURNE un modèle (12/11/2026) : ce que l'écran dit au client — le pays des
+#: serveurs qui reçoivent chaque tour (la consigne, les lignes lues, les résultats
+#: d'outils). Une RÉGION par hôte : `us`, `eu`, `cn`. Sources lues le 12/11/2026 :
+#: `GET https://openrouter.ai/api/v1/providers` (`headquarters`, `datacenters`) pour
+#: Anthropic (US), Mistral (FR), Baidu (CN), StreamLake (CN), DeepInfra (US),
+#: Parasail (US) et GMICloud (US, centres US) ; StepFun n'y a pas de siège : ses
+#: conditions (platform.stepfun.ai, « userservice ») relèvent du droit de Hong Kong,
+#: donc `cn`. ⚠️ Un hôte épinglé (`Modele.providers`) absent d'ici fait échouer un
+#: banc : un modèle ne se sert jamais sans dire où il tourne.
+HOTES: dict[str, tuple[str, str]] = {
+    "anthropic": ("Anthropic", "us"),
+    "mistral": ("Mistral AI", "eu"),
+    "stepfun": ("StepFun", "cn"),
+    "streamlake": ("StreamLake", "cn"),
+    "baidu": ("Baidu", "cn"),
+    "deepinfra": ("DeepInfra", "us"),
+    "parasail": ("Parasail", "us"),
+    "gmicloud": ("GMI Cloud", "us"),
+}
+#: Qui a CONSTRUIT le modèle, et son pays (ISO) — distinct d'où il tourne : un modèle
+#: chinois peut tourner aux États-Unis. Clé : la famille, ou le préfixe de l'id
+#: OpenRouter (`deepseek/…`).
+FABRICANTS: dict[str, tuple[str, str]] = {
+    "anthropic": ("Anthropic", "US"),
+    "claude_subscription": ("Anthropic", "US"),
+    "mistral": ("Mistral AI", "FR"),
+    "deepseek": ("DeepSeek", "CN"),
+    "minimax": ("MiniMax", "CN"),
+}
+#: Le routeur entre l'agent et l'hôte, quand il y en a un : il voit aussi chaque tour.
+#: OpenRouter, Inc. — New York (openrouter.ai/terms, lu le 12/11/2026).
+ROUTEURS: dict[str, tuple[str, str]] = {"openrouter": ("OpenRouter", "us")}
+#: L'hôte d'une famille servie par le seul fournisseur du modèle.
+_HOTE_DE_LA_FAMILLE = {"anthropic": "anthropic", "claude_subscription": "anthropic",
+                       "mistral": "mistral"}
+#: Du plus au moins sensible : la région d'un modèle est la PIRE de ses hôtes.
+_ORDRE_DES_REGIONS = ("cn", "us", "eu")
+
+
+def hebergement(model: Optional[str]) -> Optional[dict]:
+    """Où tourne `model` : `{region, hosts: [{name, region, role}], maker: {name,
+    country}, router: {name, region} | None}`, None pour un modèle inconnu.
+
+    `region` est la PIRE région de ses hôtes, routeur compris — `cn` dès qu'UN hôte de la
+    liste est en Chine, même en secours (MiniMax M3 : premier hôte aux US). `role` :
+    `only` (un seul hôte), sinon `first`, `backup`, et `last_backup` pour le dernier —
+    l'ordre de `provider.order`. Lève `KeyError` sur un hôte que `HOTES` ne connaît pas."""
+    m = _PAR_ID.get(model or "")
+    if not m:
+        return None
+    slugs = ([p.split("/", 1)[0] for p in m.providers] if m.providers
+             else [_HOTE_DE_LA_FAMILLE[m.family]])
+    roles = (["only"] if len(slugs) == 1
+             else ["first"] + ["backup"] * (len(slugs) - 2) + ["last_backup"])
+    hosts = [{"name": HOTES[s][0], "region": HOTES[s][1], "role": r}
+             for s, r in zip(slugs, roles)]
+    routeur = ROUTEURS.get(m.family)
+    regions = {h["region"] for h in hosts} | ({routeur[1]} if routeur else set())
+    cle = m.family if m.family in FABRICANTS else m.id.split("/", 1)[0]
+    fabricant = FABRICANTS[cle]
+    return {"region": next(r for r in _ORDRE_DES_REGIONS if r in regions),
+            "hosts": hosts, "maker": {"name": fabricant[0], "country": fabricant[1]},
+            "router": ({"name": routeur[0], "region": routeur[1]} if routeur else None)}
+
+
 def famille(model: Optional[str]) -> Optional[str]:
     """La famille d'un modèle du catalogue, ou None (absent, ou inconnu)."""
     m = _PAR_ID.get(model or "")
@@ -239,5 +304,6 @@ def catalogue(familles_servies, familles_sans_cle=()) -> list[dict]:
     proposables = servies - set(familles_sans_cle or ()) - FAMILLES_PERSONNELLES
     defaut = next((m.id for m in MODELES if m.family in proposables), None)
     return [{"id": m.id, "label": m.label, "family": m.family,
-             "default": m.id == defaut, "served": m.family in servies}
+             "default": m.id == defaut, "served": m.family in servies,
+             "hosting": hebergement(m.id)}
             for m in MODELES]
