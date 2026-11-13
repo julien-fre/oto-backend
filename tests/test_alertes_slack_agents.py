@@ -56,6 +56,7 @@ def allume(live, monkeypatch):
     with _connect() as conn:
         conn.execute("DELETE FROM agent_alert_settings WHERE org_id = %s", (ORG,))
         conn.execute("DELETE FROM agent_episodes WHERE org_id = %s", (ORG,))
+        conn.execute("DELETE FROM agent_causes WHERE cle LIKE 'test-%%'")
     monkeypatch.setenv("OTO_ALERTES_SLACK_AGENTS_ENABLED", "1")
     monkeypatch.setenv("OTO_APP_URL", BASE)
     monkeypatch.setenv("OTO_DASHBOARD_LINK_PATHS", CHEMINS)
@@ -86,12 +87,13 @@ def agent(live):
     return t["id"]
 
 
-def _episode(agent, cote="proprietaire", il_y_a_min=5, classe="inconnu", job_id=None):
+def _episode(agent, cote="proprietaire", il_y_a_min=5, classe="inconnu", job_id=None,
+             empreinte=None):
     from oto_mcp.db import episodes_agents
     from oto_mcp.db._conn import _connect
     ep = episodes_agents.ouvrir_ou_rafraichir(
         org_id=ORG, trigger_id=agent, classe=classe, cote=cote, motif="HTTP 401",
-        job_id=job_id, travaux=1)
+        job_id=job_id, travaux=1, empreinte=empreinte)
     with _connect() as conn:
         conn.execute("UPDATE agent_episodes SET ouvert_at = NOW() - make_interval(mins => %s) "
                      "WHERE id = %s", (il_y_a_min, ep["id"]))
@@ -411,3 +413,107 @@ def test_une_valeur_illisible_leve(allume):
     allume.setenv("OTO_ALERTES_SLACK_AGENTS_ENABLED", "peut-etre")
     with pytest.raises(interrupteurs.InterrupteurIllisible):
         A.actives()
+
+
+# --- La cause approuvée, et un message par problème (13/11/2026) ------------------------
+
+def _autre_agent(label):
+    from oto_mcp.db import runner_triggers as rt
+    return rt.create_trigger(ORG, "jane", procedure="leads-push", tz="UTC", tools=["a"],
+                             cron="0 6 * * *", next_due="2999-01-01 00:00:00+00",
+                             label=label)["id"]
+
+
+def _cause(cle, cote="proprietaire", copie=None, statut="approuvee"):
+    from oto_mcp.db import causes_agents
+    causes_agents.relever([(cle, "x", "cle_refusee", cote)])
+    causes_agents.decider(cle, acteur="ops", statut=statut, copie=copie or {
+        "fr": {"headline": "Le compte de paiement de {marque} est vide.",
+               "todo": "Ajoutez des crédits.", "action": "credits"}})
+
+
+def test_la_copie_de_la_cause_approuvee_part_tout_de_suite_et_l_emporte(slack, agent):
+    _allumer()
+    _cause("test-c1")
+    ep = _episode(agent, empreinte="test-c1")
+    _dire(ep)
+    assert A.balayer()["envoyes"] == 1
+    texte = slack.posts[0]["text"]
+    assert "Le compte de paiement de Acme est vide." in texte
+    assert "Ajoutez des crédits." in texte and "nouvelle clé API" not in texte
+    assert slack.posts[0]["blocks"][1]["elements"][0]["url"] == f"{BASE}/org/billing"
+
+
+def test_une_cause_proposee_ou_d_un_autre_cote_ne_parle_pas(slack, agent):
+    _allumer()
+    _cause("test-c2", statut="proposee")
+    ep = _episode(agent, empreinte="test-c2")
+    assert A.balayer()["envoyes"] == 0, "proposée : l'attente de la classe tient"
+    _cause("test-c3", cote="plateforme")
+    from oto_mcp.db import episodes_agents
+    episodes_agents.ouvrir_ou_rafraichir(
+        org_id=ORG, trigger_id=agent, classe="inconnu", cote="proprietaire",
+        motif="HTTP 401", job_id=None, travaux=1, empreinte="test-c3")
+    _dire(ep)
+    A.balayer()
+    assert "nouvelle clé API" in slack.posts[0]["text"]
+
+
+def test_trois_agents_arretes_par_la_meme_cause_font_un_message(slack, agent):
+    _allumer()
+    _cause("test-c4")
+    autres = [_autre_agent("Relances"), _autre_agent("Veille")]
+    for t in [agent, *autres]:
+        _episode(t, empreinte="test-c4")
+    bilan = A.balayer()
+    assert (bilan["envoyes"], bilan["messages"]) == (3, 1)
+    (post,) = slack.posts
+    assert post["text"].startswith("⚠️ 3 agents ne fonctionnent plus depuis")
+    for nom in ("Leads vers l'emailing", "Relances", "Veille"):
+        assert f"*{nom}*" in post["text"]
+    assert post["text"].count("Ajoutez des crédits.") == 1
+    assert A.balayer()["envoyes"] == 0, "les trois sont marqués"
+
+
+def test_deux_problemes_differents_font_deux_messages(slack, agent):
+    _allumer()
+    autre = _autre_agent("Relances")
+    _dire(_episode(agent))
+    _dire(_episode(autre), headline="Le compte au nom duquel l'agent tourne a été retiré.")
+    assert A.balayer()["messages"] == 2
+
+
+def test_au_dela_de_cinq_agents_les_autres_se_comptent(slack, agent):
+    _allumer()
+    _cause("test-c5")
+    for t in [agent, *[_autre_agent(f"Agent {i}") for i in range(6)]]:
+        _episode(t, empreinte="test-c5")
+    A.balayer()
+    assert "et 2 autres" in slack.posts[0]["text"]
+
+
+def test_les_retours_d_un_passage_partent_ensemble(slack, agent):
+    from oto_mcp.db import episodes_agents
+    _allumer()
+    _cause("test-c6")
+    autre = _autre_agent("Relances")
+    eps = [_episode(t, empreinte="test-c6") for t in (agent, autre)]
+    A.balayer()
+    for ep in eps:
+        episodes_agents.poser(int(ep["id"]), statut="clos", resolution="gueri")
+    bilan = A.balayer()
+    assert (bilan["envoyes"], bilan["messages"]) == (2, 1)
+    assert slack.posts[-1]["text"] == "✅ *Leads vers l'emailing*, *Relances* refonctionnent."
+
+
+def test_la_file_sert_la_copie_de_la_cause(slack, agent):
+    from oto_mcp.capabilities import runner_jobs as RJ
+    from oto_mcp.capabilities._types import ResolvedCtx
+    _cause("test-c7")
+    j = _travail_mort(agent)
+    _dire(_episode(agent, classe="cle_refusee", job_id=j, empreinte="test-c7"))
+    out = RJ._avec_le_probleme(ResolvedCtx(sub="jane", org_id=ORG),
+                               [{"id": j, "payload": {"trigger_id": agent}}])
+    assert out[0]["problem"] == {
+        "headline": "Le compte de paiement de Acme est vide.", "todo": "Ajoutez des crédits.",
+        "action": "credits", "link": f"{BASE}/org/billing", "side": "client"}

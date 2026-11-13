@@ -3130,6 +3130,21 @@ passe AVANT l'alerte.
   `catalogue_desaccords` — cause approuvée d'une autre classe ou d'un autre côté que la
   regex —, chacun dit au journal) : la regex décide. Une ombre qui casse ne coûte que son
   bilan (`catalogue_erreur`), jamais le passage.
+- **Ce que lit le client, et combien de fois** (13/11/2026, sous
+  `OTO_ALERTES_SLACK_AGENTS_ENABLED`) : le problème servi sur un agent (`problem` de la
+  file) et l'alerte Slack prennent, dans cet ordre, la copie de la CAUSE approuvée de
+  l'épisode dans la langue de l'espace — si la cause est du même côté que l'épisode —,
+  sinon le texte que l'agent médecin a écrit pour CET épisode (`diagnose`, `client_*` :
+  une cause neuve), sinon la phrase de la classe (`alertes_slack_agents.
+  message_du_probleme`). `{marque}` y devient le nom de la marque ; l'action `credits`
+  mène à `billing`, `connectors` aux connecteurs. Une cause approuvée avec sa copie
+  alerte tout de suite, comme un texte du médecin. **Un message par problème, pas par
+  agent** (`grouper`) : les alertes d'une org dont le client lirait exactement le même
+  problème (titre, geste, lien) partent en UN message qui nomme les agents (cinq, puis
+  « et N autres »), avec le bouton du geste et, si l'instance déclare la vue
+  `agent_health`, celui de la santé des agents ; les retours d'un passage partent
+  ensemble ; une réparation part seule. Chaque épisode du paquet est marqué après
+  l'envoi. Les GESTES (relancer, escalader) restent décidés par la regex.
 - **Où** : boucle `tiers=True` (une relance refait agir un agent chez des tiers),
   ÉTEINTE tant que `OTO_MEDECIN_AGENTS_ENABLED=1` n'est pas déclaré — production seule.
 - Bancs : `tests/test_medecin_agents.py` (sans base), `tests/test_causes_pannes.py`
