@@ -692,6 +692,18 @@ Déclaré au 28/09/2026 : **oto-commerce**, le service de facturation (dépôt p
 les routes `/api/service/*` qu'il appelle (`api/openapi-service.json`, secret
 `OTO_COMMERCE_CONTRACT_KEY`).
 
+**Consommateur privé à référence indirecte** (13/11/2026). Ce dépôt est public, ses journaux
+d'Actions aussi : un consommateur dont le dépôt ne doit être nommé nulle part se déclare par
+un nom neutre (`partenaire-front-N`) et `depot_ref` + `chemin_ref` à la place de `depot` +
+`chemin` — jamais les deux. Ce sont des noms de **secrets** du dépôt (owner/repo, chemin du
+contrat), pas de variables : GitHub imprime l'`env:` de chaque étape dans le journal et ne
+masque d'office que les secrets. `scripts/lire-contrat-consommateur.sh` masque en plus le
+dépôt, son nom seul et le chemin (`::add-mask::`) avant tout autre geste, expurge le détail
+d'erreur de git, rend le contrat sous un nom neutre et ne cite que le nom neutre ; un secret
+de référence absent rougit comme une clé absente (« secret déclaré absent »). Une entrée
+`PARTENAIRE_*` sans dépôt en clair est tenue par `tests/test_contrat_consommateurs_966.py`.
+Déclaré au 13/11/2026 : `partenaire-front-1`.
+
 ### Le second contrat : l'administration (`chemin_admin`, #1196)
 
 Le document public ne contient pas `/api/admin/*` : un consommateur qui appelle

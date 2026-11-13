@@ -286,7 +286,10 @@ jobs:
   # des changements venus de nous).
   #
   # La liste vit dans `.github/contrat-consommateurs.json` : nom, dépôt, chemin du
-  # contrat, secret de lecture (`null` = dépôt public, lu sans clé), et depuis #1196 un
+  # contrat (ou, pour un dépôt privé qui ne doit pas être nommé, `depot_ref`/`chemin_ref` :
+  # les noms des SECRETS qui les portent, jamais des variables — voir
+  # `scripts/lire-contrat-consommateur.sh`), secret de lecture (`null` = dépôt public, lu
+  # sans clé), et depuis #1196 un
   # `chemin_admin` FACULTATIF — le contrat qu'il épingle sur la console `/api/admin/*`,
   # qui a son propre document (`build(admin=True)`), jugé avant déploiement seulement. Jusqu'au 25/09 ce
   # mécanisme était écrit au singulier — un dépôt, un chemin, un secret en dur : un
@@ -314,14 +317,25 @@ jobs:
           set -euo pipefail
           # La liste se lit dans le dépôt, donc une PR peut la modifier : chaque champ est
           # vérifié contre une forme stricte AVANT de devenir une matrice.
+          # Une entrée nomme son dépôt EN CLAIR (`depot` + `chemin`) OU par RÉFÉRENCE
+          # (`depot_ref` + `chemin_ref`, noms de secrets, dépôt privé donc `secret` requis,
+          # sans `chemin_admin`) — jamais les deux : `scripts/lire-contrat-consommateur.sh`.
           if ! jq -e 'type == "array" and length > 0 and all(.[];
+                 type == "object" and
+                 (keys - ["nom", "depot", "depot_ref", "chemin", "chemin_ref", "chemin_admin", "secret"] | length == 0) and
                  (.nom | test("^[A-Za-z0-9._-]+$")) and
-                 (.depot | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) and
-                 (.chemin | test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")) and
-                 ((.chemin_admin // null) == null or (.chemin_admin | test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"))) and
-                 (.secret == null or (.secret | test("^[A-Z][A-Z0-9_]*$"))))' \
+                 ((has("depot") and (has("depot_ref") | not) and (has("chemin_ref") | not) and
+                   (.depot | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) and
+                   (.chemin | test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")) and
+                   ((.chemin_admin // null) == null or (.chemin_admin | test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"))) and
+                   (.secret == null or (.secret | test("^[A-Z][A-Z0-9_]*$"))))
+                  or
+                  ((has("depot") | not) and (has("chemin") | not) and (has("chemin_admin") | not) and
+                   (.depot_ref | test("^[A-Z][A-Z0-9_]*$")) and
+                   (.chemin_ref | test("^[A-Z][A-Z0-9_]*$")) and
+                   (.secret | test("^[A-Z][A-Z0-9_]*$")))))' \
                .github/contrat-consommateurs.json > /dev/null; then
-            echo "::error title=Liste des consommateurs refusée::.github/contrat-consommateurs.json ne respecte pas la forme attendue (nom, dépôt owner/repo, chemin relatif, chemin_admin relatif facultatif, secret en MAJUSCULES ou null) — aucun contrat n'est jugé."
+            echo "::error title=Liste des consommateurs refusée::.github/contrat-consommateurs.json ne respecte pas la forme attendue (nom ; dépôt owner/repo et chemin relatif, chemin_admin relatif facultatif, secret en MAJUSCULES ou null ; OU depot_ref, chemin_ref et secret, noms de secrets en MAJUSCULES) — aucun contrat n'est jugé."
             exit 1
           fi
           echo "liste=$(jq -c . .github/contrat-consommateurs.json)" >> "$GITHUB_OUTPUT"
@@ -369,8 +383,12 @@ jobs:
         env:
           CLE_LECTURE: ${{ matrix.consommateur.secret && secrets[matrix.consommateur.secret] || '' }}
           NOM: ${{ matrix.consommateur.nom }}
-          DEPOT: ${{ matrix.consommateur.depot }}
-          CHEMIN: ${{ matrix.consommateur.chemin }}
+          # Référence indirecte : le dépôt et le chemin sont des SECRETS (masqués d'office
+          # dans l'en-tête `env:` du journal), lus par leur nom déclaré.
+          DEPOT: ${{ matrix.consommateur.depot_ref && secrets[matrix.consommateur.depot_ref] || matrix.consommateur.depot }}
+          DEPOT_REF: ${{ matrix.consommateur.depot_ref || '' }}
+          CHEMIN_REF: ${{ matrix.consommateur.chemin_ref || '' }}
+          CHEMIN: ${{ matrix.consommateur.chemin_ref && secrets[matrix.consommateur.chemin_ref] || matrix.consommateur.chemin }}
           SECRET: ${{ matrix.consommateur.secret || '' }}
         # Valeurs de la liste passées par l'environnement, jamais interpolées dans le
         # script : une PR peut modifier la liste.
@@ -472,8 +490,12 @@ jobs:
         env:
           CLE_LECTURE: ${{ matrix.consommateur.secret && secrets[matrix.consommateur.secret] || '' }}
           NOM: ${{ matrix.consommateur.nom }}
-          DEPOT: ${{ matrix.consommateur.depot }}
-          CHEMIN: ${{ matrix.consommateur.chemin }}
+          # Référence indirecte : le dépôt et le chemin sont des SECRETS (masqués d'office
+          # dans l'en-tête `env:` du journal), lus par leur nom déclaré.
+          DEPOT: ${{ matrix.consommateur.depot_ref && secrets[matrix.consommateur.depot_ref] || matrix.consommateur.depot }}
+          DEPOT_REF: ${{ matrix.consommateur.depot_ref || '' }}
+          CHEMIN_REF: ${{ matrix.consommateur.chemin_ref || '' }}
+          CHEMIN: ${{ matrix.consommateur.chemin_ref && secrets[matrix.consommateur.chemin_ref] || matrix.consommateur.chemin }}
           SECRET: ${{ matrix.consommateur.secret || '' }}
         # Valeurs de la liste passées par l'environnement, jamais interpolées dans le
         # script : une PR peut modifier la liste.
@@ -531,7 +553,11 @@ jobs:
         env:
           CLE_LECTURE: ${{ matrix.consommateur.secret && secrets[matrix.consommateur.secret] || '' }}
           NOM: ${{ matrix.consommateur.nom }}
-          DEPOT: ${{ matrix.consommateur.depot }}
+          # Référence indirecte : le dépôt et le chemin sont des SECRETS (masqués d'office
+          # dans l'en-tête `env:` du journal), lus par leur nom déclaré.
+          DEPOT: ${{ matrix.consommateur.depot_ref && secrets[matrix.consommateur.depot_ref] || matrix.consommateur.depot }}
+          DEPOT_REF: ${{ matrix.consommateur.depot_ref || '' }}
+          CHEMIN_REF: ${{ matrix.consommateur.chemin_ref || '' }}
           CHEMIN: ${{ matrix.consommateur.chemin_admin }}
           SECRET: ${{ matrix.consommateur.secret || '' }}
         run: scripts/lire-contrat-consommateur.sh "$NOM" "$DEPOT" "$CHEMIN" "$SECRET"
