@@ -3014,6 +3014,19 @@ escalade.* La lentille `agents_en_echec` rendait la panne lisible ; rien ne l'an
   marque de l'org (`org_store.org_front` → `email_templates._envoyer`), hors des heures
   calmes par défaut (`scheduler.DEFAULT_QUIET_HOURS`, 20 h–8 h à Paris : un épisode vu
   la nuit part au premier passage du matin). Un envoi raté ne marque rien.
+- **Ce qu'il dit** (14/11/2026) : sous le réglage des alertes d'agents
+  (`OTO_ALERTES_SLACK_AGENTS_ENABLED`), il parle comme Slack. Le texte de chaque agent est
+  celui du problème de son épisode vivant (`alertes_slack_agents.message_du_probleme` : la
+  copie de la cause approuvée, sinon le texte du médecin, sinon la phrase de la classe ;
+  une lecture d'épisodes par org, `sante_agents.episodes_vivants`), et les agents dont le
+  client lirait exactement le même problème (titre, geste, lien) forment UN bloc qui les
+  nomme — chacun lien vers sa page (`agent`) quand l'instance la déclare — avec le geste
+  une fois et son bouton (`Le faire maintenant`, lien du tableau de bord seulement,
+  `links`). ⚠️ Le motif BRUT n'y entre jamais : un agent sans épisode lisible (boucle du
+  médecin éteinte, lecture en échec — ouvert, dit au journal) reçoit la phrase par défaut.
+  Tout texte est échappé. Toujours un courriel par org, au même destinataire, aux mêmes
+  heures, sous la même règle de tenant, marqué après l'envoi. Réglage éteint : le courriel
+  d'avant, motif compris, mot pour mot (`alerte_agents_bloques.problemes`).
 - **Où** : une boucle de fond déclarée `tiers=True` (`boucles_de_fond.py`,
   `alerte_agents_bloques`, un passage par quart d'heure) — ⚠️ **éteinte par défaut** :
   elle n'écrit que sur une instance qui déclare `OTO_ALERTE_AGENTS_ENABLED=1`, toute
