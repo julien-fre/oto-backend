@@ -615,6 +615,71 @@ def comptages_perimes(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
                 "expired_last": lus.get(i, {}).get("expired_last")} for i in ids}
 
 
+#: Jusqu'où `derniers_travaux` regarde en arrière : un agent mensuel garde son
+#: dernier passage visible, la lecture reste bornée sur `idx_runner_jobs_declencheurs`.
+DERNIERS_TRAVAUX_JOURS = 35
+
+
+def derniers_travaux(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
+    """« Cet agent a-t-il tourné ? », servi AVEC l'agent : par déclencheur, sa
+    dernière occurrence (`last_run` : `{status, due_at, finished_at, outcome}`) et la
+    fin de son dernier passage réussi (`last_done_at`), en DEUX lectures pour toute
+    la liste. Chaque id demandé est présent ; `None` = rien sur
+    `DERNIERS_TRAVAUX_JOURS` jours.
+
+    ⚠️ Pourquoi ici : la seule autre réponse était `oto_org_monitoring op=runs`, les
+    100 runs les plus récents de TOUTE l'org. Un agent toutes les 15 min y repousse
+    en dix heures le passage du matin d'un autre agent ; le 13/11, l'agent de veille
+    d'un client en a conclu deux fois « n'a pas tourné aujourd'hui » à propos d'agents
+    qui avaient tourné. `outcome` est celui que le run a déclaré (`run_finish`),
+    `status` celui du travail dans la file — `done` côté file avec un run `failed`
+    reste un échec pour qui lit."""
+    ids = [int(i) for i in trigger_ids]
+    if not ids:
+        return {}
+    cles = [str(i) for i in ids]
+    with _connect() as conn:
+        derniers = conn.execute(
+            f"""
+            SELECT DISTINCT ON (j.payload->>'trigger_id')
+                   j.payload->>'trigger_id' AS trigger_id, j.status, j.due_at,
+                   j.finished_at, r.outcome
+              FROM runner_jobs j
+              LEFT JOIN runs r ON r.run_id = j.run_id
+             WHERE j.org_id = %s AND j.kind = 'start'
+               AND j.due_at >= NOW() - make_interval(days => %s)
+               AND {PREDICAT_DECLENCHEUR.replace("payload", "j.payload")}
+               AND j.payload->>'trigger_id' = ANY(%s)
+             ORDER BY j.payload->>'trigger_id', j.due_at DESC, j.id DESC
+            """,
+            (org_id, DERNIERS_TRAVAUX_JOURS, cles),
+        ).fetchall()
+        reussis = conn.execute(
+            f"""
+            SELECT j.payload->>'trigger_id' AS trigger_id, MAX(j.finished_at) AS fini
+              FROM runner_jobs j
+             WHERE j.org_id = %s AND j.kind = 'start' AND j.status = 'done'
+               AND j.due_at >= NOW() - make_interval(days => %s)
+               AND {PREDICAT_DECLENCHEUR.replace("payload", "j.payload")}
+               AND j.payload->>'trigger_id' = ANY(%s)
+             GROUP BY 1
+            """,
+            (org_id, DERNIERS_TRAVAUX_JOURS, cles),
+        ).fetchall()
+    par_id = {int(r["trigger_id"]): r for r in derniers}
+    fins = {int(r["trigger_id"]): r["fini"] for r in reussis}
+    sortie: dict[int, dict] = {}
+    for i in ids:
+        r = par_id.get(i)
+        sortie[i] = {
+            "last_run": None if r is None else {
+                "status": r["status"], "due_at": r["due_at"],
+                "finished_at": r["finished_at"], "outcome": r["outcome"]},
+            "last_done_at": fins.get(i),
+        }
+    return sortie
+
+
 #: Granularité de la marque de présence d'un worker de PLATEFORME — bien en
 #: dessous d'`ARME_FENETRE_S` (15 min) : un lecteur de `runner_arme`/`families`
 #: (fenêtre de 15 min) ne voit jamais la différence entre « vu il y a 3 s » et
