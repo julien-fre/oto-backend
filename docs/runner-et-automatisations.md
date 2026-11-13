@@ -3136,7 +3136,11 @@ passe AVANT l'alerte.
   l'épisode dans la langue de l'espace — si la cause est du même côté que l'épisode —,
   sinon le texte que l'agent médecin a écrit pour CET épisode (`diagnose`, `client_*` :
   une cause neuve), sinon la phrase de la classe (`alertes_slack_agents.
-  message_du_probleme`). `{marque}` y devient le nom de la marque ; l'action `credits`
+  message_du_probleme`). Le texte du médecin se juge comme une copie (`copie_refusee` :
+  ni adresse, ni nom d'outil, ni code, ni identifiant — 400 `client_copy_refused`), part
+  TOUT DE SUITE, et devient la copie PROPOSÉE de la cause de l'épisode dans la langue de
+  l'org si elle n'en a pas encore (sans le lien, propre à l'org) : un opérateur
+  l'approuve une fois (`set_cause`), elle parle alors à toutes les orgs (D5, 13/11). `{marque}` y devient le nom de la marque ; l'action `credits`
   mène à `billing`, `connectors` aux connecteurs. Une cause approuvée avec sa copie
   alerte tout de suite, comme un texte du médecin. **Un message par problème, pas par
   agent** (`grouper`) : les alertes d'une org dont le client lirait exactement le même

@@ -517,3 +517,44 @@ def test_la_file_sert_la_copie_de_la_cause(slack, agent):
     assert out[0]["problem"] == {
         "headline": "Le compte de paiement de Acme est vide.", "todo": "Ajoutez des crédits.",
         "action": "credits", "link": f"{BASE}/org/billing", "side": "client"}
+
+
+# --- D5 : le texte du médecin part, et devient la copie proposée de sa cause -------------
+
+def test_diagnose_refuse_un_texte_que_le_client_ne_peut_pas_lire(agent):
+    from oto_mcp.capabilities._types import AuthzDenied
+    ep = _episode(agent)
+    for kw in ({"client_headline": "La clé de lemlist_act est refusée."},
+               {"client_headline": "Il s'est arrêté.", "client_todo": "Voir l'erreur 4011."},
+               {"client_headline": "Il s'est arrêté.", "client_todo": "Lisez `run_note`."}):
+        with pytest.raises(AuthzDenied) as e:
+            _diagnose(ep, **kw)
+        assert e.value.code == "client_copy_refused", kw
+
+
+def test_le_texte_du_medecin_devient_la_copie_proposee_de_sa_cause(slack, agent):
+    from oto_mcp.db import causes_agents
+    _allumer()
+    causes_agents.relever([("test-d5", "x", "inconnu", "proprietaire")])
+    ep = _episode(agent, empreinte="test-d5")
+    _diagnose(ep, client_headline="La clé de l'outil d'emailing est refusée.",
+              client_todo="Collez une nouvelle clé dans Connecteurs.",
+              client_link="/org/1/connectors", client_action="connectors")
+    assert A.balayer()["envoyes"] == 1, "le texte part tout de suite, sans attendre"
+    cause = causes_agents.lire("test-d5")
+    assert cause["statut"] == "proposee", "il attend l'approbation d'un opérateur"
+    assert cause["copie"] == {"fr": {
+        "headline": "La clé de l'outil d'emailing est refusée.",
+        "todo": "Collez une nouvelle clé dans Connecteurs.", "action": "connectors"}}
+    _diagnose(ep, client_headline="Un autre texte.")
+    assert causes_agents.lire("test-d5")["copie"]["fr"]["headline"].startswith("La clé"), \
+        "la première copie proposée tient"
+
+
+def test_le_medecin_ne_touche_pas_la_copie_d_une_cause_approuvee(agent):
+    from oto_mcp.db import causes_agents
+    _cause("test-d5b")
+    ep = _episode(agent, empreinte="test-d5b")
+    _diagnose(ep, client_headline="Un autre texte.")
+    assert causes_agents.lire("test-d5b")["copie"]["fr"]["headline"].startswith(
+        "Le compte de paiement")

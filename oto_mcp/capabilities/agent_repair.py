@@ -223,6 +223,11 @@ def _valider_le_message_client(ep: dict, client: dict) -> None:
     if not client["headline"]:
         raise AuthzDenied(400, "client_headline_required",
                           "`client_headline` est requis avec les autres `client_*`.")
+    from .. import causes_pannes
+    for champ in ("headline", "todo"):
+        refus = causes_pannes.copie_refusee(client[champ])
+        if refus:
+            raise AuthzDenied(400, "client_copy_refused", f"`client_{champ}` : {refus}.")
     if client["link"]:
         t = db.get_trigger(int(ep["trigger_id"]), int(ep["org_id"]))
         sub = (t or {}).get("sub")
@@ -230,6 +235,24 @@ def _valider_le_message_client(ep: dict, client: dict) -> None:
             raise AuthzDenied(400, "client_link_off_instance",
                               "`client_link` : un chemin ou une adresse du tableau de bord "
                               "du client seulement.")
+
+
+def _proposer_a_la_cause(ep: dict, client: dict, *, acteur: str) -> None:
+    """D5 : le texte du médecin part tout de suite (`message_du_probleme`) ET devient la
+    copie PROPOSÉE de la cause de l'épisode, dans la langue de l'org, si elle n'en a pas
+    encore dans cette langue — un opérateur l'approuve une fois pour toutes les orgs. Une
+    cause approuvée ou refusée ne se touche pas ; le lien, propre à l'org, ne s'y range
+    pas."""
+    from .. import alertes_slack_agents
+    from ..db import causes_agents
+    cause = causes_agents.lire(ep["empreinte"]) if ep.get("empreinte") else None
+    if cause is None or cause["statut"] != "proposee":
+        return
+    langue = alertes_slack_agents.langue(int(ep["org_id"]))
+    if langue in (cause.get("copie") or {}):
+        return
+    copie = {k: client[k] for k in ("headline", "todo", "action") if client.get(k)}
+    causes_agents.decider(cause["cle"], acteur=acteur, copie={langue: copie})
 
 
 def _copie_lue(brute: dict) -> dict:
@@ -362,6 +385,7 @@ def _agent_repair(ctx: ResolvedCtx, inp: AgentRepairInput) -> dict:
         if any(client.values()):
             from ..db import alertes_slack
             alertes_slack.poser_message_client(int(ep["id"]), client)
+            _proposer_a_la_cause(ep, client, acteur=ctx.sub)
         return {"episode": episodes_agents.lire(int(ep["id"]))}
 
     if inp.op == "escalate":
