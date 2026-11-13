@@ -310,6 +310,19 @@ ACCOUNT = CallAxis(
 # de sens, c'est lui qui en ouvre un.
 _RUN_VERBS = frozenset({"run_start", "run_finish"})
 
+# Capacités `oto_*` qui LISENT le projet de l'appel (signal d'usage 1471, 13/11/2026).
+# Le bloc A et la notice disent « `_project=<id>` sur chaque appel » ; ces deux-là le
+# refusaient comme « Unexpected keyword argument », et un agent qui suivait la consigne
+# perdait son appel, encore et encore. Ce ne sont pas des tools de travail, mais :
+# - `oto_doc` range ses pages dans un projet : `_project=` y tient lieu de `project_id`
+#   pour les ops qui le prennent (create, bulk_create, list, search), et un désaccord
+#   entre les deux se refuse nommément (`capabilities/docs/core.py`) ;
+# - `oto_procedure` (op=get) rend le bloc `project_instance` — les entités du
+#   projet contre lesquelles se résolvent les slots — en lisant `access.current_project`,
+#   que SEUL cet axe remplit : sans lui, ce bloc ne pouvait jamais sortir sur la face MCP.
+# Nominatif, comme `_RUN_SPINE_TOOLS` : l'axe ne s'ouvre pas à tout le spine.
+_PROJECT_SPINE_TOOLS = frozenset({"oto_doc", "oto_procedure"})
+
 
 def _is_project_scopable_tool(name: str) -> bool:
     """Tool de TRAVAIL (connecteurs + `data_*`) : `_project=` est le jeton PRIMAIRE
@@ -320,10 +333,12 @@ def _is_project_scopable_tool(name: str) -> bool:
 
     Les **verbes de run** s'y ajoutent (#290) : `run_start` GÈLE le projet dans
     `runs.project_id` en lisant ce même seam, et un run se déroule dans un projet
-    aussi souvent que les appels qu'il encadre."""
+    aussi souvent que les appels qu'il encadre.
+
+    Et les deux capacités qui lisent le projet de l'appel (`_PROJECT_SPINE_TOOLS`)."""
     ns = namespace_of(name)
     return (ns == "data" or providers.connector_for_namespace(ns) is not None
-            or name in _RUN_VERBS)
+            or name in _RUN_VERBS or name in _PROJECT_SPINE_TOOLS)
 
 
 def _resolve_project_context_guarded(
