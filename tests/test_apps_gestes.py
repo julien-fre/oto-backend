@@ -64,10 +64,6 @@ def s(monkeypatch):
                         lambda sub, rtype, rid: droits.get((sub, rid, "govern"), False))
     monkeypatch.setattr(ownership, "has_role_grant",
                         lambda sub, rtype, rid, roles: droits.get((sub, "app_role")) in roles)
-    # Membres de l'org de l'app : le lecteur et l'auteur, pas `AUTRE` (du dehors).
-    from oto_mcp import roles as _roles
-    monkeypatch.setattr(_roles, "is_org_member",
-                        lambda sub, org: droits.get((sub, "membre"), sub in (LECTEUR, AUTEUR)))
     monkeypatch.setattr(db.apps, "get_for_call", lambda i: dict(APP) if i == 5 else None)
     monkeypatch.setattr(C, "org_de_l_app", lambda app: ORG)
     monkeypatch.setattr(C, "tableau_de_l_org", lambda ns, org: org == ORG)

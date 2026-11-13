@@ -50,9 +50,9 @@ règle d'avant (ci-dessous) : le lecteur y va avec ses propres droits. L'écritu
 celle du LECTEUR au journal des révisions (`geste` : l'acteur est le porteur de la
 session, jamais le store) ; un run lancé par l'app tourne au nom de l'AUTEUR (son
 forfait, ses connexions — comme sur son horaire), et le lecteur qui l'a lancé
-(`app_consents.job_id`) en lit seul l'erreur, le résultat et les fichiers. Un agent
-ne se sert ainsi qu'à un MEMBRE de l'org de l'app : on ne partage un agent qu'à
-l'intérieur de son org (`_acces_agent`), et l'app n'y fait pas exception.
+(`app_consents.job_id`) en lit seul l'erreur, le résultat et les fichiers. Un invité
+du dehors avec Use le lance aussi (13/11/2026) : l'app ne partage pas l'agent, elle le
+lance, bornée à son manifeste, chaque lancement consenti.
 
 **La règle d'avant, quand l'auteur ne peut pas partager : droits de son AUTEUR ∩
 droits de son LECTEUR.**
@@ -88,7 +88,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import client_trace, config, db, geste, ownership, roles
+from .. import client_trace, config, db, geste, ownership
 from . import _acces_agent
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
@@ -365,11 +365,12 @@ def _agent(app: dict, alias: Optional[str], org: Optional[int], viewer: str, *,
     trig = db.get_trigger(int(a["id"]), int(org)) if org is not None else None
     niveau_auteur = (_acces_agent.niveau(app["updated_by"], int(org), trig)
                      if trig is not None else None)
-    # Un agent ne se partage qu'à l'intérieur de son org (`_acces_agent` : il tient les
-    # clés de l'org et les connexions de son propriétaire) : l'app ne le sert qu'à un
-    # membre de l'org de l'app ; quelqu'un du dehors garde la règle d'avant.
-    par_l_app = (niveau_auteur in _PARTAGENT_L_AGENT
-                 and roles.is_org_member(viewer, int(org)))
+    # Servi à QUICONQUE l'app est partagée, invité du dehors compris (décision de
+    # Julien du 13/11/2026) : un agent ne se PARTAGE qu'à l'intérieur de son org
+    # (`_acces_agent`), mais l'app ne le partage pas — elle le LANCE, borné à son
+    # manifeste (`run`, `input`), chaque lancement résumé par l'hôte et consenti, au nom
+    # de l'auteur, avec les seuls fichiers de CE clic.
+    par_l_app = niveau_auteur in _PARTAGENT_L_AGENT
     if trig is None or (not par_l_app and _acces_agent.niveau(viewer, int(org), trig) is None):
         raise _refus(404, "unknown_agent", f"Agent {a['id']} isn't one you can see here.")
     if niveau_auteur is None or (run and niveau_auteur not in _acces_agent.ECRIRE):

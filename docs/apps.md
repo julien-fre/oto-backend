@@ -53,8 +53,8 @@ d'`ownership` (`apps.owner_type/owner_id`, partages dans `resource_grants`,
   leurs membres (propriétaires : ils cliquent).
 - **Un invité de l'extérieur** (pas membre de l'org de l'app) reçoit l'app seule, View
   ou Use, par son lien — il ne rejoint pas l'org. L'app se juge par l'org de l'APP, pas
-  par son espace à lui (`docs/orgs-suspendues.md` §3) ; il ne lance pas les agents de
-  l'auteur (réservés aux membres). Le front l'ouvre en plein écran, sans le reste de
+  par son espace à lui (`docs/orgs-suspendues.md` §3) ; avec Use, il lance les agents
+  que l'app déclare, comme un membre. Le front l'ouvre en plein écran, sans le reste de
   Tulina (`/apps/<id>`).
 - **L'org d'une app** (`apps_manifeste.org_de_l_app`) est celle de son propriétaire :
   l'org, l'org de l'équipe, et pour une app perso l'org où elle a été créée (sinon
@@ -142,9 +142,11 @@ d'outil MCP : un agent n'est jamais le lecteur d'une app). **Actions servies :**
   gérant, admin de l'org propriétaire) se lit et s'écrit SOUS L'AUTEUR, borné au
   manifeste, pour quiconque l'app est partagée — sans accès propre au tableau :
   partager l'app, c'est partager ce qu'elle en montre, ce qu'il pouvait faire
-  directement. Un agent dont il est propriétaire ou admin de l'org, pareil — mais pour
-  un MEMBRE de l'org de l'app seulement : un agent ne se partage qu'à l'intérieur de
-  son org (`_acces_agent`), quelqu'un du dehors garde la règle d'avant.
+  directement. Un agent dont il est propriétaire ou admin de l'org, pareil — invité du
+  dehors compris (13/11/2026) : l'app ne PARTAGE pas l'agent (ce qui reste réservé à
+  son org, `_acces_agent`), elle le LANCE, bornée à son manifeste (`run`, `input`),
+  chaque lancement résumé et consenti, au nom de l'auteur, avec les seuls fichiers de
+  ce clic.
 - **Sinon, droits de son auteur ∩ droits de son lecteur** (la règle d'avant) : le
   lecteur est jugé en exécutant POUR LUI les capacités existantes (lignes, agrégat,
   `run_now`). Auteur inconnu ou qui a perdu l'accès : 403 `app_author_unknown` /

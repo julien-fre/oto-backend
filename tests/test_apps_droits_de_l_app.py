@@ -122,13 +122,15 @@ def test_agent_de_l_auteur_lance_a_son_nom_pour_un_lecteur_qui_ne_le_voit_pas(s)
     assert (ctx.sub, ctx.org_id) == (AUTEUR, ORG)
 
 
-def test_un_lecteur_du_dehors_ne_lance_pas_l_agent_de_l_auteur(s):
-    """Un agent ne se partage qu'à l'intérieur de son org : l'app non plus."""
+def test_un_invite_du_dehors_avec_use_lance_l_agent_de_l_auteur(s):
+    """L'app ne partage pas l'agent, elle le lance : un invité du dehors aussi."""
     s["niveaux"][(AUTEUR, 9)] = "owner"
     s["niveaux"][(LECTEUR, 9)] = None
     s["droits"][(LECTEUR, "membre")] = False
-    assert refus(consent, action="start_agent", agent="enrich").code == "unknown_agent"
-    assert s["run_now"] == []
+    args = dict(action="start_agent", agent="enrich")
+    assert call(consent=consent(**args), **args) == {"job_id": 77}
+    (ctx, _), = s["run_now"]
+    assert ctx.sub == AUTEUR
 
 
 def test_agent_que_l_auteur_ne_peut_pas_partager_reste_au_lecteur(s):
