@@ -473,9 +473,9 @@ class Trigger(BaseModel):
     expired_since: Optional[str] = None
     expired_last: Optional[str] = None
     #: « A-t-il tourné ? », servi là où on le cherche (`db.derniers_travaux`) : sa
-    #: DERNIÈRE occurrence `{status, due_at, finished_at, outcome}` — `status` celui de
-    #: la file, `outcome` celui que le run a déclaré — et la fin de son dernier
-    #: passage réussi. `null` = aucune occurrence sur 35 jours. ⚠️ La liste des runs de
+    #: DERNIÈRE occurrence `{status, due_at, finished_at}` — `status` celui de la file :
+    #: a-t-elle tourné, pas ce que l'agent a conclu — et la fin de son dernier passage
+    #: réussi. `null` = aucune occurrence sur 35 jours. ⚠️ La liste des runs de
     #: l'org (`oto_org_monitoring op=runs`) n'y répond pas : elle s'arrête aux cent plus
     #: récents, qu'un agent fréquent remplit en quelques heures.
     last_run: Optional[dict] = None
@@ -3392,8 +3392,8 @@ CAPABILITIES += [
             "whether it is STILL happening, are two different questions. A rising "
             "count on an enabled trigger means nobody is executing this org. "
             "Did it RUN: `list`/`get` carry `last_run` — its latest occurrence "
-            "`{status, due_at, finished_at, outcome}` (`status` from the queue, "
-            "`outcome` as the run declared it), `null` = none in 35 days — and "
+            "`{status, due_at, finished_at}` (`status` from the queue: whether it "
+            "ran, not what the agent concluded), `null` = none in 35 days — and "
             "`last_done_at`, when its last successful run ended. Read them before "
             "saying an agent did not run: the org's run list "
             "(`oto_org_monitoring op=runs`) stops at the 100 newest runs, which a "

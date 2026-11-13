@@ -622,8 +622,8 @@ DERNIERS_TRAVAUX_JOURS = 35
 
 def derniers_travaux(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
     """« Cet agent a-t-il tourné ? », servi AVEC l'agent : par déclencheur, sa
-    dernière occurrence (`last_run` : `{status, due_at, finished_at, outcome}`) et la
-    fin de son dernier passage réussi (`last_done_at`), en DEUX lectures pour toute
+    dernière occurrence (`last_run` : `{status, due_at, finished_at}`) et la
+    fin de son dernier passage réussi (`last_done_at`), en UNE lecture pour toute
     la liste. Chaque id demandé est présent ; `None` = rien sur
     `DERNIERS_TRAVAUX_JOURS` jours.
 
@@ -631,51 +631,53 @@ def derniers_travaux(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
     100 runs les plus récents de TOUTE l'org. Un agent toutes les 15 min y repousse
     en dix heures le passage du matin d'un autre agent ; le 13/11, l'agent de veille
     d'un client en a conclu deux fois « n'a pas tourné aujourd'hui » à propos d'agents
-    qui avaient tourné. `outcome` est celui que le run a déclaré (`run_finish`),
-    `status` celui du travail dans la file — `done` côté file avec un run `failed`
-    reste un échec pour qui lit."""
+    qui avaient tourné. `status` est celui du travail dans la file (`done`, `failed`,
+    `expired`, `pending`, `claimed`, `held`) : il dit si l'occurrence a tourné, pas ce
+    que l'agent a conclu — le run lié au travail (`bind_job_run`) est celui qu'ouvre le
+    worker, pas celui qu'ouvre la procédure par `run_start`."""
     ids = [int(i) for i in trigger_ids]
     if not ids:
         return {}
     cles = [str(i) for i in ids]
+    filtre = PREDICAT_DECLENCHEUR.replace("payload", "j.payload")
     with _connect() as conn:
-        derniers = conn.execute(
+        # UNE passe agrégée (pas de tri de toute la fenêtre, que `DISTINCT ON` payait),
+        # puis, par agent, la ligne de sa dernière échéance retrouvée sur
+        # `(org_id, due_at)` — une égalité d'index, pas un parcours.
+        rows = conn.execute(
             f"""
-            SELECT DISTINCT ON (j.payload->>'trigger_id')
-                   j.payload->>'trigger_id' AS trigger_id, j.status, j.due_at,
-                   j.finished_at, r.outcome
-              FROM runner_jobs j
-              LEFT JOIN runs r ON r.run_id = j.run_id
-             WHERE j.org_id = %s AND j.kind = 'start'
-               AND j.due_at >= NOW() - make_interval(days => %s)
-               AND {PREDICAT_DECLENCHEUR.replace("payload", "j.payload")}
-               AND j.payload->>'trigger_id' = ANY(%s)
-             ORDER BY j.payload->>'trigger_id', j.due_at DESC, j.id DESC
+            WITH m AS (
+                SELECT j.payload->>'trigger_id' AS trigger_id,
+                       MAX(j.due_at) AS due_at,
+                       MAX(j.finished_at) FILTER (WHERE j.status = 'done') AS last_done_at
+                  FROM runner_jobs j
+                 WHERE j.org_id = %s AND j.kind = 'start'
+                   AND j.due_at >= NOW() - make_interval(days => %s)
+                   AND {filtre} AND j.payload->>'trigger_id' = ANY(%s)
+                 GROUP BY 1
+            )
+            SELECT m.trigger_id, m.due_at, m.last_done_at, d.status, d.finished_at
+              FROM m
+              CROSS JOIN LATERAL (
+                SELECT j.status, j.finished_at
+                  FROM runner_jobs j
+                 WHERE j.org_id = %s AND j.due_at = m.due_at AND j.kind = 'start'
+                   AND {filtre} AND j.payload->>'trigger_id' = m.trigger_id
+                 ORDER BY j.id DESC
+                 LIMIT 1
+              ) d
             """,
-            (org_id, DERNIERS_TRAVAUX_JOURS, cles),
+            (org_id, DERNIERS_TRAVAUX_JOURS, cles, org_id),
         ).fetchall()
-        reussis = conn.execute(
-            f"""
-            SELECT j.payload->>'trigger_id' AS trigger_id, MAX(j.finished_at) AS fini
-              FROM runner_jobs j
-             WHERE j.org_id = %s AND j.kind = 'start' AND j.status = 'done'
-               AND j.due_at >= NOW() - make_interval(days => %s)
-               AND {PREDICAT_DECLENCHEUR.replace("payload", "j.payload")}
-               AND j.payload->>'trigger_id' = ANY(%s)
-             GROUP BY 1
-            """,
-            (org_id, DERNIERS_TRAVAUX_JOURS, cles),
-        ).fetchall()
-    par_id = {int(r["trigger_id"]): r for r in derniers}
-    fins = {int(r["trigger_id"]): r["fini"] for r in reussis}
+    par_id = {int(r["trigger_id"]): r for r in rows}
     sortie: dict[int, dict] = {}
     for i in ids:
         r = par_id.get(i)
         sortie[i] = {
             "last_run": None if r is None else {
                 "status": r["status"], "due_at": r["due_at"],
-                "finished_at": r["finished_at"], "outcome": r["outcome"]},
-            "last_done_at": fins.get(i),
+                "finished_at": r["finished_at"]},
+            "last_done_at": None if r is None else r["last_done_at"],
         }
     return sortie
 

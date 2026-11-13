@@ -12,8 +12,6 @@ et ce qu'il n'a pas lu.
 """
 from __future__ import annotations
 
-import uuid
-
 import pytest
 
 from oto_mcp.capabilities import org_monitoring as OM
@@ -23,18 +21,14 @@ from oto_mcp.capabilities._types import ResolvedCtx
 ORG = 8311
 
 
-def _job(c, org, tid, statut, il_y_a_h, *, kind="start", run_id=None, fini=True):
+def _job(c, org, tid, statut, il_y_a_h, *, kind="start", fini=True):
     c.execute(
-        "INSERT INTO runner_jobs (org_id, kind, status, payload, due_at, finished_at, run_id) "
+        "INSERT INTO runner_jobs (org_id, kind, status, payload, due_at, finished_at) "
         "VALUES (%s, %s, %s, jsonb_build_object('trigger_id', %s::text), "
         "NOW() - %s * interval '1 hour', "
-        "CASE WHEN %s THEN NOW() - %s * interval '1 hour' + interval '10 minutes' END, %s)",
-        (org, kind, statut, str(tid), il_y_a_h, fini, il_y_a_h, run_id))
+        "CASE WHEN %s THEN NOW() - %s * interval '1 hour' + interval '10 minutes' END)",
+        (org, kind, statut, str(tid), il_y_a_h, fini, il_y_a_h))
 
-
-def _run(c, run_id, outcome):
-    c.execute("INSERT INTO runs (run_id, sub, org_id, label, outcome) "
-              "VALUES (%s, 'proprio', %s, 'r', %s)", (run_id, ORG, outcome))
 
 
 def _agent(org, proc):
@@ -48,13 +42,10 @@ def _agent(org, proc):
 def agents(live):
     from oto_mcp.db import _conn as dbconn
     matin, frequent, muet, ancien = (_agent(ORG, p) for p in ("matin", "frequent", "muet", "ancien"))
-    hier, ce_matin = f"run-{uuid.uuid4().hex}", f"run-{uuid.uuid4().hex}"
     with dbconn._connect() as c:
-        _run(c, hier, "done")
-        _run(c, ce_matin, "failed")
-        # Le matin : un succès hier, un passage aujourd'hui que le run a déclaré raté.
-        _job(c, ORG, matin, "done", 26, run_id=hier)
-        _job(c, ORG, matin, "done", 14, run_id=ce_matin)
+        # Le matin : un succès hier, un passage ce matin mort dans la file.
+        _job(c, ORG, matin, "done", 26)
+        _job(c, ORG, matin, "failed", 14)
         # Une reprise (`continue`) n'est pas une occurrence de l'agent.
         _job(c, ORG, matin, "claimed", 1, kind="continue", fini=False)
         # Le bruit : un agent fréquent, 150 passages depuis.
@@ -73,10 +64,10 @@ def test_chaque_agent_a_sa_derniere_occurrence_et_son_dernier_succes(agents):
     lu = db.derniers_travaux(ORG, ids)
     assert set(lu) == set(ids), "chaque id demandé est présent"
     matin = lu[agents["matin"]]
-    assert matin["last_run"]["status"] == "done"
-    assert matin["last_run"]["outcome"] == "failed", (
-        "l'issue est celle que le run a déclarée : `done` côté file n'est pas un succès")
-    assert matin["last_done_at"] is not None
+    assert matin["last_run"]["status"] == "failed", "la DERNIÈRE occurrence, pas la dernière réussie"
+    assert set(matin["last_run"]) == {"status", "due_at", "finished_at"}
+    assert matin["last_done_at"] is not None and matin["last_done_at"] < matin["last_run"]["due_at"], (
+        "le dernier succès est celui d'hier, avant l'échec de ce matin")
     assert lu[agents["frequent"]]["last_run"]["status"] == "done"
     assert lu[agents["muet"]] == {"last_run": None, "last_done_at": None}, (
         "un travail d'une autre org ne se compte pas")
@@ -100,7 +91,7 @@ def test_la_liste_et_la_fiche_servent_le_dernier_passage(agents, monkeypatch):
     ctx = ResolvedCtx(sub="proprio", org_id=ORG)
     liste = RT._triggers_sync(ctx, RT.TriggerInput(op="list"))
     par_id = {t["id"]: t for t in liste["triggers"]}
-    assert par_id[agents["matin"]]["last_run"]["outcome"] == "failed"
+    assert par_id[agents["matin"]]["last_run"]["status"] == "failed"
     assert par_id[agents["muet"]]["last_run"] is None
     fiche = RT._triggers_sync(ctx, RT.TriggerInput(op="get", trigger_id=agents["matin"]))
     assert fiche["trigger"]["last_run"] == par_id[agents["matin"]]["last_run"]
