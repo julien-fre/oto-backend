@@ -1,11 +1,12 @@
-"""Les favoris partagés d'une org : pages et tableaux épinglés pour tous ses membres.
+"""Les favoris d'une org : pages et tableaux épinglés pour tous ses membres, ou pour soi.
 
 Une table NEUVE, née entière : `org_favorites` (`db/schema/orgs.py::ORG_FAVORITES`) —
 posée aussi par le démarrage (`CREATE TABLE IF NOT EXISTS` de l'assemblage), même DDL.
-FK vers `orgs` (ON DELETE CASCADE) ; aucune FK vers la page ou le tableau épinglé.
+FK vers `orgs` et vers `users` (`owner_sub`, favori personnel), ON DELETE CASCADE ;
+aucune FK vers la page ou le tableau épinglé.
 
-**Verrous.** La table est neuve et vide ; la FK prend un `ShareRowExclusiveLock` bref sur
-`orgs`. `lock_timeout` 5 s : un échec net, qu'on rejoue, plutôt qu'une attente.
+**Verrous.** La table est neuve et vide ; ses FK prennent un `ShareRowExclusiveLock` bref
+sur `orgs` et `users`. `lock_timeout` 5 s : un échec net, qu'on rejoue, plutôt qu'une attente.
 
 **Ordre avec le code : indifférent.** Le démarrage pose la même table ; l'ancien code
 l'ignore.

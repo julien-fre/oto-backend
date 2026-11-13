@@ -1,28 +1,38 @@
-"""Les favoris PARTAGÉS d'une org : des pages et des tableaux épinglés pour tous ses membres.
+"""Les favoris d'une org : des pages et des tableaux épinglés pour tous ses membres
+(portée `org`), ou pour soi seul dans cette org (portée `me`).
 
 Trois routes REST, pour la barre latérale du tableau de bord :
 
-- `GET    /api/orgs/{id}/favorites`                  — membres : les favoris de l'org ;
-- `POST   /api/orgs/{id}/favorites`                  — membres : épingler `{kind, id}` ;
-- `DELETE /api/orgs/{id}/favorites/{kind}/{ref_id}`  — membres : désépingler.
+- `GET    /api/orgs/{id}/favorites`                            — membres : les favoris
+  partagés de l'org ET les favoris personnels de l'appelant dans l'org ;
+- `POST   /api/orgs/{id}/favorites`                            — membres : épingler
+  `{kind, id, scope}` (`scope` = `org` par défaut) ;
+- `DELETE /api/orgs/{id}/favorites/{kind}/{ref_id}?scope=me`   — membres : désépingler
+  (`scope` = `org` par défaut, en query string).
 
-Chacune rend la liste à jour, `{"favorites": [...]}`, dans l'ordre où ils ont été posés.
+Chacune rend la liste à jour, `{"favorites": [...]}`, dans l'ordre où ils ont été posés,
+chaque favori portant sa `scope`. Le même objet peut être favori partagé ET personnel :
+deux lignes, rendues toutes deux, et retirer l'une laisse l'autre.
 
-**Un favori n'accorde rien.** Il est à l'org, mais chaque membre n'en LIT que ce que ses
-droits lui ouvrent déjà : la page par `docs.common.acces_a_la_page` (son projet, ou un
-partage de la page), le tableau par `ownership.can_access` — les deux portes de lecture
-du produit, jamais recopiées ici. Le tableau perso d'un collègue épinglé par lui reste
-invisible aux autres ; la page d'un projet qu'on ne lit pas aussi.
+**Un favori n'accorde rien.** Chaque membre n'en LIT que ce que ses droits lui ouvrent
+déjà : la page par `docs.common.acces_a_la_page` (son projet, ou un partage de la page),
+le tableau par `ownership.can_access` — les deux portes de lecture du produit, jamais
+recopiées ici. Le tableau perso d'un collègue épinglé par lui pour l'org reste invisible
+aux autres ; les favoris PERSONNELS d'un membre ne sont jamais rendus à un autre.
 
-**Épingler exige de lire la cible ET qu'elle soit de l'org** : elle y VIT
-(`ownership.org_ou_vit`, ADR 0071 — l'org de son propriétaire, ou de rangement pour un
-objet perso), ou elle est partagée à l'org ou à une de ses équipes. Sinon 404
-`favorite_target_unknown`, la même réponse pour « n'existe pas » et « ne se lit pas » —
-les ids sont des entiers séquentiels globaux (F-016).
+**Épingler exige de lire la cible.** Pour l'org, elle doit AUSSI être de l'org : elle y
+VIT (`ownership.org_ou_vit`, ADR 0071 — l'org de son propriétaire, ou de rangement pour
+un objet perso), ou elle est partagée à l'org ou à une de ses équipes. Pour soi, la
+lecture suffit (son tableau perso, un tableau qu'on lui partage, une page d'un projet
+privé). Sinon 404 `favorite_target_unknown`, la même réponse pour « n'existe pas » et
+« ne se lit pas » — les ids sont des entiers séquentiels globaux (F-016).
 
-Désépingler est ouvert à tout membre (des signets communs), idempotent. Une cible
-disparue (page ou tableau supprimé) sort de la liste et sa ligne est retirée ; une page
-ARCHIVÉE, ou dont le projet l'est, sort de la liste sans être retirée.
+Désépingler un favori partagé est ouvert à tout membre (des signets communs) ; un favori
+personnel ne se retire que par son propriétaire — la route ne touche que la ligne de
+l'appelant. Idempotent. Une cible disparue (page ou tableau supprimé) sort de la liste
+et ses lignes sont retirées, pour toutes les portées ; une page ARCHIVÉE, ou dont le
+projet l'est, sort de la liste sans être retirée. Quitter l'org retire ses favoris
+personnels (`org_store.remove_org_member`).
 """
 from __future__ import annotations
 
@@ -41,8 +51,10 @@ from ..registry import CAPABILITIES
 _ID = {"id": "org_id"}
 
 DOC, TABLE = "doc", "table"
+ORG, ME = "org", "me"
+SCOPES = (ORG, ME)
 
-#: Ce que rend `_resoudre` pour un objet qui n'existe plus (sa ligne se retire).
+#: Ce que rend `_resoudre` pour un objet qui n'existe plus (ses lignes se retirent).
 DISPARU = "disparu"
 
 
@@ -54,18 +66,25 @@ class FavoriteAddInput(BaseModel):
     org_id: int
     kind: str = Field(description="`doc` (a memory page) or `table` (a datastore).")
     id: int = Field(description="The page id or the table id.")
+    scope: str = Field(default=ORG, description=(
+        "`org` (default) = shared with every member of the organization; `me` = only "
+        "for you, in this organization."))
 
 
 class FavoriteRemoveInput(BaseModel):
     org_id: int
     kind: str
     ref_id: int
+    scope: str = Field(default=ORG, description=(
+        "`org` (default) removes the shared favorite; `me` removes only yours."))
 
 
 class Favorite(BaseModel):
     kind: str
     id: int
     title: str
+    # `org` = partagé avec l'org ; `me` = le favori personnel de l'appelant.
+    scope: str
     # Le projet dont la mémoire porte la page ; None pour un tableau.
     project_id: Optional[int] = None
     added_by: Optional[str] = None
@@ -81,6 +100,18 @@ def _kind(kind: str) -> str:
         raise AuthzDenied(400, "invalid_favorite_kind",
                           f"`kind` vaut {' | '.join(store.KINDS)} (reçu {kind!r}).")
     return kind
+
+
+def _scope(scope: str) -> str:
+    if scope not in SCOPES:
+        raise AuthzDenied(400, "invalid_favorite_scope",
+                          f"`scope` vaut {' | '.join(SCOPES)} (reçu {scope!r}).")
+    return scope
+
+
+def _proprietaire(ctx: ResolvedCtx, scope: str) -> Optional[str]:
+    """La valeur de `owner_sub` d'une portée : None pour l'org, l'appelant pour soi."""
+    return ctx.sub if scope == ME else None
 
 
 def _partage_a_l_org(org_id: int, rtype: str, rid: str) -> bool:
@@ -101,10 +132,10 @@ def _de_l_org(org_id: int, rtype: str, rid: str) -> bool:
     return _partage_a_l_org(org_id, rtype, rid)
 
 
-def _resoudre(sub: str, org_id: int, kind: str, ref_id: int) -> Any:
-    """Ce que `sub` voit du favori `(kind, ref_id)` dans l'org : `{title, project_id}`,
-    `None` s'il ne le lit pas (ou si l'objet n'est pas de l'org), `DISPARU` si l'objet
-    n'existe plus."""
+def _resoudre(sub: str, org_id: int, kind: str, ref_id: int, scope: str) -> Any:
+    """Ce que `sub` voit du favori `(kind, ref_id)` de cette portée dans l'org :
+    `{title, project_id}`, `None` s'il ne le lit pas (ou, pour l'org, si l'objet n'est
+    pas de l'org), `DISPARU` si l'objet n'existe plus."""
     if kind == DOC:
         page = db.get_doc_by_id(int(ref_id))
         if page is None:
@@ -115,7 +146,8 @@ def _resoudre(sub: str, org_id: int, kind: str, ref_id: int) -> Any:
         if page.get("archived_at") or projet.get("archived_at"):
             return None
         pid = str(page["project_id"])
-        if not (_de_l_org(org_id, "project", pid)
+        if scope == ORG and not (
+                _de_l_org(org_id, "project", pid)
                 or _partage_a_l_org(org_id, docs_common.DOC_RTYPE, str(ref_id))):
             return None
         if docs_common.acces_a_la_page(sub, page) is None:
@@ -125,7 +157,7 @@ def _resoudre(sub: str, org_id: int, kind: str, ref_id: int) -> Any:
     if tableau is None:
         return DISPARU
     tds, rid = ownership.TYPE_RESSOURCE_DATASTORE, str(ref_id)
-    if not _de_l_org(org_id, tds, rid):
+    if scope == ORG and not _de_l_org(org_id, tds, rid):
         return None
     if not ownership.can_access(sub, tds, rid, "read"):
         return None
@@ -142,19 +174,19 @@ def _iso(v) -> str:
 
 def _vue(sub: str, org_id: int) -> dict:
     out: list[dict] = []
-    morts: dict[str, list[int]] = {}
-    for f in store.lister(org_id):
-        vu = _resoudre(sub, org_id, f["kind"], f["ref_id"])
+    morts: dict[str, set[int]] = {}
+    for f in store.lister(org_id, sub):
+        scope = ORG if f.get("owner_sub") is None else ME
+        vu = _resoudre(sub, org_id, f["kind"], f["ref_id"], scope)
         if vu == DISPARU:
-            morts.setdefault(f["kind"], []).append(int(f["ref_id"]))
+            morts.setdefault(f["kind"], set()).add(int(f["ref_id"]))
             continue
         if vu is None:
             continue
-        out.append({"kind": f["kind"], "id": int(f["ref_id"]), **vu,
-                    "added_by": f.get("added_by"),
-                    "added_at": _iso(f["added_at"])})
+        out.append({"kind": f["kind"], "id": int(f["ref_id"]), **vu, "scope": scope,
+                    "added_by": f.get("added_by"), "added_at": _iso(f["added_at"])})
     for kind, ids in morts.items():
-        store.retirer_morts(kind, ids)
+        store.retirer_morts(kind, sorted(ids))
     return {"favorites": out}
 
 
@@ -163,17 +195,18 @@ def _lister(ctx: ResolvedCtx, inp: FavoritesInput) -> dict:
 
 
 def _ajouter(ctx: ResolvedCtx, inp: FavoriteAddInput) -> dict:
-    kind = _kind(inp.kind)
-    if not isinstance(_resoudre(ctx.sub, inp.org_id, kind, inp.id), dict):
+    kind, scope = _kind(inp.kind), _scope(inp.scope)
+    if not isinstance(_resoudre(ctx.sub, inp.org_id, kind, inp.id, scope), dict):
         raise AuthzDenied(404, "favorite_target_unknown",
                           f"Aucun{'e page' if kind == DOC else ' tableau'} #{inp.id} "
-                          "lisible dans cette org.")
-    store.poser(inp.org_id, kind, inp.id, ctx.sub)
+                          + ("lisible dans cette org." if scope == ORG else "lisible."))
+    store.poser(inp.org_id, _proprietaire(ctx, scope), kind, inp.id, ctx.sub)
     return _vue(ctx.sub, inp.org_id)
 
 
 def _retirer(ctx: ResolvedCtx, inp: FavoriteRemoveInput) -> dict:
-    store.retirer(inp.org_id, _kind(inp.kind), inp.ref_id)
+    kind, scope = _kind(inp.kind), _scope(inp.scope)
+    store.retirer(inp.org_id, _proprietaire(ctx, scope), kind, inp.ref_id)
     return _vue(ctx.sub, inp.org_id)
 
 

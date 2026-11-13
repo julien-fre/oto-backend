@@ -557,16 +557,28 @@ que `GET /api/orgs/{id}/recipes` : `docs/recettes.md` §Les recettes de la plate
 
 ## Favoris d'une org — `/api/orgs/{id}/favorites`
 
-Des pages (`kind=doc`) et des tableaux (`kind=table`) épinglés pour TOUS les membres de
-l'org, pour la barre latérale du tableau de bord (`capabilities/orgs/favoris.py`,
-`org.favorites.{list,add,remove}`, REST seule, membre de l'org) : `GET` la liste,
-`POST {kind, id}` épingle, `DELETE …/{kind}/{ref_id}` désépingle ; les trois rendent
-`{"favorites": [{kind, id, title, project_id, added_by, added_at}]}`, dans l'ordre de
-pose. ⚠️ **Un favori n'accorde rien** : chacun ne voit que ce qu'il lit déjà (la page par
+Des pages (`kind=doc`) et des tableaux (`kind=table`) épinglés dans une org, pour la barre
+latérale du tableau de bord (`capabilities/orgs/favoris.py`, `org.favorites.{list,add,
+remove}`, REST seule, membre de l'org). Deux portées : `org`, partagée avec tous les
+membres, et `me`, le favori personnel de l'appelant dans cette org.
+
+- `GET` rend les favoris `org` de l'org et les favoris `me` de l'APPELANT — jamais ceux
+  d'un autre membre ;
+- `POST {kind, id, scope}` épingle (`scope` = `org` par défaut) ;
+- `DELETE …/{kind}/{ref_id}?scope=me` désépingle (`scope` en query string, `org` par
+  défaut) ; en `me`, seule la ligne de l'appelant est touchée.
+
+Les trois rendent `{"favorites": [{kind, id, title, scope, project_id, added_by,
+added_at}]}`, dans l'ordre de pose ; un objet favori dans les deux portées y figure deux
+fois. ⚠️ **Un favori n'accorde rien** : chacun ne voit que ce qu'il lit déjà (la page par
 `docs.common.acces_a_la_page`, le tableau par `ownership.can_access`). Épingler exige de
-lire la cible ET qu'elle soit de l'org (elle y vit, `ownership.org_ou_vit`, ou elle est
-partagée à l'org ou à une de ses équipes) — sinon 404 `favorite_target_unknown`, la même
-réponse pour un id absent. Une cible supprimée sort de la liste et sa ligne est retirée.
+lire la cible ; pour `org`, elle doit AUSSI être de l'org (elle y vit,
+`ownership.org_ou_vit`, ou elle est partagée à l'org ou à une de ses équipes) — sinon 404
+`favorite_target_unknown`, la même réponse pour un id absent. `kind` ou `scope` inconnu :
+400 `invalid_favorite_kind` / `invalid_favorite_scope`. Une cible supprimée sort de la
+liste et ses lignes sont retirées ; quitter l'org retire ses favoris personnels
+(`org_store.remove_org_member`), la disparition du compte aussi (FK) ; une fusion de
+comptes garde un seul favori personnel par objet, à la date la plus ancienne.
 
 ## Surface nœuds (PROVISOIRE) — `/api/me/shell`, `/api/me/nodes/{id}`, `/api/me/nodes/{id}/rows`
 
