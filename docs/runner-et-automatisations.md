@@ -3042,7 +3042,9 @@ passe AVANT l'alerte.
 - **L'épisode** (`agent_episodes`, `db/episodes_agents.py`) = la même définition que
   l'alerte (travaux morts d'un agent allumé depuis son dernier succès), mais ouvert dès
   le PREMIER travail mort. Un seul épisode vivant par agent (index unique partiel),
-  rafraîchi à chaque passage ; clos au premier succès postérieur (`gueri`) ou quand
+  réécrit seulement quand un champ change ou que son pouls `vu_at` a plus de
+  `episodes_agents.BATTEMENT` (10 min, bien en deçà de `FRAICHEUR`) — l'INSERT ne part
+  que sans épisode vivant, la séquence ne brûle plus un numéro par passage ; clos au premier succès postérieur (`gueri`) ou quand
   l'agent est éteint ou supprimé (`agent_eteint`). Aucune FK : il survit à l'agent.
   `classe` + `cote` (`plateforme` · `proprietaire` · `inconnu`) disent QUI peut réparer ;
   `statut` `ouvert → en_soin → escalade | clos` ; `reparations` = chaque geste, son
