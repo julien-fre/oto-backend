@@ -1,7 +1,8 @@
 """L'onglet Santé d'une org (`capabilities/agent_health.py`), sur une vraie base.
 
 Ce qu'on prouve : un problème par cause qui attend le client, avec les agents qu'il
-arrête ; une panne de notre côté n'est pas dite et son agent compte comme fonctionnant ;
+arrête ; une panne de notre côté se dit à part, sans geste, et passé six heures par sa
+propre phrase (D3) ;
 un membre ne voit que les agents qu'il voit ; ce que Tulina a réparé se lit avec sa
 phrase ; « laisser Tulina réparer mes agents » naît allumé, s'éteint, et la boucle comme
 l'agent médecin s'y tiennent.
@@ -67,7 +68,7 @@ def test_un_probleme_par_cause_avec_les_agents_qu_il_arrete(live):
     assert pb["since"] and out["auto_repair"] is True and out["covered"] is True
     (nous,) = out["on_us"]
     assert nous["side"] == "platform" and [x["label"] for x in nous["agents"]] == ["Leads"]
-    assert "rien à faire du vôtre" in nous["headline"]
+    assert "rien à faire du vôtre" in nous["headline"] and nous["lasting"] is False
 
 
 def test_un_membre_ne_voit_pas_l_agent_d_un_autre(live):
@@ -135,3 +136,20 @@ def test_une_org_d_un_tenant_tiers_n_est_pas_suivie(live, monkeypatch):
     from oto_mcp import alerte_agents_bloques
     monkeypatch.setattr(alerte_agents_bloques, "org_a_nous", lambda org, qui: False)
     assert _lire()["covered"] is False
+
+
+def test_une_panne_de_notre_cote_qui_dure_six_heures_se_dit_autrement(live):
+    from oto_mcp.db._conn import _connect
+    vieux, jeune, inconnu = _agent("Vieux"), _agent("Jeune"), _agent("Inconnu")
+    ep = _panne(vieux, cote="plateforme", classe="refus_passager")
+    _panne(jeune, cote="plateforme", classe="refus_passager")
+    ei = _panne(inconnu, cote="inconnu", classe="inconnu")
+    with _connect() as conn:
+        conn.execute("UPDATE agent_episodes SET ouvert_at = NOW() - interval '7 hours' "
+                     "WHERE id = ANY(%s)", ([ep["id"], ei["id"]],))
+    operateur, plateforme = sorted(_lire()["on_us"], key=lambda p: p["side"])
+    assert plateforme["lasting"] is True, "une ligne par incident, depuis le plus ancien"
+    assert "plus de six heures" in plateforme["headline"]
+    assert {a["label"] for a in plateforme["agents"]} == {"Vieux", "Jeune"}
+    assert operateur["lasting"] is False, "D3 : la plateforme seulement"
+    assert "six heures" not in operateur["headline"]

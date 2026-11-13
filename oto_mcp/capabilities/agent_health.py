@@ -27,7 +27,7 @@ tiers n'est pas suivie par le médecin (`covered: false`) : rien ne s'y dit.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -50,6 +50,17 @@ _A_NOUS = {
               "to do."},
 }
 
+#: D3 (13/11) : une panne de NOTRE côté qui dure se dit autrement passé six heures — une
+#: ligne grise par incident, dans l'onglet seulement (ni Slack, ni courriel). La durée se
+#: lit sur l'épisode (`ouvert_at`), pas sur l'incident de la boucle, qui vit en mémoire.
+DUREE_LONGUE = timedelta(hours=6)
+_A_NOUS_LONGUE = {
+    "fr": "Un problème de notre côté l'arrête depuis plus de six heures. Nous y travaillons : "
+          "rien à faire du vôtre.",
+    "en": "A problem on our side has stopped it for more than six hours. We are working on "
+          "it: nothing to do on yours.",
+}
+
 #: Ce qui se dit d'une relance qui a guéri l'agent, par langue.
 _RELANCE = {
     "fr": "Il s'est arrêté sur une panne passagère de notre côté. Nous l'avons relancé.",
@@ -70,7 +81,9 @@ class AgentHealth(BaseModel):
     """`watched` agents allumés que l'appelant voit, dont `working` fonctionnent ;
     `needs_you` = un problème par cause qui attend le client : `{headline, todo, action,
     link, since, agents: [{id, label}]}` ; `on_us` = ce qui est à nous, par côté :
-    `{side: platform|operator, headline, since, agents}` ; `fixed` = ce que Tulina a
+    `{side: platform|operator, headline, since, lasting, agents}` — `lasting` : une
+    panne de la plateforme ouverte depuis six heures au moins (D3), dite par sa propre
+    phrase ; `fixed` = ce que Tulina a
     réparé ces trente derniers jours, le plus récent d'abord : `{agent: {id, label}, at,
     what, undo}` — `undo` reste false tant qu'aucune route ne défait une réparation ;
     `auto_repair` = le réglage de l'org ; `covered` = le médecin suit cette org (false :
@@ -100,6 +113,12 @@ def _quand(v: Any) -> Optional[str]:
     if isinstance(v, datetime):
         return v.isoformat()
     return str(v) if v else None
+
+
+def _date(v: Any) -> datetime:
+    """Une date d'épisode, objet ou texte ISO (les lignes passent par `_str_dict_row`)."""
+    d = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
 def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
@@ -150,6 +169,12 @@ def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
 
     needs_you = sorted(problemes.values(), key=lambda p: p["since"])
     on_us = sorted(a_nous.values(), key=lambda p: p["since"])
+    maintenant = datetime.now(timezone.utc)
+    for p in on_us:
+        p["lasting"] = (p["side"] == "platform"
+                        and maintenant - _date(p["since"]) >= DUREE_LONGUE)
+        if p["lasting"]:
+            p["headline"] = _A_NOUS_LONGUE.get(langue, _A_NOUS_LONGUE["en"])
     for p in [*needs_you, *on_us]:
         p["since"] = _quand(p["since"])
     return {"watched": len(allumes), "working": len(set(allumes) - arretes),
