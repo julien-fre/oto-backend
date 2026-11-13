@@ -447,3 +447,12 @@ def test_en_incident_le_plafond_escalade_sans_alerte_par_agent(monkeypatch, file
     M.balayer(_MAINTENANT)
     assert [kw.get("statut") for _, kw in file["poses"]].count("escalade") >= 1
     assert len(file["signaux"]) == 1 and "INCIDENT" in file["signaux"][0][0]
+
+
+def test_a_l_echelle_trois_orgs_sur_beaucoup_ne_font_pas_un_incident(
+        monkeypatch, file, tenants):
+    """Trente orgs en panne, dont trois sur un refus passager : le bruit de fond."""
+    autres = [p for org in range(100, 127)
+              for p in _pannes(org, 1, motif="HTTP 401 invalid x-api-key")]
+    _un_passage(monkeypatch, _pannes(7, 1) + _pannes(8, 1) + _pannes(10, 1) + autres)
+    assert M.balayer(_MAINTENANT)["incidents"] == []

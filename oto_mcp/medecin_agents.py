@@ -93,12 +93,16 @@ RELANCES_PAR_PASSAGE = 20
 #: les relances d'un passage n'arrivent pas en rafale chez le fournisseur.
 GIGUE_MAX_S = 240
 
-#: Une même classe du côté de la plateforme dans au moins tant d'orgs au même passage
-#: est un INCIDENT : une cause commune, pas des pannes d'agents. Dit une fois chez nous
+#: Une même classe du côté de la plateforme dans au moins `INCIDENT_ORGS` orgs ET au
+#: moins `INCIDENT_PART` des orgs en panne à ce passage est un INCIDENT : une cause
+#: commune, pas des pannes d'agents. La part compte : à mille clients, trois orgs avec un
+#: refus passager au même passage est le bruit de fond, pas une panne du fournisseur — un
+#: seuil absolu ouvrirait un incident qui ne se ferme jamais. Dit une fois chez nous
 #: (journal + suivi d'erreurs) à son ouverture et au journal à sa fin, au lieu d'une
 #: escalade par agent ; et ses relances se bornent à `INCIDENT_SONDES` par passage —
 #: des sondes, le temps que la cause passe.
 INCIDENT_ORGS = 3
+INCIDENT_PART = 0.3
 INCIDENT_SONDES = 2
 
 ACTEUR = "medecin"
@@ -329,14 +333,16 @@ def _ombre_du_catalogue(vues: list[tuple[str, str, str, str]]) -> dict:
     return bilan
 
 
-def _incidents(plateforme: list[tuple[str, int]]) -> set[str]:
+def _incidents(plateforme: list[tuple[str, int]], *, orgs_en_panne: int) -> set[str]:
     """Les classes en incident à ce passage : `plateforme` = `(classe, org)` de chaque
-    panne du côté de la plateforme. Un incident neuf se dit une fois chez nous ; un
-    incident qui n'est plus vu se dit fini au journal."""
+    panne du côté de la plateforme, `orgs_en_panne` = les orgs qui ont au moins une panne
+    à ce passage. Un incident neuf se dit une fois chez nous ; un incident qui n'est plus
+    vu se dit fini au journal."""
     orgs: dict[str, set[int]] = defaultdict(set)
     for classe, org in plateforme:
         orgs[classe].add(org)
-    actuels = {c for c, o in orgs.items() if len(o) >= INCIDENT_ORGS}
+    seuil = max(INCIDENT_ORGS, INCIDENT_PART * max(orgs_en_panne, 1))
+    actuels = {c for c, o in orgs.items() if len(o) >= seuil}
     for classe in actuels - set(_INCIDENTS):
         agents = sum(1 for c, _ in plateforme if c == classe)
         _alerte_exploitation(
@@ -403,6 +409,7 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
     plateforme: list[tuple[str, int]] = []
     a_nous: dict[int, bool] = {}
     ecartees: set[int] = set()
+    en_panne: set[int] = set()
     for panne in episodes_agents.pannes_en_cours():
         org_id = int(panne["org_id"])
         if org_id not in a_nous:
@@ -416,6 +423,7 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
                          "épisode, aucune relance)", org_id)
             continue
         pannes += 1
+        en_panne.add(org_id)
         try:
             classe, cote = classer(panne.get("motif"))
             # La note libre d'un agent qui s'est dit bloqué ne s'empreinte pas : chaque
@@ -438,7 +446,7 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
             erreurs += 1
             log.warning("médecin des agents : agent %s illisible (%s)",
                         panne.get("trigger_id"), e)
-    incidents = _incidents(plateforme)
+    incidents = _incidents(plateforme, orgs_en_panne=len(en_panne))
     relances, differees = _relacher(candidats, incidents, maintenant)
     return {"pannes": pannes, "relances": relances, "relances_differees": differees,
             "incidents": sorted(incidents), "gueris": len(gueris),

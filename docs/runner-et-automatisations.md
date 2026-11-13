@@ -3094,8 +3094,9 @@ passe AVANT l'alerte.
   une grosse org ne passe pas avant une petite), chacune avec une gigue de 0 à
   `GIGUE_MAX_S` (240 s, `enqueue_job(delai_s=…)`). Ce qui n'est pas servi attend le
   passage suivant sans rien dépenser de son plafond (`relances_differees` au bilan). Une
-  même classe du côté de la plateforme dans `INCIDENT_ORGS` (3) orgs au même passage est
-  un **incident** : dit UNE fois chez nous à son ouverture (journal + suivi d'erreurs,
+  même classe du côté de la plateforme dans au moins `INCIDENT_ORGS` (3) orgs ET
+  `INCIDENT_PART` (30 %) des orgs en panne au même passage est un **incident** (la part
+  compte : à mille clients, trois orgs sur un refus passager sont le bruit de fond) : dit UNE fois chez nous à son ouverture (journal + suivi d'erreurs,
   `INCIDENT —`), fini au journal quand plus aucune panne ne le porte ; ses relances se
   bornent à `INCIDENT_SONDES` (2) par passage, et le plafond d'un de ses agents escalade
   l'épisode SANS alerte par agent. ⚠️ L'incident vit dans la mémoire du processus
