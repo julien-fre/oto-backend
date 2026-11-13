@@ -3164,6 +3164,20 @@ passe AVANT l'alerte.
   `agent_health`, celui de la santé des agents ; les retours d'un passage partent
   ensemble ; une réparation part seule. Chaque épisode du paquet est marqué après
   l'envoi. Les GESTES (relancer, escalader) restent décidés par la regex.
+- **L'onglet Santé d'une org** (`capabilities/agent_health.py`, 13/11/2026) :
+  `GET /api/orgs/{id}/agent-health` (membres) rend, en quelques requêtes pour toute
+  l'org, les agents allumés que l'appelant voit (`_acces_agent.niveaux`, comme la liste
+  des agents) et combien fonctionnent, `needs_you` — un problème par cause qui attend le
+  client, au texte et au regroupement de Slack, avec les agents qu'il arrête et depuis
+  quand —, `fixed` — les épisodes guéris après un geste du médecin ces 30 jours (la note
+  de réparation de l'agent, sinon la phrase d'une relance ; `undo` quand un outil a été
+  ajouté) —, et `auto_repair`. ⚠️ Une panne de notre côté n'y est pas dite : son agent
+  compte comme fonctionnant. `PUT` (admins) pose « laisser Tulina réparer mes agents »
+  (`agent_health_settings`, aucune ligne = ALLUMÉ) : éteint, la boucle ne relance plus
+  les agents de l'org (`reparation_eteinte` au bilan ; réglage illisible = aucune
+  relance) et un agent hébergé se voit refuser `rerun` et `add_tool`
+  (`auto_repair_off`) ; un opérateur garde la main, les épisodes et les messages
+  continuent.
 - **Où** : boucle `tiers=True` (une relance refait agir un agent chez des tiers),
   ÉTEINTE tant que `OTO_MEDECIN_AGENTS_ENABLED=1` n'est pas déclaré — production seule.
 - Bancs : `tests/test_medecin_agents.py` (sans base), `tests/test_causes_pannes.py`

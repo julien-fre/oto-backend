@@ -318,6 +318,17 @@ def _decider_une_cause(ctx: ResolvedCtx, inp: AgentRepairInput) -> dict:
                                  classe=inp.classe, cote=inp.cote, copie=copie)
 
 
+def _exiger_la_reparation_permise(ep: dict) -> None:
+    """Un agent hébergé (l'agent médecin) ne relance ni ne répare l'agent d'une org qui a
+    éteint « laisser Tulina réparer mes agents » ; un opérateur, lui, garde la main."""
+    from ..db import sante_agents
+    from ._outils_plateforme import _depuis_un_agent_heberge
+    if _depuis_un_agent_heberge() and not sante_agents.auto_repair(int(ep["org_id"])):
+        raise AuthzDenied(403, "auto_repair_off",
+                          "Cette org a éteint « laisser Tulina réparer mes agents » : "
+                          "diagnostique et escalade, ne relance ni ne répare.")
+
+
 def _agent_repair(ctx: ResolvedCtx, inp: AgentRepairInput) -> dict:
     from .. import medecin_agents
     from ..db import episodes_agents
@@ -341,6 +352,8 @@ def _agent_repair(ctx: ResolvedCtx, inp: AgentRepairInput) -> dict:
         return {"episode": ep, "agent": agent, "dernier_travail": job,
                 "missing_tools": manquants}
 
+    if inp.op in ("add_tool", "rerun"):
+        _exiger_la_reparation_permise(ep)
     if inp.op == "add_tool":
         return _ajouter_un_outil(ctx, ep, inp)
 
@@ -442,7 +455,9 @@ CAPABILITIES += [
             "live episodes and orgs it covers, and `classes_vues`: the classes the loop "
             "gave them) / set_cause (`cause_key`, and `cause_status`, a corrected "
             "`classe`/`cote`, `client_copy` — merged per language, required to approve "
-            "an owner-side cause; a hosted agent proposes, only an operator approves)."),
+            "an owner-side cause; a hosted agent proposes, only an operator approves). "
+            "An org that turned off \"let Tulina fix my agents\" refuses rerun and add_tool "
+            "from a hosted agent (`auto_repair_off`)."),
         mcp="oto_admin_agent_repair",
     ),
 ]

@@ -393,6 +393,23 @@ def _relacher(candidats: list[tuple[dict, dict]], incidents: set[str],
     return relances, differees
 
 
+def _sans_les_orgs_eteintes(candidats: list[tuple[dict, dict]]) -> tuple[list, int]:
+    """Les candidats à la relance, moins ceux des orgs qui ont éteint « laisser Tulina
+    réparer mes agents » (`sante_agents.auto_repair`) — leurs épisodes restent ouverts et
+    dits, rien n'est relancé. Fermé sur erreur : un réglage illisible ne relance rien."""
+    from .db import sante_agents
+    if not candidats:
+        return candidats, 0
+    try:
+        eteintes = sante_agents.orgs_sans_auto_repair(int(p["org_id"]) for p, _ in candidats)
+    except Exception as e:  # noqa: BLE001 — illisible : on ne relance rien
+        log.warning("médecin des agents : réglage « réparer mes agents » illisible (%s) — "
+                    "aucune relance à ce passage", e)
+        return [], len(candidats)
+    gardes = [(p, ep) for p, ep in candidats if int(p["org_id"]) not in eteintes]
+    return gardes, len(candidats) - len(gardes)
+
+
 def balayer(maintenant: Optional[datetime] = None) -> dict:
     """Un passage : clôt les guéris, relève et range les pannes, soigne ce qui se soigne.
     Synchrone (la boucle le pousse hors de l'event loop). Une panne qui casse ne
@@ -447,11 +464,13 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
             log.warning("médecin des agents : agent %s illisible (%s)",
                         panne.get("trigger_id"), e)
     incidents = _incidents(plateforme, orgs_en_panne=len(en_panne))
+    candidats, eteintes = _sans_les_orgs_eteintes(candidats)
     relances, differees = _relacher(candidats, incidents, maintenant)
     return {"pannes": pannes, "relances": relances, "relances_differees": differees,
             "incidents": sorted(incidents), "gueris": len(gueris),
             "gueris_apres_soin": sum(1 for g in gueris if g.get("reparations")),
             "erreurs": erreurs, "tenant_tiers_ecartes": len(ecartees),
+            "reparation_eteinte": eteintes,
             **_ombre_du_catalogue(vues)}
 
 

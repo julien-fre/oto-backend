@@ -858,3 +858,15 @@ CREATE TABLE IF NOT EXISTS agent_causes (
     vue_premiere_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
+
+AGENT_HEALTH_SETTINGS = """
+-- « Laisser Tulina réparer mes agents » (`db/sante_agents.py`, 13/11/2026) : une ligne
+-- par org qui a CHOISI ; aucune ligne = allumé (le défaut décidé). Éteint, la boucle du
+-- médecin et l'agent médecin ne relancent ni ne réparent les agents de l'org — les
+-- épisodes et les messages continuent ; un opérateur garde la main.
+CREATE TABLE IF NOT EXISTS agent_health_settings (
+    org_id BIGINT PRIMARY KEY,
+    auto_repair BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""

@@ -128,6 +128,8 @@ def file(monkeypatch):
         return {c: dict(etat["catalogue"].get(c, {"statut": "proposee", "neuve": True}))
                 for c, *_ in lot}
     monkeypatch.setattr(causes_agents, "relever", _relever)
+    from oto_mcp.db import sante_agents
+    monkeypatch.setattr(sante_agents, "orgs_sans_auto_repair", lambda orgs: set())
     return etat
 
 
@@ -243,7 +245,8 @@ def test_un_passage_ne_s_arrete_pas_sur_une_panne_illisible(monkeypatch, file, t
     assert appels == [1, 2]
     assert {k: v for k, v in bilan.items() if not k.startswith("catalogue_")} == {
         "pannes": 2, "relances": 1, "relances_differees": 0, "incidents": [], "gueris": 1,
-        "gueris_apres_soin": 1, "erreurs": 1, "tenant_tiers_ecartes": 0}
+        "gueris_apres_soin": 1, "erreurs": 1, "tenant_tiers_ecartes": 0,
+        "reparation_eteinte": 0}
 
 
 def test_l_org_d_un_tenant_tiers_n_est_ni_relevee_ni_relancee(monkeypatch, file, tenants):
@@ -456,3 +459,22 @@ def test_a_l_echelle_trois_orgs_sur_beaucoup_ne_font_pas_un_incident(
               for p in _pannes(org, 1, motif="HTTP 401 invalid x-api-key")]
     _un_passage(monkeypatch, _pannes(7, 1) + _pannes(8, 1) + _pannes(10, 1) + autres)
     assert M.balayer(_MAINTENANT)["incidents"] == []
+
+
+def test_une_org_qui_a_eteint_la_reparation_n_est_pas_relancee(monkeypatch, file, tenants):
+    from oto_mcp.db import sante_agents
+    monkeypatch.setattr(sante_agents, "orgs_sans_auto_repair", lambda orgs: {8})
+    _un_passage(monkeypatch, _pannes(7, 1) + _pannes(8, 2))
+    bilan = M.balayer(_MAINTENANT)
+    assert [org for org, *_ in file["enfiles"]] == [7]
+    assert bilan["reparation_eteinte"] == 2
+
+
+def test_un_reglage_illisible_ne_relance_rien(monkeypatch, file, tenants):
+    from oto_mcp.db import sante_agents
+
+    def _casse(orgs):
+        raise RuntimeError("base indisponible")
+    monkeypatch.setattr(sante_agents, "orgs_sans_auto_repair", _casse)
+    _un_passage(monkeypatch, _pannes(7, 2))
+    assert M.balayer(_MAINTENANT)["relances"] == 0 and file["enfiles"] == []
