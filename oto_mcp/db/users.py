@@ -546,6 +546,9 @@ _SUB_COLUMNS = [
     # `runner_trigger_links.created_by` = qui a POSÉ un lien entre agents — colonne
     # d'AUTEUR, hors PK et sans FK : relue par l'écran des liens, elle suit la personne.
     ("runner_trigger_links", "created_by"),
+    # `org_favorites.added_by` = qui a ÉPINGLÉ un favori de l'org — colonne d'AUTEUR, hors
+    # PK et sans FK : la liste des favoris la sert, elle suit la personne.
+    ("org_favorites", "added_by"),
     ("tool_calls", "effective_sub"),
     # Le JOURNAL des acceptations légales (#487) — la source de vérité du gate, donc
     # ce qui décide si le compte fusionné se voit redemander ses CGU. Aucune unicité :

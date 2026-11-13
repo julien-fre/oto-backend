@@ -259,6 +259,9 @@ CLASSEMENT: dict[str, Table] = {
     # où l'org est prévenue qu'un agent ne fonctionne plus (canal ou personne Slack) :
     # un réglage de l'org, il part avec elle.
     "agent_alert_settings": possedee(ParOrg()),
+    # les pages et tableaux épinglés pour l'org (`added_by` = l'auteur du geste, pas un
+    # compte) : des signets de l'org, ils partent avec elle.
+    "org_favorites": possedee(ParOrg()),
     "apify_runs": exclue(ParOrg(), "suivi de la clé PLATEFORME de l'instance d'origine : "
                          "ses runs ne se relèvent qu'avec cette clé, et le coût relevé "
                          "part avec le journal"),

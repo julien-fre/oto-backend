@@ -239,3 +239,21 @@ CREATE TABLE IF NOT EXISTS org_service_accounts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
+
+# les FAVORIS d'une org : pages et tableaux épinglés pour tous ses membres
+ORG_FAVORITES = """
+-- Les favoris PARTAGÉS d'une org (`capabilities/orgs/favoris.py`, 13/11/2026) : une page
+-- (`kind = 'doc'`, `ref_id` = `docs.id`) ou un tableau (`kind = 'table'`, `ref_id` =
+-- `user_datastores.id`) qu'un membre épingle, et que tous les membres voient — chacun
+-- n'en LIT que ce que ses droits lui ouvrent (rien n'est accordé par un favori).
+-- `added_by` = l'auteur du geste (une colonne d'AUTEUR, pas de compte). Aucune FK vers
+-- l'objet : une page ou un tableau disparu laisse une ligne morte, retirée à la lecture.
+CREATE TABLE IF NOT EXISTS org_favorites (
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('doc', 'table')),
+    ref_id BIGINT NOT NULL,
+    added_by TEXT,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (org_id, kind, ref_id)
+);
+"""
