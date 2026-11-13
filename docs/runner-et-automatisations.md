@@ -3086,6 +3086,18 @@ passe AVANT l'alerte.
   rare. ⚠️ Ni la relance automatique ni `op=rerun` ne lisent `result.tool_counts` : un
   refus passager après une écriture est relancé comme la file le relance déjà
   (`complete_job`) ; rien encore ne distingue, avant un `rerun`, un run qui a écrit.
+- **Le budget d'un passage, et les incidents** (13/11/2026) : la boucle relève TOUTES les
+  pannes avant de relancer, puis relâche les relances sous budget — `RELANCES_PAR_PASSAGE`
+  (20) au plus, servies à tour de rôle par org (la plus anciennement en panne d'abord :
+  une grosse org ne passe pas avant une petite), chacune avec une gigue de 0 à
+  `GIGUE_MAX_S` (240 s, `enqueue_job(delai_s=…)`). Ce qui n'est pas servi attend le
+  passage suivant sans rien dépenser de son plafond (`relances_differees` au bilan). Une
+  même classe du côté de la plateforme dans `INCIDENT_ORGS` (3) orgs au même passage est
+  un **incident** : dit UNE fois chez nous à son ouverture (journal + suivi d'erreurs,
+  `INCIDENT —`), fini au journal quand plus aucune panne ne le porte ; ses relances se
+  bornent à `INCIDENT_SONDES` (2) par passage, et le plafond d'un de ses agents escalade
+  l'épisode SANS alerte par agent. ⚠️ L'incident vit dans la mémoire du processus
+  (`_INCIDENTS`) : un redémarrage le redit une fois.
 - **Ce qu'il ne fait jamais** : toucher une clé, une identité, une procédure, un horaire
   ou une donnée ; relancer une panne `inconnu` (un run qui a agi avant de mourir
   referait ses effets). Un épisode du titulaire passe `escalade` sans geste : c'est
