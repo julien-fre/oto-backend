@@ -164,6 +164,18 @@ une ressource MCP Apps nue, dont la CSP (`resourceDomains`) admet l'origine du b
   la hauteur par défaut du host.
 - **Un chemin relatif du front se résout contre le bac à sable du host**, pas contre son
   origine : le bundle rend absolus ses chemins d'images contre l'origine de son script.
+- **Le dessin se demande à la NAISSANCE, pas seulement à l'ouverture** : là où le bundle
+  est déclaré, `oto_procedure op=create` (ou un `set` qui écrit la v1, hors
+  `from_version`, ou un `fork` de la bibliothèque — le dessin se porte alors sur
+  l'écriture d'adaptation) d'un corps SANS tracé répond avec `draw_next`, la consigne de dessin
+  (`procedure_console._a_dessiner_a_la_naissance` → `procedure_app.a_dessiner_a_la_naissance`).
+  ⚠️ **Sans garde client**, contrairement à la consigne de l'app : la plupart des
+  procédures naissent dans un client TEXTE (Claude Code), qui écrit des caractères de
+  tracé sans rien peindre — et que la consigne de l'app, réservée aux clients qui
+  peignent, ne touchait jamais. Le dernier pas diffère seul : montrer le graphe par
+  l'app, ou donner le lien de la page. ⚠️ Jamais à un travail du runner
+  (`sert_un_worker`), jamais à une édition d'une procédure qui existe : le dessin reste
+  facultatif dans le cœur, la consigne est celle d'une instance qui a un front qui le peint.
 
 ## Un tableau peint par un front — `data_app` (`OTO_DATA_APP_BUNDLE`)
 
