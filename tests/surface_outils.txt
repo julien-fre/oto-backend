@@ -531,6 +531,7 @@ monid_runs	get list stop	b82bf1f9a7bed760
 monid_wallet	-	99334726611ccf58
 mux	get_asset get_ingest list_assets	a4bed24e0a296055
 mux_act	create_asset create_upload	b3751fe7836d11c7
+n8n_act	create_workflow delete_workflow set_workflow_tags update_workflow	400adc2facecee6d
 n8n_activate_workflow	-	2c96c61c3d39a413
 n8n_deactivate_workflow	-	2c96c61c3d39a413
 n8n_get_execution	-	3ec9600318fb0760

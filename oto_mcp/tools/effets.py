@@ -677,6 +677,10 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "monid_runs": {"lire": "list get", "detruire": "stop"},
     "monid_wallet": "lire",
     "mux_act": {"ecrire": "create_upload create_asset"},
+    # update_workflow replaces the whole workflow and puts a published one live with the
+    # change; set_workflow_tags replaces the tag list.
+    "n8n_act": {"ecrire": "create_workflow",
+                "detruire": "update_workflow delete_workflow set_workflow_tags"},
     "n8n_activate_workflow": "envoyer",
     "n8n_deactivate_workflow": "detruire",
     "n8n_get_execution": "lire",
@@ -1578,6 +1582,7 @@ PAS_UN_LOT: dict[str, str] = {
     "meta_ads_insights": "fields breakdowns action_attribution_windows filtering sort",
     "minari_contact": "contact_ids",
     "modjo_calls": "ids expand participants tags",
+    "n8n_act": "tag_ids",
     "nextmotion_appointment": "fields",
     "nextmotion_calendar": "fields",
     "nextmotion_catalog": "fields",
