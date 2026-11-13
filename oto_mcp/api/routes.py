@@ -168,6 +168,7 @@ _READ_OPS = frozenset({
     "outline",  # le plan d'une page, ses titres sans son corps (`me.doc`, #1266)
     "validate",  # juger un manifeste d'app sans rien écrire (`me.app`)
     "read_file",  # un agent lit un fichier de l'app, sans rien écrire (`me.app`)
+    "revision",  # une version entière d'une app, pour la lire (`me.app`)
 })
 
 

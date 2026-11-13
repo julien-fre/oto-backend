@@ -90,6 +90,8 @@ from . import (
     runner_links,
     # NON aplati : `create`/`get`/`update` sont trop communs — `db.apps.<fn>`.
     apps,
+    # NON aplati : `draft`/`publish` sont trop communs — `db.app_versions.<fn>`.
+    app_versions,
     # NON aplati : `lister`/`ajouter`/`retirer` sont trop communs —
     # `db.datastore_commentaires.<fn>`.
     datastore_commentaires,

@@ -36,7 +36,7 @@ forbidden`, oto-backend#670) doublait deux suffixes hérités (`?zoho=connected`
 sans les deux mois habituels, après mesure qu'AUCUN consommateur ne lisait
 encore l'ancienne forme — le dashboard lit `connect=` depuis le 04/09
 (v1.55.0), et le seul partenaire susceptible de dépendre de ces deux
-connecteurs (Tulina) n'a mesuré aucune connexion Zoho ni Google. Contrairement
+connecteurs (un tenant) n'a mesuré aucune connexion Zoho ni Google. Contrairement
 à doctrine→guide, ce n'était pas un renommage consommé par des tiers actifs :
 c'était un doublage de précaution devenu sans objet. `ANNONCE_RETOUR_OAUTH` /
 `RETRAIT_RETOUR_OAUTH` / `dans_le_preavis_retour_oauth()` sont retirés
