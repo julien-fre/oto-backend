@@ -123,6 +123,9 @@ class AppCard(BaseModel):
     project_ids: list[int] = Field(default_factory=list)
     # L'appelant peut-il la modifier (éditeur, gérant, propriétaire) ?
     can_edit: bool = False
+    # Peut-il en cliquer les boutons (Use, ou la modifier) ? Servi par `op=get` seul ;
+    # absent d'une liste. Faux = View : le front désactive les gestes.
+    can_use: Optional[bool] = None
     title: str
     thumbnail: Optional[dict] = None
     created_by: Optional[str] = None
@@ -293,7 +296,9 @@ def _cards(sub: str, rows: list[dict], writable: Optional[set[int]] = None) -> l
 
 
 def _view(sub: str, row: dict) -> dict:
+    from . import apps_appel
     row = _cards(sub, [row])[0]
+    row["can_use"] = bool(row.get("can_edit")) or apps_appel.peut_cliquer(sub, int(row["id"]))
     return {k: row[k] for k in AppView.model_fields if k in row}
 
 
@@ -432,9 +437,13 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         return {"revisions": db.apps.revisions(row["id"])}
 
     if inp.op == "read_file":
-        # Le lecteur qui l'a déposé, ou un run qu'il a lancé (qui tourne en son nom).
+        # Le lecteur qui l'a déposé, ou un run qu'il a lancé (en son nom, ou d'un clic
+        # dans l'app au nom de son auteur : `pour_qui`).
         _require(inp.file_id is not None, "missing_file_id", "`file_id` is required.")
-        f = db.apps.file_of(int(row["id"]), sub, int(inp.file_id))
+        from . import apps_appel
+        lecteur, remis = apps_appel.pour_qui(row, sub)
+        f = (db.apps.file_of(int(row["id"]), lecteur, int(inp.file_id))
+             if remis is None or int(inp.file_id) in remis else None)
         _require(f is not None, "unknown_file",
                  f"No file {inp.file_id} of yours in app {row['id']}.", 404)
         from .. import file_content, media_store
@@ -467,7 +476,8 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
             except (binascii.Error, ValueError):
                 raise AuthzDenied(400, "invalid_file", "`content_base64` isn't valid base64.") from None
         from . import apps_appel
-        return {"file": apps_appel.rendre(sub, row, inp.name or "", inp.media_type, data)}
+        return {"file": apps_appel.rendre(apps_appel.pour_qui(row, sub)[0], row, inp.name or "",
+                                          inp.media_type, data)}
 
     if inp.op in ("file", "unfile"):
         _require(inp.project_id is not None, "missing_project", "`project_id` is required.")
