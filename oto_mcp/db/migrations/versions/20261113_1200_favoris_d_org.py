@@ -14,7 +14,7 @@ l'ignore.
 Retour arrière : retire la table (les favoris se perdent ; rien d'autre ne les lit).
 
 Révision : 20261113_1200_favoris_d_org
-Précédente : 20261112_1200_connecteur_api
+Précédente : 20261112_1700_app_drafts
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from alembic import op
 from oto_mcp.db.schema.orgs import ORG_FAVORITES
 
 revision = "20261113_1200_favoris_d_org"
-down_revision = "20261112_1200_connecteur_api"
+down_revision = "20261112_1700_app_drafts"
 branch_labels = None
 depends_on = None
 
