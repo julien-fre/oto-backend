@@ -215,3 +215,19 @@ def test_en_anglais_le_courriel_par_probleme(comme_slack, monkeypatch):
     sujet, html = comme_slack["lettres"][0][1:]
     assert sujet == "A scheduled agent is blocked"
     assert "It stopped before finishing its work." in html
+
+
+def test_une_panne_pas_encore_comprise_ne_dit_pas_que_c_est_au_client(comme_slack):
+    """Côté `inconnu`, sans texte du médecin : la phrase de l'onglet Santé, jamais celle
+    d'une classe qui dirait au client de reconnecter quoi que ce soit."""
+    comme_slack["vivants"][7] = [_episode(1, classe="cle_refusee", cote="inconnu")]
+    M.balayer(_JOUR)
+    html = comme_slack["lettres"][0][2]
+    assert "Nous cherchons pourquoi il s" in html
+    assert "Reconnectez" not in html and "https://app.acme.test/connectors" not in html
+
+
+def test_le_courriel_par_probleme_dit_depuis_quand(comme_slack):
+    comme_slack["vivants"][7] = [_episode(1), _episode(2)]
+    M.balayer(_JOUR)
+    assert "En échec depuis le 2026-10-20 06:00 UTC" in comme_slack["lettres"][0][2]

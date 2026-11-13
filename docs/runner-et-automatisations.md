@@ -3023,7 +3023,10 @@ escalade.* La lentille `agents_en_echec` rendait la panne lisible ; rien ne l'an
   nomme — chacun lien vers sa page (`agent`) quand l'instance la déclare — avec le geste
   une fois et son bouton (`Le faire maintenant`, lien du tableau de bord seulement,
   `links`). ⚠️ Le motif BRUT n'y entre jamais : un agent sans épisode lisible (boucle du
-  médecin éteinte, lecture en échec — ouvert, dit au journal) reçoit la phrase par défaut.
+  médecin éteinte, lecture en échec — ouvert, dit au journal) reçoit la phrase par défaut ;
+  une panne pas encore comprise (`cote = inconnu`) que le médecin n'a pas dite reçoit la
+  phrase de l'onglet Santé (« nous cherchons pourquoi… »), jamais celle d'une classe. Chaque
+  bloc dit depuis quand ses agents échouent (le plus ancien).
   Tout texte est échappé. Toujours un courriel par org, au même destinataire, aux mêmes
   heures, sous la même règle de tenant, marqué après l'envoi. Réglage éteint : le courriel
   d'avant, motif compris, mot pour mot (`alerte_agents_bloques.problemes`).

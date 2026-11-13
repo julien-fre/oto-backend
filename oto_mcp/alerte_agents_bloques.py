@@ -97,7 +97,7 @@ def _heures_calmes(maintenant: datetime) -> bool:
 def problemes(org_id: int, agents: list[dict], langue_: str, *, marque: str,
               sub: Optional[str]) -> list[dict]:
     """Les agents bloqués d'une org rangés par PROBLÈME, comme Slack (`grouper`) :
-    `[{headline, todo, action, link, agents: [{id, label, url}]}]`, dans l'ordre du
+    `[{headline, todo, action, link, since, agents: [{id, label, url}]}]`, dans l'ordre du
     premier agent de chaque problème. Le texte vient de l'épisode vivant de l'agent
     (`message_du_probleme`) ; un agent sans épisode lisible reçoit la phrase par défaut
     — jamais son motif brut. `sub` = le destinataire : les liens sont ceux de SON tableau
@@ -115,26 +115,47 @@ def problemes(org_id: int, agents: list[dict], langue_: str, *, marque: str,
     for a in agents:
         tid = int(a["trigger_id"])
         ep = vivants.get(tid) or {"classe": None, "cote": "proprietaire"}
-        pb = A.message_du_probleme(org_id, ep, langue_, marque=marque, sub=sub)
+        if ep.get("cote") == "inconnu" and not (ep.get("message_client") or {}).get("headline"):
+            # Pas encore compris, et le médecin n'a rien écrit : on ne dit pas au client
+            # que c'est à lui (la phrase d'une classe le ferait) — comme l'onglet Santé.
+            pb = {"headline": _PAS_COMPRIS[langue_], "todo": None, "action": None,
+                  "link": None}
+        else:
+            pb = A.message_du_probleme(org_id, ep, langue_, marque=marque, sub=sub)
         cle = (pb["headline"], pb.get("todo"), pb.get("link"), pb.get("action"))
-        p = out.setdefault(cle, {**pb, "agents": []})
+        p = out.setdefault(cle, {**pb, "agents": [], "since": None})
+        depuis = str(a.get("depuis") or "")[:16] or None
+        if depuis and (p["since"] is None or depuis < p["since"]):
+            p["since"] = depuis
         p["agents"].append({"id": tid, "label": a.get("libelle") or f"#{tid}",
                             "url": links.link_for("agent", sub=sub, org=int(org_id),
                                                   id=tid)})
     return list(out.values())
 
 
+#: Ce qui se dit d'un agent dont la panne n'est pas encore comprise et que le médecin
+#: n'a pas encore dite (`cote = inconnu`, sans `message_client`) : la phrase de l'onglet
+#: Santé (`capabilities/agent_health._A_NOUS`), jamais la phrase d'une classe.
+_PAS_COMPRIS = {
+    "fr": "Nous cherchons pourquoi il s'est arrêté. Nous vous dirons s'il y a quelque "
+          "chose à faire.",
+    "en": "We are looking into why it stopped. We will tell you if there is anything to "
+          "do.",
+}
+
 #: Le courriel qui parle comme Slack, par langue (`problemes`).
 _PAR_PROBLEME = {
     "fr": {"sujet": "Un agent programmé est bloqué",
            "intro": "Ces agents programmés de votre organisation ne fonctionnent plus :",
            "faire": "Le faire maintenant",
+           "depuis": "En échec depuis le {depuis} UTC",
            "fin": "Ils continueront de partir à l'heure et d'échouer de la même façon tant "
                   "que ce n'est pas fait — ou coupez l'agent. C'est le seul message pour "
                   "cette panne."},
     "en": {"sujet": "A scheduled agent is blocked",
            "intro": "These scheduled agents of your organization have stopped working:",
            "faire": "Do it now",
+           "depuis": "Failing since {depuis} UTC",
            "fin": "They will keep starting on schedule and fail the same way until this is "
                   "done — or turn the agent off. This is the only message for this "
                   "outage."},
@@ -159,8 +180,10 @@ def _courriel_par_probleme(m, to: str, blocs: list[dict], *, locale: Optional[st
         return f'<a href="{attr(a["url"])}">{nom}</a>' if a.get("url") else nom
     corps = [f'<p style="{_charte.PARA}">{esc(p["intro"])}</p>']
     for b in blocs:
+        depuis = (f'<br>{esc(p["depuis"].format(depuis=b["since"]))}'
+                  if b.get("since") else "")
         corps.append(f'<p style="{_charte.PARA}">{", ".join(_nom(a) for a in b["agents"])}'
-                     f'<br>{esc(b["headline"])}'
+                     f'{depuis}<br>{esc(b["headline"])}'
                      + (f'<br>{esc(b["todo"])}' if b.get("todo") else "") + "</p>")
         if b.get("link"):
             corps.append(_charte.bouton(m, b["link"], p["faire"]))
