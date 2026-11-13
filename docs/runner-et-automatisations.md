@@ -3191,6 +3191,13 @@ passe AVANT l'alerte.
   relance) et un agent hébergé se voit refuser `rerun` et `add_tool`
   (`auto_repair_off`) ; un opérateur garde la main, les épisodes et les messages
   continuent.
+- **L'écran Admin des causes** (`capabilities/agent_causes_admin.py`, 13/11/2026) :
+  `GET /api/admin/agent-causes` (`status`, `limit`) et `PUT /api/admin/agent-causes/{key}`
+  (`status`, `classe`, `cote`, `client_copy` par langue), admin plateforme, REST
+  seulement — les gardes de `set_cause` sans recopie (`agent_repair._decider_une_cause`) :
+  copie exigée pour approuver une cause du titulaire, copie illisible refusée, un agent
+  hébergé n'approuve jamais. Les incidents vivent dans la mémoire de la boucle et ne s'y
+  servent pas.
 - **Où** : boucle `tiers=True` (une relance refait agir un agent chez des tiers),
   ÉTEINTE tant que `OTO_MEDECIN_AGENTS_ENABLED=1` n'est pas déclaré — production seule.
 - Bancs : `tests/test_medecin_agents.py` (sans base), `tests/test_causes_pannes.py`
