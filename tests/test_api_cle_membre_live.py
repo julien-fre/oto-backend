@@ -173,3 +173,111 @@ def test_le_jar_de_session_suit_sa_ligne(monde):
     api_session.jar_writer(ligne_a, ra.fields)("jar-de-a")
     assert api_session.read_jar(ligne_a, ra.fields) == "jar-de-a"
     assert api_session.read_jar(ligne_b, rb.fields) is None
+
+
+# ── les listes de l'agent montrent la clé perso de l'APPELANT, et à lui seul ──────
+# Trois surfaces : `api(op="list")` sans `_account`, le contexte de l'agent (« Your oto
+# context ») et `oto_connector(name=…)`. Chacune liste la clé perso de l'appelant,
+# marquée `scope: "member"`, avant celle de l'org ; jamais celle d'un collègue.
+
+@pytest.fixture
+def org_nue(live):
+    """Une org SANS clé `api` d'org : deux membres simples, A et B ; `api` ouvert."""
+    from oto_mcp import db, org_store
+    from oto_mcp.connectors import activation
+    u = uuid.uuid4().hex[:8]
+    admin, a, b = f"admin_{u}", f"membre_a_{u}", f"membre_b_{u}"
+    for s in (admin, a, b):
+        db.upsert_user(s, email=f"{s}@example.test")
+    org = org_store.create_org(f"org_{u}", created_by=admin)
+    org_store.add_org_member(org, admin, "org_admin")
+    for s in (a, b):
+        org_store.add_org_member(org, s)
+        org_store.set_active_org(s, org)
+    activation.set_activation(CONNECTEUR, True, org_id=None, set_by=admin)
+    return {"org": org, "admin": admin, "a": a, "b": b}
+
+
+def _liste_agent(sub: str, monkeypatch) -> list[dict]:
+    """`api(op="list")` sans `_account`, le vrai outil, pour `sub`."""
+    from fastmcp import FastMCP
+    import asyncio
+    from oto_mcp import access, session_org
+    from oto_mcp.tools import api_ops
+    monkeypatch.setattr(api_ops, "current_user_sub_from_token", lambda: sub)
+    monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: sub)
+    monkeypatch.setattr(session_org, "current_call_account", lambda: None)
+    m = FastMCP("t")
+    api_ops.register(m)
+    out = asyncio.run(m.get_tool("api")).fn()
+    return out.get("connectors") or []
+
+
+def _contexte(sub: str, org: int) -> str:
+    from oto_mcp import instructions
+    return instructions._format_context(instructions._resolve_context(sub, org))
+
+
+def _par_nom(sub: str, org: int, nom: str):
+    from oto_mcp.capabilities._types import ResolvedCtx
+    from oto_mcp.capabilities.connectors import custom_api
+    return custom_api.projection_for_name(ResolvedCtx(sub=sub, org_id=org),
+                                          [{"name": CONNECTEUR}], nom,
+                                          verbose=False, include=None)
+
+
+def _ligne(scope: str = "") -> str:
+    whose = " (your personal key, used before the org's)" if scope == "member" else ""
+    return f'- Custom connector{whose}: {COMPTE} — `api(op="list", _account="{COMPTE}")`'
+
+
+_SECRETS = ("CLE-DE-A", "CLE-ORG", "token")
+
+
+def test_seule_une_cle_perso_les_trois_listes_la_montrent_marquee(org_nue, monkeypatch):
+    m = org_nue
+    assert _poser_perso(m["a"], "CLE-DE-A")[0] == 200
+    [c] = _liste_agent(m["a"], monkeypatch)
+    assert (c["account"], c["scope"]) == (COMPTE, "member")
+    assert set(c) == {"account", "label", "description", "logo_domain",
+                      "actions_count", "scope", "actions"}
+    assert not any(s in repr(c) for s in _SECRETS)
+    texte = _contexte(m["a"], m["org"])
+    assert _ligne("member") in texte and "CLE-DE-A" not in texte
+    trouve = _par_nom(m["a"], m["org"], COMPTE)["custom_connector"]
+    assert (trouve["account"], trouve["scope"]) == (COMPTE, "member")
+    assert "personal key" in trouve["how_to_call"]
+    assert not any(s in repr(trouve) for s in ("CLE-DE-A", "CLE-ORG"))
+
+
+def test_un_autre_membre_ne_voit_la_cle_perso_dans_aucune_liste(org_nue, monkeypatch):
+    m = org_nue
+    assert _poser_perso(m["a"], "CLE-DE-A")[0] == 200
+    # Rien à lister pour B, et la résolution ne lui sert pas la clé de A.
+    from oto_mcp.mcp_errors import McpError
+    with pytest.raises(McpError, match="No `api` credential configured for you"):
+        _liste_agent(m["b"], monkeypatch)
+    assert "Custom connector" not in _contexte(m["b"], m["org"])
+    assert _par_nom(m["b"], m["org"], COMPTE) is None
+
+
+def test_cle_perso_et_cle_d_org_toutes_deux_listees_la_perso_d_abord(monde, monkeypatch):
+    from oto_mcp.connectors import activation
+    activation.set_activation(CONNECTEUR, True, org_id=None, set_by=monde["admin"])
+    assert _poser_perso(monde["a"], "CLE-DE-A")[0] == 200
+    liste = _liste_agent(monde["a"], monkeypatch)
+    assert [(c["account"], c["scope"]) for c in liste] == [(COMPTE, "member"),
+                                                            (COMPTE, "org")]
+    texte = _contexte(monde["a"], monde["org"])
+    assert [l for l in texte.splitlines() if l.startswith("- Custom connector")] == \
+        [_ligne("member"), _ligne()]
+    # Le nom désigne la clé que l'appel utilise : la perso.
+    assert _par_nom(monde["a"], monde["org"], COMPTE)["custom_connector"]["scope"] == \
+        "member"
+    # B, sans clé perso : la seule clé d'org, inchangée.
+    liste_b = _liste_agent(monde["b"], monkeypatch)
+    assert [(c["account"], c["scope"]) for c in liste_b] == [(COMPTE, "org")]
+    texte_b = _contexte(monde["b"], monde["org"])
+    assert _ligne() in texte_b and "personal key" not in texte_b
+    assert _par_nom(monde["b"], monde["org"], COMPTE)["custom_connector"]["scope"] == \
+        "org"

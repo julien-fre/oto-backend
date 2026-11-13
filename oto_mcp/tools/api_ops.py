@@ -8,7 +8,8 @@ usable for a tool we do not ship, without changing anything:
 - `api(op="setup_link")` — the link a person opens to connect the API THEMSELVES, the
   key typed in the form. A raw secret is never an MCP argument (CLAUDE.md): the tool
   has no parameter that could carry one. Building a link writes nothing.
-- `api(op="list")` — the org's custom connectors, or one connector's saved definition
+- `api(op="list")` — the caller's custom connectors (their own keys, then the org's),
+  or one connector's saved definition
   (`custom_ops_definition`: label, description, constant headers, variables, actions),
   stored on the credential's instance (`connectors/api_operations`).
 - everything that writes or reaches the API — calls, OpenAPI import, saving the
@@ -125,9 +126,10 @@ def _definition(rc) -> dict:
 
 
 def _org_connectors(sub: str) -> list[dict]:
-    """The custom connectors of the caller's org — empty without an org."""
+    """The custom connectors the caller reaches in their org — their own personal keys
+    first, then the org's (`store.org_connectors`) — empty without an org."""
     org = access.current_org(sub)
-    return store.org_connectors(org) if org else []
+    return store.org_connectors(org, sub) if org else []
 
 
 def _auth_header(rc) -> Optional[str]:
@@ -163,11 +165,12 @@ def register(mcp: FastMCP) -> None:
         """Read the org's custom connectors (Custom API) — ops: `list`, `setup_link`.
         Calls, import and changes: `api_act`.
 
-        - `list` (default): without `_account`, every custom connector of the org
-          (tools connected once for every member: account, label, description, action
-          names) — start here. With `_account`: that connector's definition, its
-          actions with their input schema. Call an action with
-          `api_act(op="call", operation=…, args={…})`.
+        - `list` (default): without `_account`, every custom connector you reach —
+          your own personal keys first (`scope: "member"`, yours alone), then the org's
+          (`scope: "org"`, shared by its members): account, label, description, action
+          names — start here. With `_account`: that connector's definition, its actions
+          with their input schema; your personal key is used before the org's. Call an
+          action with `api_act(op="call", operation=…, args={…})`.
         - `setup_link`: a link to connect a tool that has no dedicated connector (a
           payroll, ERP or any SaaS with an API key) → `{url, prefilled,
           instructions}`. Send the url to the person who holds the key; they paste the
@@ -209,9 +212,13 @@ def register(mcp: FastMCP) -> None:
                      "actions": [o["name"] for o in c["operations"]]} for c in conns],
                     "next": "api(op=\"list\", _account=<account>) for an action's "
                             "input; api_act(op=\"call\", operation=<action>, "
-                            "args={…}) to call it."}
+                            "args={…}) to call it."
+                            + (" `scope: \"member\"` = your personal key: it is used "
+                               "before the org's for the same account."
+                               if any(c["scope"] == store.SCOPE_MEMBER for c in conns)
+                               else "")}
         rc = _resolved()
         d = _definition(rc)
-        return {"account": rc.account, "label": d["label"],
+        return {"account": rc.account, "scope": rc.entity_type, "label": d["label"],
                 "description": d["description"], "variables": d["variables"],
                 "operations": [custom_ops.summary(o) for o in d["operations"]]}

@@ -202,6 +202,25 @@ def test_avec_account_le_detail_d_un_connecteur(compte):
     assert out["variables"]["organizationId"]["value"] == "org_9"
 
 
+def test_une_cle_perso_au_meme_compte_est_listee_d_abord_et_n_est_pas_ambigue(
+        compte, monkeypatch):
+    """L'appelant a SA clé `paie` (palier membre) en plus de celle de l'org : les deux
+    sont listées, la sienne d'abord et marquée ; une action de `paie` reste un seul
+    compte pour l'appel (la cascade sert la clé perso)."""
+    dans_l_org = ci.live_instance_configs
+
+    def _aussi_perso(ot, oid, con, account=None):
+        if (ot, oid) == (credentials_store.MEMBER, credentials_store.member_id(35, "u-1")):
+            return [{"id": 99, "account": "paie", "config": {"operations": list(OPS)}}]
+        return dans_l_org(ot, oid, con, account)
+    monkeypatch.setattr(ci, "live_instance_configs", _aussi_perso)
+    out = _lire()
+    assert [(c["account"], c["scope"]) for c in out["connectors"]] == [
+        ("paie", "member"), ("paie", "org"), ("rh", "org")]
+    assert "personal key" in out["next"]
+    assert _act("call", operation="list_collaborators", dry_run=True)["account"] == "paie"
+
+
 # ── la définition : configurée une fois ───────────────────────────────────────
 
 def test_poser_ne_change_que_les_parties_donnees(compte):

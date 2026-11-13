@@ -5,7 +5,8 @@ connector `api`) — kept out of `selection.py` and `instances.py`, which are ov
 - `repli` — the way out of a "no such connector" refusal: connect the tool through
   Custom API, with the setup link pre-filled with the searched name (never a secret).
 - `projection_for_name` — `oto_connector(name=…)` for a name that is no catalog
-  connector but the label (or account) of one of the org's custom connectors.
+  connector but the label (or account) of a custom connector the caller reaches (their
+  own personal key, then the org's).
 - `stamp_instances` — the `custom_api` card of each `api` instance in the roster
   (`/api/me/connector-instances`).
 
@@ -49,11 +50,12 @@ def repli(catalog: list[dict], demande: str,
 
 def projection_for_name(ctx: ResolvedCtx, catalog: list[dict], name: str, *,
                         verbose, include) -> Optional[dict]:
-    """The `connectors.me` answer when `name` designates one of the org's custom
-    connectors — `connectors` empty, `custom_connector` filled — or None."""
+    """The `connectors.me` answer when `name` designates a custom connector the caller
+    reaches (their own, then the org's) — `connectors` empty, `custom_connector`
+    filled, its `scope` said — or None."""
     if not _http_reachable(catalog):
         return None
-    perso = api_operations.match_org_connector(ctx.org_id, name)
+    perso = api_operations.match_org_connector(ctx.org_id, ctx.sub, name)
     if perso is None:
         return None
     return {"connectors": [], "verbose": verbose, "include": include or [],
