@@ -147,7 +147,7 @@ RESOURCE_GRANTS_ROLE = Verification(
     nom="resource_grants_role_check",
     table="resource_grants",
     # La forme du `CREATE TABLE` d'AUJOURD'HUI (`db/schema/grants.py`), `contributor`
-    # compris depuis la révision 20261113_1000_app_use_role : une base neuve la porte,
+    # compris depuis la révision 20261113_1900_app_use_role : une base neuve la porte,
     # une base versionnée l'a reçue de cette révision ; 0057 ne s'y rejoue pas.
     expression="role IN ('viewer', 'contributor', 'editor', 'manager')",
     definition=("CHECK ((role = ANY (ARRAY['viewer'::text, 'contributor'::text, "

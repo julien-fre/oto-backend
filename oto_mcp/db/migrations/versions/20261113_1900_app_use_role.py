@@ -32,8 +32,8 @@ sans ses boutons), puis le CHECK retrouve sa forme d'avant ; `file_ids` part.
 `contributor` à `viewer` (son rattrapage de rôle ne connaît pas `contributor`, base
 partagée) : ne poser aucun partage Use avant que la prod tourne le tag qui le lit.
 
-Révision : 20261113_1000_app_use_role
-Précédente : 20261112_1700_app_drafts
+Révision : 20261113_1900_app_use_role
+Précédente : 20261113_1800_usage_org
 """
 from __future__ import annotations
 
@@ -41,8 +41,8 @@ from alembic import op
 
 from oto_mcp.db.schema.apps import CONSENTEMENT_FICHIERS
 
-revision = "20261113_1000_app_use_role"
-down_revision = "20261112_1700_app_drafts"
+revision = "20261113_1900_app_use_role"
+down_revision = "20261113_1800_usage_org"
 branch_labels = None
 depends_on = None
 

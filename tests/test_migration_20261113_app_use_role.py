@@ -1,4 +1,4 @@
-"""La révision `20261113_1000_app_use_role`, jouée sur une vraie base : elle élargit le
+"""La révision `20261113_1900_app_use_role`, jouée sur une vraie base : elle élargit le
 CHECK de `resource_grants.role` à `contributor` et pose `app_consents.file_ids` ; le
 retour arrière ramène les partages `contributor` à `viewer`, remet le CHECK d'avant et
 retire la colonne — puis la révision se rejoue."""
@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 RACINE = Path(__file__).resolve().parent.parent
-_PRECEDENTE = "20261112_1700_app_drafts"
-_REVISION = "20261113_1000_app_use_role"
+_PRECEDENTE = "20261113_1800_usage_org"
+_REVISION = "20261113_1900_app_use_role"
 
 
 def _alembic():
