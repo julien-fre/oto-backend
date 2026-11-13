@@ -14,6 +14,8 @@ from __future__ import annotations
 import pathlib
 import re
 
+import pytest
+
 _WORKFLOWS = pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows"
 _LIE_A_UN_SECRET = re.compile(r"^\s*([A-Z_][A-Z0-9_]*):\s*\$\{\{\s*secrets\.[A-Za-z0-9_]+\s*\}\}\s*$")
 
@@ -49,6 +51,33 @@ def test_le_contrat_d_un_consommateur_sans_son_secret_rougit(tmp_path):
         capture_output=True, text=True)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "Contrat de oto-commerce NON JUGÉ" in r.stdout
+    assert not sortie.exists() or "lu=oui" not in sortie.read_text()
+
+
+@pytest.mark.parametrize("depot, chemin, cle, absents", [
+    ("", "c/openapi.json", "cle", ["PRIVE_1_DEPOT"]),
+    ("org/prive", "", "cle", ["PRIVE_1_CHEMIN"]),
+    ("", "", "", ["PRIVE_1_CLE", "PRIVE_1_DEPOT", "PRIVE_1_CHEMIN"]),
+])
+def test_une_reference_indirecte_sans_son_secret_rougit_par_son_nom_neutre(
+        tmp_path, depot, chemin, cle, absents):
+    """Un consommateur à référence indirecte : dépôt et chemin portés par des secrets.
+    Un secret absent est le même défaut chez nous (#823) — rouge, nommé par le nom
+    neutre et les NOMS des secrets, jamais par une valeur."""
+    import os
+    import subprocess
+    script = _WORKFLOWS.parents[1] / "scripts" / "lire-contrat-consommateur.sh"
+    sortie = tmp_path / "out"
+    r = subprocess.run(
+        [str(script), "prive-1", depot, chemin, "PRIVE_1_CLE"],
+        env={**os.environ, "CLE_LECTURE": cle, "GITHUB_OUTPUT": str(sortie),
+             "DEPOT_REF": "PRIVE_1_DEPOT", "CHEMIN_REF": "PRIVE_1_CHEMIN"},
+        capture_output=True, text=True)
+    assert r.returncode == 1, r.stdout + r.stderr
+    erreur = next(l for l in r.stdout.splitlines() if l.startswith("::error"))
+    assert "Contrat de prive-1 NON JUGÉ — secret déclaré absent" in erreur
+    assert all(nom in erreur for nom in absents), erreur
+    assert "org/prive" not in erreur and "c/openapi.json" not in erreur
     assert not sortie.exists() or "lu=oui" not in sortie.read_text()
 
 
@@ -119,6 +148,17 @@ def test_les_jobs_de_contrat_passent_le_secret_de_chaque_consommateur():
     assert texte.count(
         "CLE_LECTURE: ${{ matrix.consommateur.secret && "
         "secrets[matrix.consommateur.secret] || '' }}") == 3
+    # Le dépôt et le chemin d'un consommateur à référence indirecte : des SECRETS lus par
+    # leur nom déclaré (masqués d'office dans l'en-tête `env:` du journal), jamais `vars.`.
+    assert texte.count(
+        "DEPOT: ${{ matrix.consommateur.depot_ref && "
+        "secrets[matrix.consommateur.depot_ref] || matrix.consommateur.depot }}") == 3
+    assert texte.count(
+        "CHEMIN: ${{ matrix.consommateur.chemin_ref && "
+        "secrets[matrix.consommateur.chemin_ref] || matrix.consommateur.chemin }}") == 2
+    assert texte.count("DEPOT_REF: ${{ matrix.consommateur.depot_ref || '' }}") == 3
+    assert texte.count("CHEMIN_REF: ${{ matrix.consommateur.chemin_ref || '' }}") == 3
+    assert "vars.consommateur" not in texte and "vars[" not in texte
 
 
 def test_un_secret_absent_ne_sort_jamais_vert():
