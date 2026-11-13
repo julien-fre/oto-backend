@@ -19,7 +19,8 @@ from typing import Any, Optional
 
 import requests
 
-from .. import credentials_store, custom_ops, custom_ops_definition, custom_ops_openapi, egress
+from .. import (credentials_store, custom_ops, custom_ops_definition, custom_ops_openapi,
+               egress, providers)
 from ..db import connector_instances
 
 logger = logging.getLogger(__name__)
@@ -123,32 +124,55 @@ def _summary(account: str, config: dict, meta_label: Optional[str] = None) -> di
             "actions_count": len(d["operations"])}
 
 
-def org_connectors(org_id: int) -> list[dict]:
-    """The org's custom connectors, one per `api` account: `{account, label,
-    description, logo_domain, actions_count}` — and `operations` (the full list), for
-    the caller that resolves an action by name. Two queries, no decryption: the
-    label is the definition's, else the card's (`meta.label`), else the account."""
+#: Where a custom connector's key lives, as the lists say it: `member` = the CALLER's own
+#: key in this org (personal tier, `byo_user`), `org` = the org's, shared by its members.
+SCOPE_MEMBER, SCOPE_ORG = credentials_store.MEMBER, credentials_store.ORG
+
+
+def _owner_connectors(owner_type: str, owner_id: str, scope: str) -> list[dict]:
+    """One owner's custom connectors, one per `api` account. One query when the owner
+    has no account, two otherwise; no decryption."""
     metas = {r["account"]: (r.get("meta") or {}).get("label") for r in
-             credentials_store.list_accounts(credentials_store.ORG, str(org_id), CONNECTOR)}
+             credentials_store.list_accounts(owner_type, owner_id, CONNECTOR)}
+    if not metas:
+        return []
     out = []
-    for inst in connector_instances.live_instance_configs(
-            credentials_store.ORG, str(org_id), CONNECTOR):
+    for inst in connector_instances.live_instance_configs(owner_type, owner_id, CONNECTOR):
         if inst["account"] not in metas:
             continue
         row = _summary(inst["account"], inst["config"], metas[inst["account"]])
+        row["scope"] = scope
         row["operations"] = definition_of(inst["config"])["operations"]
         out.append(row)
     return out
 
 
-def for_context(org_id: int, connectors: list[str]) -> list[dict]:
-    """The org's custom connectors for the agent's context (`instructions`, « Ton
-    contexte oto ») — a tool configured once by the org, that the agent would not find
-    in the catalogue. At most 10; `[]` when `api` is not active. Fail-open, logged."""
+def org_connectors(org_id: int, sub: Optional[str]) -> list[dict]:
+    """The custom connectors the caller `sub` reaches in org `org_id`, in the
+    resolution order: the caller's OWN keys first (`scope: "member"`, read only when the
+    card declares `byo_user`), then the org's (`scope: "org"`). Each: `{account, label,
+    description, logo_domain, actions_count, scope}` — and `operations` (the full list),
+    for the caller that resolves an action by name. The member row is derived from
+    `sub`, never from an argument: no caller lists a colleague's key. An account present
+    at both scopes is listed twice; the personal one is the one a call uses. The label
+    is the definition's, else the card's (`meta.label`), else the account."""
+    if not org_id:
+        return []
+    mine = (_owner_connectors(credentials_store.MEMBER,
+                              credentials_store.member_id(org_id, sub), SCOPE_MEMBER)
+            if sub and providers.is_byo_user(CONNECTOR) else [])
+    return mine + _owner_connectors(credentials_store.ORG, str(org_id), SCOPE_ORG)
+
+
+def for_context(org_id: int, sub: Optional[str], connectors: list[str]) -> list[dict]:
+    """The caller's custom connectors for the agent's context (`instructions`, « Ton
+    contexte oto ») — a tool configured through Custom API, that the agent would not
+    find in the catalogue: the caller's own, then the org's. At most 10; `[]` when
+    `api` is not active. Fail-open, logged."""
     if CONNECTOR not in connectors or not org_id:
         return []
     try:
-        return org_connectors(org_id)[:10]
+        return org_connectors(org_id, sub)[:10]
     except Exception:
         logger.warning("contexte : connecteurs personnalisés illisibles (omis)",
                        exc_info=True)
@@ -156,26 +180,32 @@ def for_context(org_id: int, connectors: list[str]) -> list[dict]:
 
 
 def context_line(c: dict) -> str:
-    """One line of the agent's context per custom connector."""
-    return (f"- Custom connector: {c['label']} — "
+    """One line of the agent's context per custom connector — the caller's own key
+    says so: it is theirs alone, and the one used before the org's."""
+    whose = (" (your personal key, used before the org's)"
+             if c.get("scope") == SCOPE_MEMBER else "")
+    return (f"- Custom connector{whose}: {c['label']} — "
             f"`api(op=\"list\", _account=\"{c['account']}\")`")
 
 
-def match_org_connector(org_id: int, name: str) -> Optional[dict]:
-    """The org's custom connector whose label (or account) IS `name`, case and
-    surrounding spaces ignored — what `oto_connector(name=…)` returns for a tool
-    configured through Custom API instead of "unknown connector"."""
+def match_org_connector(org_id: int, sub: Optional[str], name: str) -> Optional[dict]:
+    """The caller's custom connector whose label (or account) IS `name`, case and
+    surrounding spaces ignored — the caller's own first, then the org's — what
+    `oto_connector(name=…)` returns for a tool configured through Custom API instead of
+    "unknown connector"."""
     q = " ".join((name or "").lower().split())
     if not q or not org_id:
         return None
-    for c in org_connectors(org_id):
+    for c in org_connectors(org_id, sub):
         if q in {" ".join(str(c["label"]).lower().split()), c["account"].lower()}:
             return {"connector": CONNECTOR, "account": c["account"], "label": c["label"],
                     "description": c["description"], "logo_domain": c["logo_domain"],
-                    "actions_count": c["actions_count"],
+                    "actions_count": c["actions_count"], "scope": c["scope"],
                     "how_to_call": (f"api(op=\"list\", _account=\"{c['account']}\") "
                                     "lists its actions; api_act(op=\"call\", "
-                                    "operation=…, args={…}) calls one.")}
+                                    "operation=…, args={…}) calls one.")
+                                   + (" Your personal key: yours alone, used before "
+                                      "the org's." if c["scope"] == SCOPE_MEMBER else "")}
     return None
 
 

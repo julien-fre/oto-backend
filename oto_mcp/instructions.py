@@ -145,8 +145,9 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         except Exception:
             pass
 
-    from .connectors import api_operations     # les connecteurs PERSONNALISÉS de l'org
-    custom = api_operations.for_context(org_id, connectors)
+    # Les connecteurs PERSONNALISÉS : ceux de l'appelant (sa clé perso), puis l'org.
+    from .connectors import api_operations
+    custom = api_operations.for_context(org_id, sub, connectors)
 
     projects: list[str] = []
     try:

@@ -47,8 +47,13 @@ def _account_for(sub: str, operation: str) -> Optional[str]:
     given — None to fall back on the call's default resolution."""
     if session_org.current_call_account() is not None:
         return None
-    porteurs = [c for c in _org_connectors(sub)
-                if custom_ops.find(c["operations"], operation)]
+    # One account at both scopes is ONE connector for the call: the cascade serves the
+    # caller's own key first (`_account` resolves it), so it is not an ambiguity.
+    par_compte: dict[str, dict] = {}
+    for c in _org_connectors(sub):
+        if custom_ops.find(c["operations"], operation):
+            par_compte.setdefault(c["account"], c)
+    porteurs = list(par_compte.values())
     if len(porteurs) > 1:
         raise _bad(f"action `{operation}` exists on several custom connectors: "
                    + ", ".join(f"`{c['account']}` ({c['label']})" for c in porteurs)

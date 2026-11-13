@@ -117,7 +117,7 @@ def test_la_definition_et_la_liste_de_l_org_sans_dechiffrer(live):
     d = store.save_definition("org", str(ORG), "malibou",
                               {"description": "Payroll.", "headers": {"X-V": "2"}})
     assert d["operations"] == [OP] and d["headers"] == {"X-V": "2"}
-    [c] = [c for c in store.org_connectors(ORG) if c["account"] == "malibou"]
+    [c] = [c for c in store.org_connectors(ORG, SUB) if c["account"] == "malibou"]
     assert (c["label"], c["description"], c["actions_count"]) == \
         ("Acme Payroll", "Payroll.", 1)
     iid = ci.live_instance_config("org", str(ORG), "api", "malibou")["id"]

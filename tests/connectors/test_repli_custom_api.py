@@ -129,3 +129,15 @@ def test_le_roster_des_instances_porte_la_carte_du_connecteur(monkeypatch):
                                     "logo_domain": "acme.test", "actions_count": 1}
     assert out[1]["custom_api"]["label"] == "Custom API · rh"
     assert "custom_api" not in out[2]
+
+
+def test_la_ligne_de_contexte_d_un_connecteur_d_org_ne_change_pas():
+    """Figé : la ligne d'un connecteur de l'ORG reste mot pour mot celle d'avant la clé
+    perso ; seule une clé perso de l'appelant porte la mention."""
+    from oto_mcp.connectors.api_operations import context_line
+    org = {"label": "Acme Payroll", "account": "paie", "scope": "org"}
+    assert context_line(org) == \
+        '- Custom connector: Acme Payroll — `api(op="list", _account="paie")`'
+    assert context_line({**org, "scope": "member"}) == (
+        "- Custom connector (your personal key, used before the org's): Acme Payroll"
+        ' — `api(op="list", _account="paie")`')

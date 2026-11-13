@@ -719,6 +719,14 @@ La ligne membre se déduit de l'identité de l'appelant, jamais d'un argument : 
 la clé d'un autre membre ; l'autorisation se branche sur `scope` (`BY_OP`). Le jar du mode `session`
 vit dans la ligne résolue, donc un par personne. Banc : `tests/test_api_cle_membre_live.py`.
 
+Les listes de l'agent la montrent (`connectors/api_operations.org_connectors`) : `api(op="list")` sans
+`_account`, la ligne « Custom connector » du contexte et `oto_connector(name=…)` listent les clés de
+l'APPELANT (`scope: "member"`, mention « your personal key, used before the org's ») avant celles de
+l'org (`scope: "org"`, ligne de contexte inchangée). Le palier membre n'est lu que si la carte déclare
+`byo_user`, et sa ligne se déduit de l'appelant : un collègue ne la voit dans aucune liste. Un même
+compte aux deux portées est listé deux fois, mais reste UN connecteur pour l'appel par nom
+(`api_act(op="call")`) : la cascade sert la clé perso.
+
 ### Le mode `session` du Custom API : un état propre au compte, scellé dans `meta` (12/11/2026)
 
 Pour un service sans clé d'API, la carte `api` prend `auth_mode=session` : un identifiant, un mot de passe
