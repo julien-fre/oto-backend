@@ -789,8 +789,10 @@ def register(mcp: FastMCP) -> None:
           them by `fields`.
         - `fields`: keep only these keys of each record, a nested one by a
           dotted path (`experiences.title`, lists traversed, no indexes). A key
-          a record lacks is skipped. With `compact=True`, the fields named are
-          added on top of the short view, whole.
+          a record lacks is skipped. With `compact=True`, each field named is
+          taken from the full record and REPLACES the short view's key of the
+          same first level: `fields=["experiences.title"]` gives every
+          position, past ones included, each reduced to its title.
         - Neither: the page as lemlist sends it.
         """
         client, is_platform = _client()
