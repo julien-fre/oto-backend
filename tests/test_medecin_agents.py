@@ -452,15 +452,6 @@ def test_en_incident_le_plafond_escalade_sans_alerte_par_agent(monkeypatch, file
     assert len(file["signaux"]) == 1 and "INCIDENT" in file["signaux"][0][0]
 
 
-def test_a_l_echelle_trois_orgs_sur_beaucoup_ne_font_pas_un_incident(
-        monkeypatch, file, tenants):
-    """Trente orgs en panne, dont trois sur un refus passager : le bruit de fond."""
-    autres = [p for org in range(100, 127)
-              for p in _pannes(org, 1, motif="HTTP 401 invalid x-api-key")]
-    _un_passage(monkeypatch, _pannes(7, 1) + _pannes(8, 1) + _pannes(10, 1) + autres)
-    assert M.balayer(_MAINTENANT)["incidents"] == []
-
-
 def test_une_org_qui_a_eteint_la_reparation_n_est_pas_relancee(monkeypatch, file, tenants):
     from oto_mcp.db import sante_agents
     monkeypatch.setattr(sante_agents, "orgs_sans_auto_repair", lambda orgs: {8})
@@ -478,3 +469,53 @@ def test_un_reglage_illisible_ne_relance_rien(monkeypatch, file, tenants):
     monkeypatch.setattr(sante_agents, "orgs_sans_auto_repair", _casse)
     _un_passage(monkeypatch, _pannes(7, 2))
     assert M.balayer(_MAINTENANT)["relances"] == 0 and file["enfiles"] == []
+
+
+def test_a_l_echelle_trois_orgs_sur_beaucoup_ne_font_pas_un_incident(
+        monkeypatch, file, tenants):
+    """Trente orgs en panne, dont trois sur un refus passager : le bruit de fond."""
+    autres = [p for org in range(100, 127)
+              for p in _pannes(org, 1, motif="HTTP 401 invalid x-api-key")]
+    _un_passage(monkeypatch, _pannes(7, 1) + _pannes(8, 1) + _pannes(10, 1) + autres)
+    assert M.balayer(_MAINTENANT)["incidents"] == []
+
+
+# --- Le catalogue qui décide (`OTO_CATALOGUE_CAUSES_DECIDE`) -----------------------------
+
+def _approuver(motif, classe, cote, file):
+    from oto_mcp import causes_pannes
+    file["catalogue"][causes_pannes.cle(causes_pannes.de(motif))] = {
+        "statut": "approuvee", "classe": classe, "cote": cote}
+
+
+@pytest.mark.parametrize("allume", ["", "1"])
+def test_une_cause_approuvee_range_un_inconnu_quand_le_reglage_est_allume(
+        monkeypatch, file, tenants, allume):
+    monkeypatch.setenv(M.ENV_CATALOGUE_DECIDE, allume)
+    motif = "RuntimeError : run_start : identité refusée par la ferme"
+    _approuver(motif, "membre_parti", "proprietaire", file)
+    ouverts = _un_passage(monkeypatch, [_panne(motif=motif)])
+    bilan = M.balayer(_MAINTENANT)
+    attendu = ("membre_parti", "proprietaire") if allume else ("inconnu", "inconnu")
+    assert (ouverts[0]["classe"], ouverts[0]["cote"]) == attendu
+    assert bilan["catalogue_decidees"] == (1 if allume else 0)
+    if allume:
+        assert [kw.get("statut") for _, kw in file["poses"]] == ["escalade"]
+
+
+def test_le_catalogue_ne_rend_jamais_une_panne_relancable(monkeypatch, file, tenants):
+    monkeypatch.setenv(M.ENV_CATALOGUE_DECIDE, "1")
+    motif = "fin_anormale (success)"
+    _approuver(motif, "refus_passager", "plateforme", file)
+    ouverts = _un_passage(monkeypatch, [_panne(motif=motif)])
+    M.balayer(_MAINTENANT)
+    assert ouverts[0]["classe"] == "inconnu" and file["enfiles"] == []
+
+
+def test_le_catalogue_ne_defait_pas_un_verdict_de_la_regex(monkeypatch, file, tenants):
+    monkeypatch.setenv(M.ENV_CATALOGUE_DECIDE, "1")
+    motif = "HTTP 401 invalid x-api-key"
+    _approuver(motif, "autre", "plateforme", file)
+    ouverts = _un_passage(monkeypatch, [_panne(motif=motif)])
+    M.balayer(_MAINTENANT)
+    assert (ouverts[0]["classe"], ouverts[0]["cote"]) == ("cle_refusee", "proprietaire")

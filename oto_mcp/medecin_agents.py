@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 from collections import defaultdict, deque
@@ -104,6 +105,15 @@ GIGUE_MAX_S = 240
 INCIDENT_ORGS = 3
 INCIDENT_PART = 0.3
 INCIDENT_SONDES = 2
+
+#: Le réglage d'instance qui laisse le CATALOGUE décider : une cause approuvée range une
+#: panne que la regex dit `inconnu` (sa classe, son côté — donc qui l'alerte vise et ce
+#: que le client lit). ÉTEINT par défaut : le catalogue reste en ombre.
+ENV_CATALOGUE_DECIDE = "OTO_CATALOGUE_CAUSES_DECIDE"
+
+#: Les classes que la boucle RELANCE. Une cause du catalogue ne les donne jamais : relancer
+#: reste décidé par la regex seule (l'empreinte se lit sur un motif tronqué).
+CLASSES_RELANCEES = ("refus_passager", "famille_non_servie")
 
 ACTEUR = "medecin"
 
@@ -267,8 +277,23 @@ def relancer(panne: dict, episode: dict, *, acteur: str = ACTEUR,
 def _a_relancer(episode: dict) -> bool:
     """La panne est de celles que la boucle relance (refus passager, famille non servie
     — celle-ci seulement quand un worker la sert, ce que `_soigner` vérifie)."""
-    return episode["cote"] != "proprietaire" and episode["classe"] in (
-        "refus_passager", "famille_non_servie")
+    return episode["cote"] != "proprietaire" and episode["classe"] in CLASSES_RELANCEES
+
+
+def catalogue_decide() -> bool:
+    """Le réglage de l'instance, lu à chaque passage. Une valeur illisible lève."""
+    from . import interrupteurs
+    return interrupteurs.oui_non(ENV_CATALOGUE_DECIDE, os.environ.get(ENV_CATALOGUE_DECIDE))
+
+
+def _par_le_catalogue(classe: str, cote: str, cause: Optional[dict]) -> tuple[str, str]:
+    """La classe et le côté d'une panne, le catalogue décidant : seulement quand la regex
+    dit `inconnu`, que la cause est APPROUVÉE, et qu'elle ne nomme pas une classe que la
+    boucle relance. Sinon, le verdict de la regex."""
+    if (classe == "inconnu" and cause and cause.get("statut") == "approuvee"
+            and cause.get("classe") not in CLASSES_RELANCEES):
+        return cause["classe"], cause["cote"]
+    return classe, cote
 
 
 def _soigner(panne: dict, episode: dict, maintenant: datetime, *,
@@ -300,19 +325,28 @@ def _soigner(panne: dict, episode: dict, maintenant: datetime, *,
     return None
 
 
-def _ombre_du_catalogue(vues: list[tuple[str, str, str, str]]) -> dict:
-    """Ce que le catalogue aurait décidé pour les pannes de ce passage — sans rien
-    décider. `vues` = `(cle, empreinte, classe, cote)` de chaque panne rangée par la
-    regex. Fail-open : une erreur du catalogue ne coûte que ce bilan, et se dit."""
+def _relever_au_catalogue(vues: list[tuple]) -> Optional[dict[str, dict]]:
+    """Range les empreintes du passage au catalogue et rend la cause de chacune — ou
+    None si le catalogue est illisible (dit au journal ; le passage continue sur la
+    regex seule)."""
     from .db import causes_agents
+    try:
+        return causes_agents.relever([v for v in vues if v[0]])
+    except Exception as e:  # noqa: BLE001 — le catalogue ne fait jamais échouer le passage
+        log.warning("médecin des agents : catalogue des causes illisible (%s)", e)
+        return None
+
+
+def _ombre_du_catalogue(vues: list[tuple[str, str, str, str]],
+                        causes: Optional[dict[str, dict]]) -> dict:
+    """Ce que le catalogue dit des pannes de ce passage. `vues` = `(cle, empreinte,
+    classe, cote)` de chaque panne rangée par la REGEX ; `causes` = ce que
+    `_relever_au_catalogue` a rendu (None : illisible)."""
     bilan = {"catalogue_reconnues": 0, "catalogue_neuves": 0,
              "catalogue_desaccords": 0, "catalogue_sans_empreinte": 0}
     avec = [v for v in vues if v[0]]
     bilan["catalogue_sans_empreinte"] = len(vues) - len(avec)
-    try:
-        causes = causes_agents.relever(avec)
-    except Exception as e:  # noqa: BLE001 — l'ombre ne fait jamais échouer le passage
-        log.warning("médecin des agents : catalogue des causes illisible (%s)", e)
+    if causes is None:
         bilan["catalogue_erreur"] = 1
         return bilan
     bilan["catalogue_neuves"] = sum(1 for c in causes.values() if c.get("neuve"))
@@ -421,12 +455,15 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
     maintenant = maintenant or datetime.now(timezone.utc)
     vues: list[tuple] = []
     gueris = episodes_agents.clore_les_gueris()
+    decide = catalogue_decide()
+    decidees = 0
     pannes, erreurs = 0, 0
     candidats: list[tuple[dict, dict]] = []
     plateforme: list[tuple[str, int]] = []
     a_nous: dict[int, bool] = {}
     ecartees: set[int] = set()
-    en_panne: set[int] = set()
+    # 1. Relever : les pannes de NOS orgs, rangées par la regex, et leur empreinte.
+    relevees: list[tuple[dict, str, str, Optional[str]]] = []
     for panne in episodes_agents.pannes_en_cours():
         org_id = int(panne["org_id"])
         if org_id not in a_nous:
@@ -440,7 +477,6 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
                          "épisode, aucune relance)", org_id)
             continue
         pannes += 1
-        en_panne.add(org_id)
         try:
             classe, cote = classer(panne.get("motif"))
             # La note libre d'un agent qui s'est dit bloqué ne s'empreinte pas : chaque
@@ -449,6 +485,21 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
                          else causes_pannes.de(panne.get("motif")))
             cle_ = causes_pannes.cle(empreinte) if empreinte else None
             vues.append((cle_, empreinte, classe, cote))
+            relevees.append((panne, classe, cote, cle_))
+        except Exception as e:  # noqa: BLE001 — une panne illisible ne bloque pas les autres
+            erreurs += 1
+            log.warning("médecin des agents : agent %s illisible (%s)",
+                        panne.get("trigger_id"), e)
+    # 2. Le catalogue, un lot pour tout le passage.
+    causes = _relever_au_catalogue(vues)
+    # 3. Tenir l'épisode de chaque panne, et soigner ce qui ne se relance pas.
+    for panne, classe, cote, cle_ in relevees:
+        org_id = int(panne["org_id"])
+        try:
+            if decide and causes is not None and cle_:
+                nouvelle = _par_le_catalogue(classe, cote, causes.get(cle_))
+                decidees += nouvelle != (classe, cote)
+                classe, cote = nouvelle
             episode = episodes_agents.ouvrir_ou_rafraichir(
                 org_id=panne["org_id"], trigger_id=panne["trigger_id"], classe=classe,
                 cote=cote, motif=panne.get("motif"), job_id=panne.get("job_id"),
@@ -463,15 +514,15 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
             erreurs += 1
             log.warning("médecin des agents : agent %s illisible (%s)",
                         panne.get("trigger_id"), e)
-    incidents = _incidents(plateforme, orgs_en_panne=len(en_panne))
+    incidents = _incidents(plateforme, orgs_en_panne=len({int(p["org_id"]) for p, *_ in relevees}))
     candidats, eteintes = _sans_les_orgs_eteintes(candidats)
     relances, differees = _relacher(candidats, incidents, maintenant)
     return {"pannes": pannes, "relances": relances, "relances_differees": differees,
             "incidents": sorted(incidents), "gueris": len(gueris),
             "gueris_apres_soin": sum(1 for g in gueris if g.get("reparations")),
             "erreurs": erreurs, "tenant_tiers_ecartes": len(ecartees),
-            "reparation_eteinte": eteintes,
-            **_ombre_du_catalogue(vues)}
+            "reparation_eteinte": eteintes, "catalogue_decidees": decidees,
+            **_ombre_du_catalogue(vues, causes)}
 
 
 async def run_medecin_agents_loop(interval: int = INTERVALLE_S) -> None:

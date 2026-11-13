@@ -26,6 +26,9 @@ def base(live, monkeypatch):
         conn.execute("DELETE FROM agent_episodes WHERE org_id = %s", (ORG,))
         conn.execute("DELETE FROM agent_health_settings WHERE org_id = %s", (ORG,))
         conn.execute("DELETE FROM runner_triggers WHERE org_id = %s", (ORG,))
+    monkeypatch.setenv("OTO_ALERTES_SLACK_AGENTS_ENABLED", "1")
+    from oto_mcp import alerte_agents_bloques
+    monkeypatch.setattr(alerte_agents_bloques, "org_a_nous", lambda org, qui: org == ORG)
     monkeypatch.setattr(A, "langue", lambda org: "fr")
     monkeypatch.setattr(A, "marque_de_l_org", lambda org: SimpleNamespace(nom="Acme", langue=""))
 
@@ -57,11 +60,14 @@ def test_un_probleme_par_cause_avec_les_agents_qu_il_arrete(live):
     _panne(a), _panne(b)
     _panne(c, cote="plateforme", classe="refus_passager")
     out = _lire()
-    assert (out["watched"], out["working"]) == (3, 1)
+    assert (out["watched"], out["working"]) == (3, 0)
     (pb,) = out["needs_you"]
     assert "a été refusé" in pb["headline"] and pb["action"] == "connectors"
     assert [x["label"] for x in pb["agents"]] == ["Relances", "Veille"]
-    assert pb["since"] and out["auto_repair"] is True
+    assert pb["since"] and out["auto_repair"] is True and out["covered"] is True
+    (nous,) = out["on_us"]
+    assert nous["side"] == "platform" and [x["label"] for x in nous["agents"]] == ["Leads"]
+    assert "rien à faire du vôtre" in nous["headline"]
 
 
 def test_un_membre_ne_voit_pas_l_agent_d_un_autre(live):
@@ -87,9 +93,8 @@ def test_ce_que_tulina_a_repare_se_lit_avec_sa_phrase(live):
         episodes_agents.poser(int(e["id"]), statut="clos", resolution="gueri")
     fixed = {f["agent"]["label"]: f for f in _lire()["fixed"]}
     assert fixed["Relances"]["what"].startswith("Il s'est arrêté sur une panne passagère")
-    assert fixed["Relances"]["undo"] is False
     assert (fixed["Veille"]["what"], fixed["Veille"]["undo"]) == (
-        "Nous avons ajouté la recherche web.", True)
+        "Nous avons ajouté la recherche web.", False), "aucune route ne défait encore"
 
 
 def test_reparer_mes_agents_nait_allume_et_s_eteint(live):
@@ -110,3 +115,23 @@ def test_eteint_l_agent_medecin_ne_relance_ni_ne_repare(live, monkeypatch):
             AR._agent_repair(ResolvedCtx(sub="medecin"),
                              AR.AgentRepairInput(op=op, episode_id=ep["id"], tool="x"))
         assert e.value.code == "auto_repair_off"
+
+
+def test_une_panne_pas_encore_comprise_est_a_nous(live):
+    _panne(_agent("Relances"), cote="inconnu", classe="inconnu")
+    out = _lire()
+    assert out["needs_you"] == [] and out["working"] == 0
+    assert out["on_us"][0]["side"] == "operator"
+
+
+def test_eteint_la_route_repond_404(live, monkeypatch):
+    monkeypatch.delenv("OTO_ALERTES_SLACK_AGENTS_ENABLED")
+    with pytest.raises(AuthzDenied) as e:
+        _lire()
+    assert (e.value.status, e.value.code) == (404, "agent_alerts_off")
+
+
+def test_une_org_d_un_tenant_tiers_n_est_pas_suivie(live, monkeypatch):
+    from oto_mcp import alerte_agents_bloques
+    monkeypatch.setattr(alerte_agents_bloques, "org_a_nous", lambda org, qui: False)
+    assert _lire()["covered"] is False

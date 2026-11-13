@@ -5,10 +5,6 @@ Une table NEUVE, née entière : `agent_causes` (`db/schema/runs.py::AGENT_CAUSE
 posée aussi par le démarrage (`CREATE TABLE IF NOT EXISTS` de l'assemblage), même DDL.
 Aucune FK, aucune colonne de compte.
 
-Et une table NEUVE, née entière : `agent_health_settings` (`db/schema/runs.py::
-AGENT_HEALTH_SETTINGS`) — « laisser Tulina réparer mes agents », une ligne par org qui a
-choisi ; aucune ligne = allumé.
-
 Et une colonne NEUVE, nullable, sans défaut, sur `agent_episodes` : `empreinte` (la clé de
 la cause de l'épisode) — posée aussi par le démarrage, sous garde de catalogue, même DDL
 (`db/causes_agents.py::DDL_COLONNE_EMPREINTE`).
@@ -21,8 +17,8 @@ qu'une attente qui le bloquerait.
 **Ordre avec le code : indifférent.** Le démarrage pose la même table et la même colonne ;
 l'ancien code les ignore.
 
-Retour arrière : retire la colonne et les tables (le catalogue et ses décisions, et les
-choix « réparer mes agents », se perdent ; les épisodes restent).
+Retour arrière : retire la colonne et la table (le catalogue et ses décisions se perdent ;
+les épisodes restent).
 
 Révision : 20261113_1830_causes_agents
 Précédente : 20261113_1800_usage_org
@@ -32,7 +28,7 @@ from __future__ import annotations
 from alembic import op
 
 from oto_mcp.db import causes_agents
-from oto_mcp.db.schema.runs import AGENT_CAUSES, AGENT_HEALTH_SETTINGS
+from oto_mcp.db.schema.runs import AGENT_CAUSES
 
 revision = "20261113_1830_causes_agents"
 down_revision = "20261113_1800_usage_org"
@@ -46,12 +42,10 @@ def upgrade() -> None:
     op.execute(_ATTENTE_MAX)
     op.execute(causes_agents.DDL_COLONNE_EMPREINTE)
     op.execute(AGENT_CAUSES)
-    op.execute(AGENT_HEALTH_SETTINGS)
 
 
 def downgrade() -> None:
     op.execute(_ATTENTE_MAX)
-    op.execute("DROP TABLE IF EXISTS agent_health_settings")
     op.execute("DROP TABLE IF EXISTS agent_causes")
     op.execute(f"ALTER TABLE agent_episodes DROP COLUMN IF EXISTS "
                f"{causes_agents.COLONNE_EMPREINTE}")

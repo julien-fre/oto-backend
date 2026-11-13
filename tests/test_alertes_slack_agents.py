@@ -469,8 +469,9 @@ def test_trois_agents_arretes_par_la_meme_cause_font_un_message(slack, agent):
     assert (bilan["envoyes"], bilan["messages"]) == (3, 1)
     (post,) = slack.posts
     assert post["text"].startswith("⚠️ 3 agents ne fonctionnent plus depuis")
-    for nom in ("Leads vers l'emailing", "Relances", "Veille"):
-        assert f"*{nom}*" in post["text"]
+    assert f"*<{BASE}/org/{ORG}/agents?agent={agent}|Leads vers l'emailing>*" in post["text"]
+    for t, nom in zip(autres, ("Relances", "Veille")):
+        assert f"*<{BASE}/org/{ORG}/agents?agent={t}|{nom}>*" in post["text"]
     assert post["text"].count("Ajoutez des crédits.") == 1
     assert A.balayer()["envoyes"] == 0, "les trois sont marqués"
 
@@ -503,7 +504,9 @@ def test_les_retours_d_un_passage_partent_ensemble(slack, agent):
         episodes_agents.poser(int(ep["id"]), statut="clos", resolution="gueri")
     bilan = A.balayer()
     assert (bilan["envoyes"], bilan["messages"]) == (2, 1)
-    assert slack.posts[-1]["text"] == "✅ *Leads vers l'emailing*, *Relances* refonctionnent."
+    assert slack.posts[-1]["text"] == (
+        f"✅ *<{BASE}/org/{ORG}/agents?agent={agent}|Leads vers l'emailing>*, "
+        f"*<{BASE}/org/{ORG}/agents?agent={autre}|Relances>* refonctionnent.")
 
 
 def test_la_file_sert_la_copie_de_la_cause(slack, agent):

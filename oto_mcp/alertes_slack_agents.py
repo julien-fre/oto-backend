@@ -283,7 +283,17 @@ AGENTS_NOMMES_MAX = 5
 
 
 def _nommer(eps: list[dict], langue_: str) -> str:
-    noms = [f"*{e.get('libelle') or '#' + str(e['trigger_id'])}*" for e in eps]
+    """Les agents d'un paquet, en gras, chacun LIEN vers sa page quand l'instance la
+    déclare (`agent`) : un message groupé sans geste à lien garde un endroit où cliquer
+    par agent."""
+    from . import links
+
+    def _un(e: dict) -> str:
+        nom = (e.get("libelle") or f"#{e['trigger_id']}").replace("|", "/").replace(">", "›")
+        url = links.link_for("agent", sub=e.get("agent_sub"), org=int(e["org_id"]),
+                             id=int(e["trigger_id"]))
+        return f"*<{url}|{nom}>*" if url else f"*{nom}*"
+    noms = [_un(e) for e in eps]
     if len(noms) > AGENTS_NOMMES_MAX:
         reste = len(noms) - AGENTS_NOMMES_MAX
         noms = noms[:AGENTS_NOMMES_MAX] + [_PHRASES[langue_]["et_autres"].format(n=reste)]

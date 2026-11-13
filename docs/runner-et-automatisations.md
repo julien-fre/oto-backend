@@ -3145,6 +3145,12 @@ passe AVANT l'alerte.
   `catalogue_desaccords` — cause approuvée d'une autre classe ou d'un autre côté que la
   regex —, chacun dit au journal) : la regex décide. Une ombre qui casse ne coûte que son
   bilan (`catalogue_erreur`), jamais le passage.
+  **Le catalogue qui décide** (`OTO_CATALOGUE_CAUSES_DECIDE`, éteint par défaut) : une
+  cause APPROUVÉE range une panne que la regex dit `inconnu` — sa classe et son côté,
+  donc qui l'alerte vise et ce que le client lit (`catalogue_decidees` au bilan). Jamais
+  au-delà : un verdict de la regex n'est pas défait, une classe posée à la main non plus,
+  et une cause ne donne jamais une classe que la boucle relance (`CLASSES_RELANCEES`) —
+  relancer reste décidé par la regex seule.
 - **Ce que lit le client, et combien de fois** (13/11/2026, sous
   `OTO_ALERTES_SLACK_AGENTS_ENABLED`) : le problème servi sur un agent (`problem` de la
   file) et l'alerte Slack prennent, dans cet ordre, la copie de la CAUSE approuvée de
@@ -3161,18 +3167,21 @@ passe AVANT l'alerte.
   agent** (`grouper`) : les alertes d'une org dont le client lirait exactement le même
   problème (titre, geste, lien) partent en UN message qui nomme les agents (cinq, puis
   « et N autres »), avec le bouton du geste et, si l'instance déclare la vue
-  `agent_health`, celui de la santé des agents ; les retours d'un passage partent
-  ensemble ; une réparation part seule. Chaque épisode du paquet est marqué après
+  `agent_health`, celui de la santé des agents — et chaque agent nommé est un lien vers
+  sa page (`agent`) ; les retours d'un passage partent ensemble ; une réparation part seule. Chaque épisode du paquet est marqué après
   l'envoi. Les GESTES (relancer, escalader) restent décidés par la regex.
 - **L'onglet Santé d'une org** (`capabilities/agent_health.py`, 13/11/2026) :
-  `GET /api/orgs/{id}/agent-health` (membres) rend, en quelques requêtes pour toute
-  l'org, les agents allumés que l'appelant voit (`_acces_agent.niveaux`, comme la liste
-  des agents) et combien fonctionnent, `needs_you` — un problème par cause qui attend le
+  `GET /api/orgs/{id}/agent-health` (membres ; 404 `agent_alerts_off` sous le réglage
+  des alertes éteint, comme ses voisines) rend, en quelques requêtes pour toute l'org,
+  les agents allumés que l'appelant voit (`_acces_agent.niveaux`, comme la liste des
+  agents) et combien fonctionnent, `needs_you` — un problème par cause qui attend le
   client, au texte et au regroupement de Slack, avec les agents qu'il arrête et depuis
-  quand —, `fixed` — les épisodes guéris après un geste du médecin ces 30 jours (la note
-  de réparation de l'agent, sinon la phrase d'une relance ; `undo` quand un outil a été
-  ajouté) —, et `auto_repair`. ⚠️ Une panne de notre côté n'y est pas dite : son agent
-  compte comme fonctionnant. `PUT` (admins) pose « laisser Tulina réparer mes agents »
+  quand —, `on_us` — ce qui est à nous, côté plateforme ou pas encore compris, une
+  phrase sans geste : DEUX états comme la carte d'un agent, ces agents-là ne
+  fonctionnent pas non plus —, `fixed` — les épisodes guéris après un geste du médecin
+  ces 30 jours (la note de réparation de l'agent, sinon la phrase d'une relance ; `undo`
+  reste false tant qu'aucune route ne défait), `auto_repair`, et `covered` (false : org
+  d'un tenant tiers, que le médecin ne suit pas). `PUT` (admins) pose « laisser Tulina réparer mes agents »
   (`agent_health_settings`, aucune ligne = ALLUMÉ) : éteint, la boucle ne relance plus
   les agents de l'org (`reparation_eteinte` au bilan ; réglage illisible = aucune
   relance) et un agent hébergé se voit refuser `rerun` et `add_tool`

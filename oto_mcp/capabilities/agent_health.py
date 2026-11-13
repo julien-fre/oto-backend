@@ -14,10 +14,16 @@ coûte quelques requêtes. Un problème se dit avec le texte que reçoit Slack
 texte du médecin, sinon la phrase de la classe) et se regroupe comme lui : les agents
 dont le client lirait exactement le même problème forment UN problème.
 
-⚠️ **Deux états** : un agent fonctionne, ou il attend le client. Une panne de NOTRE côté
-n'est pas dite au client (la règle du 09/11) : son agent compte parmi ceux qui
-fonctionnent, le médecin s'en occupe. Un membre ne voit que les agents qu'il voit dans la
-liste des agents (`_acces_agent.niveaux`) ; un admin les voit tous.
+⚠️ **Deux états, comme la carte d'un agent** (`agent-state.ts` du tableau de bord) : un
+agent fonctionne, ou il ne fonctionne pas. Ne fonctionne pas : soit il attend le CLIENT
+(`needs_you`, côté titulaire : le geste), soit c'est à NOUS (`on_us` : côté plateforme,
+ou pas encore compris — une phrase qui dit qu'on s'en occupe, aucun geste). Un membre ne
+voit que les agents qu'il voit dans la liste des agents (`_acces_agent.niveaux`) ; un
+admin les voit tous.
+
+Sous le réglage d'instance des alertes (`alertes_slack_agents.actives`), comme Réglages ▸
+Alertes et `problem` sur la file : éteint, 404 `agent_alerts_off`. Une org d'un tenant
+tiers n'est pas suivie par le médecin (`covered: false`) : rien ne s'y dit.
 """
 from __future__ import annotations
 
@@ -31,6 +37,18 @@ from ._types import Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
+
+#: Ce qui se dit d'une panne qui est à NOUS, par côté et par langue : aucun geste.
+_A_NOUS = {
+    "plateforme": {
+        "fr": "Un problème de notre côté l'arrête. Nous nous en occupons : rien à faire du vôtre.",
+        "en": "A problem on our side stops it. We are on it: nothing to do on yours."},
+    "inconnu": {
+        "fr": "Nous cherchons pourquoi il s'est arrêté. Nous vous dirons s'il y a quelque "
+              "chose à faire.",
+        "en": "We are looking into why it stopped. We will tell you if there is anything "
+              "to do."},
+}
 
 #: Ce qui se dit d'une relance qui a guéri l'agent, par langue.
 _RELANCE = {
@@ -51,14 +69,19 @@ class AgentHealthSaveInput(BaseModel):
 class AgentHealth(BaseModel):
     """`watched` agents allumés que l'appelant voit, dont `working` fonctionnent ;
     `needs_you` = un problème par cause qui attend le client : `{headline, todo, action,
-    link, since, agents: [{id, label}]}` ; `fixed` = ce que Tulina a réparé ces trente
-    derniers jours, le plus récent d'abord : `{agent: {id, label}, at, what, undo}` ;
-    `auto_repair` = le réglage de l'org."""
+    link, since, agents: [{id, label}]}` ; `on_us` = ce qui est à nous, par côté :
+    `{side: platform|operator, headline, since, agents}` ; `fixed` = ce que Tulina a
+    réparé ces trente derniers jours, le plus récent d'abord : `{agent: {id, label}, at,
+    what, undo}` — `undo` reste false tant qu'aucune route ne défait une réparation ;
+    `auto_repair` = le réglage de l'org ; `covered` = le médecin suit cette org (false :
+    org d'un tenant tiers, rien ne s'y dit)."""
     watched: int
     working: int
     needs_you: list[dict]
+    on_us: list[dict]
     fixed: list[dict]
     auto_repair: bool
+    covered: bool
 
 
 def _visibles(ctx: ResolvedCtx, org_id: int) -> dict[int, dict]:
@@ -81,7 +104,10 @@ def _quand(v: Any) -> Optional[str]:
 
 def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
     from .. import alertes_slack_agents as A
+    from ..alerte_agents_bloques import org_a_nous
     from ..db import sante_agents
+    from .agent_alerts import _exiger_les_alertes
+    _exiger_les_alertes()
     org_id = int(inp.org_id)
     visibles = _visibles(ctx, org_id)
     allumes = {i: t for i, t in visibles.items() if t.get("enabled")}
@@ -89,16 +115,27 @@ def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
     marque = A.marque_de_l_org(org_id).nom
 
     problemes: dict[tuple, dict] = {}
+    a_nous: dict[str, dict] = {}
     for ep in sante_agents.episodes_vivants(org_id):
         t = allumes.get(int(ep["trigger_id"]))
-        if t is None or ep["cote"] != "proprietaire":
+        if t is None:
+            continue
+        if ep["cote"] != "proprietaire":
+            cote = ep["cote"] if ep["cote"] in _A_NOUS else "inconnu"
+            p = a_nous.setdefault(cote, {
+                "side": "platform" if cote == "plateforme" else "operator",
+                "headline": _A_NOUS[cote].get(langue, _A_NOUS[cote]["en"]),
+                "since": ep["ouvert_at"], "agents": []})
+            p["since"] = min(p["since"], ep["ouvert_at"])
+            p["agents"].append({"id": int(t["id"]), "label": _nom(t)})
             continue
         pb = A.message_du_probleme(org_id, ep, langue, marque=marque, sub=ctx.sub)
         cle = (pb["headline"], pb.get("todo"), pb.get("link"), pb.get("action"))
         p = problemes.setdefault(cle, {**pb, "since": ep["ouvert_at"], "agents": []})
         p["since"] = min(p["since"], ep["ouvert_at"])
         p["agents"].append({"id": int(t["id"]), "label": _nom(t)})
-    arretes = {a["id"] for p in problemes.values() for a in p["agents"]}
+    arretes = {a["id"] for p in [*problemes.values(), *a_nous.values()]
+               for a in p["agents"]}
 
     fixed = []
     for ep in sante_agents.reparations_recentes(org_id):
@@ -106,18 +143,19 @@ def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
         if t is None:
             continue
         note = ep.get("repair_note") or {}
-        outil = any((r or {}).get("action") == "add_tool" for r in ep["reparations"] or [])
         fixed.append({"agent": {"id": int(t["id"]), "label": _nom(t)},
                       "at": _quand(ep["clos_at"]),
                       "what": note.get("what") or _RELANCE.get(langue, _RELANCE["en"]),
-                      "undo": bool(outil and note.get("what"))})
+                      "undo": False})
 
     needs_you = sorted(problemes.values(), key=lambda p: p["since"])
-    for p in needs_you:
+    on_us = sorted(a_nous.values(), key=lambda p: p["since"])
+    for p in [*needs_you, *on_us]:
         p["since"] = _quand(p["since"])
     return {"watched": len(allumes), "working": len(set(allumes) - arretes),
-            "needs_you": needs_you, "fixed": fixed,
-            "auto_repair": sante_agents.auto_repair(org_id)}
+            "needs_you": needs_you, "on_us": on_us, "fixed": fixed,
+            "auto_repair": sante_agents.auto_repair(org_id),
+            "covered": org_a_nous(org_id, qui="santé des agents")}
 
 
 def _poser(ctx: ResolvedCtx, inp: AgentHealthSaveInput) -> dict:
