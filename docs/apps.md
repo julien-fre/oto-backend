@@ -353,9 +353,66 @@ par l'hôte, après l'accord du lecteur :
 `rev` est une ETag de contenu (titre, manifeste, HTML, vignette), comme celle des
 pages. `update` et `patch` acceptent `expected_rev` et refusent en 409 `conflict` si l'app a changé.
 Chaque mise à jour écrit d'abord l'état précédent dans `app_revisions` ; seules les
-50 plus récentes sont gardées (`db.apps.MAX_REVISIONS`, purge dans la même
-transaction). `restore` remet une révision (en écrivant à son tour l'état courant),
-après avoir REJUGÉ son manifeste : celui qui restaure en devient l'auteur.
+50 plus récentes révisions ORDINAIRES sont gardées (`db.apps.MAX_REVISIONS`, purge dans la
+même transaction) — une version PUBLIÉE (`published_at`, voir plus bas) a sa propre borne,
+`db.apps.MAX_PUBLISHED` (200), et la purge des ordinaires ne la touche jamais. `restore`
+remet une révision (en écrivant à son tour l'état courant), après avoir REJUGÉ son
+manifeste : celui qui restaure en devient l'auteur, et l'état restauré est une version
+publiée (un retour en arrière délibéré, avec sa `note`). `restore to_draft=true` la met
+au brouillon à la place, pour l'essayer avant de la publier (app à brouillon seulement). `op=revision` rend une
+version ENTIÈRE (manifeste, HTML), aux éditeurs seuls — un HTML d'hier peut porter ce
+qu'on en a retiré — pour la lire ou la comparer avant de la restaurer. Une révision dit
+quand son état a été REMPLACÉ (`created_at`), pas quand il a été écrit.
+
+## Brouillon et publication
+
+Décidé le 12/11/2026 : une app peut passer par un **brouillon**, comme un dépôt passe par
+une branche avant d'arriver sur sa branche principale (`db/app_versions.py`,
+`capabilities/apps_versions.py`).
+
+- **`drafts_enabled`** (`op=set_drafts enabled=…`, écriture sur l'app) : faux par défaut —
+  une app d'avant reste publiée à chaque écriture. Vrai : `update` et `patch` écrivent
+  le manifeste et le HTML au BROUILLON (`apps.draft_*`, sur la ligne de l'app : publier
+  ne verrouille qu'une ligne), et la réponse le dit (`target: "draft"`). Le titre et la
+  vignette — la carte, que la liste montre — restent écrits en direct. Couper le
+  brouillon avec un brouillon en cours est refusé (409 `draft_pending`).
+  Écrire un brouillon dans une app qui n'en a pas est refusé (409 `drafts_off`), jugé
+  sous le verrou de la ligne : un brouillon posé à côté d'écritures vivantes vieillirait
+  sous elles, et sa publication les déferait sans un mot.
+- **Le brouillon a son ETag** (`draft_rev`, préfixé `d`) : `op=get draft=true` le sert
+  (manifeste, HTML, `rev`) ; `update`/`patch` s'écrivent contre lui. Une écriture qui
+  nomme la version PUBLIÉE alors qu'un brouillon existe est refusée (409
+  `draft_exists`) : l'agent a lu une version et écrirait sur une autre. Un `patch` sans
+  `expected_rev` s'applique au brouillon (ou, sans lui, à la version publiée dont il
+  naît) et s'écrit contre le `rev` de ce qu'il a lu.
+- **Qui le voit** : ses éditeurs seuls. `op=get` ne nomme le brouillon (`draft` :
+  `rev`, auteur, date) qu'à qui peut modifier l'app ; `draft=true` refuse un lecteur
+  du même 403 `draft_editors_only` qu'il y ait un brouillon ou non. Aucune carte de liste
+  ne le porte.
+- **L'auteur du brouillon** (`draft_by`) est le dernier à l'avoir écrit, avec la règle
+  d'une écriture de l'app : il doit atteindre ce que le manifeste du brouillon déclare
+  (403 `would_break_app`), un manifeste écrit se juge contre lui.
+- **L'aperçu** : `POST /api/me/apps/{id}/call` et `…/consent` avec `draft: true`, et le
+  dépôt de fichier avec le champ `draft`, ouvrent le brouillon — jugé comme une app à
+  part entière : SON manifeste, SON auteur ∩ le lecteur (éditeur). Un jeton émis pour
+  l'aperçu ne se brûle pas sur l'app publiée (`draft` entre dans l'empreinte, absent
+  quand il est faux : les jetons d'avant restent valides). L'aperçu n'est pas une
+  préproduction : il lit et écrit les VRAIS tableaux et lance les vrais agents.
+- **`op=publish`** (`expected_rev` = le `rev` du brouillon vu, obligatoire ; `note`
+  facultative, 500 caractères) : le manifeste du brouillon est REJUGÉ contre qui publie,
+  qui devient l'auteur de l'app ; l'état remplacé part dans `app_revisions`, l'état
+  publié porte `published_at` et `version_note`, le brouillon est vidé — une
+  transaction, sous le verrou de la ligne. Un brouillon changé depuis l'aperçu est
+  refusé (409 `draft_conflict`). `op=delete_draft` le jette.
+- **L'agent intégré** demande l'accord de la personne avant `publish` et
+  `delete_draft` (`copilot/classement._OP_DESTRUCTRICE`) ; `tools/effets.py` les classe
+  `detruire`, `revision` `lire`.
+- Une écriture DIRECTE du manifeste ou du HTML (app sans brouillon) fait perdre à l'état
+  vivant sa marque de version publiée ; changer la carte la garde.
+
+⚠️ **Base partagée** : tant que la prod tourne un code d'avant ce lot, elle écrit l'état
+vivant en direct et purge les révisions sans voir les versions publiées — n'activer le
+brouillon d'une app qu'une fois le tag en prod.
 
 ## Liste
 

@@ -1198,7 +1198,8 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "oto_admin_unipile_seat": {"lire": "list", "detruire": "release"},
     "oto_admin_user": {"lire": "list get", "detruire": "set_role"},
     "oto_admin_vault_health": "lire",
-    "oto_apps": {"lire": "list get revisions validate read_file", "ecrire": "create update patch unarchive file", "detruire": "archive restore unfile put_file"},
+    # publish rend un brouillon vivant pour tous les lecteurs ; delete_draft le jette.
+    "oto_apps": {"lire": "list get revisions revision validate read_file", "ecrire": "create update patch unarchive file set_drafts", "detruire": "archive restore unfile put_file publish delete_draft"},
     "oto_clear_group": "ecrire",
     "oto_clear_org": "ecrire",
     "oto_clear_project": "ecrire",
