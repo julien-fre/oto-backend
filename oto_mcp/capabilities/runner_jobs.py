@@ -1950,6 +1950,11 @@ CAPABILITIES += [
                           "`reserve` d'un tour d'un modèle journalisé au coût, sur la clé "
                           "de plateforme, quand le quota du jour de l'accord (en µ$) est "
                           "atteint : l'appel n'est pas envoyé, le worker s'arrête"),
+            DeclaredError(429, "daily_spend_limit",
+                          "`reserve` d'un tour sur une clé refacturée quand l'auteur du "
+                          "travail, une de ses équipes ou l'org a atteint une limite de "
+                          "dépense du jour (`access/limite_du_jour`) : l'appel n'est pas "
+                          "envoyé, le worker s'arrête (4xx, non rejoué)"),
             DeclaredError(409, "fleet_not_serving",
                           "`enqueue fleet_id=` désignant une automatisation ni armée ni en "
                           "cours (`draft`, `stopping`, `stopped`…) : l'exécution "

@@ -71,6 +71,12 @@ seule.
 La clé de l'org ou de la personne n'est **jamais** refusée : elle ne consomme pas de
 crédits. Le refus le dit, et dit quand ça reprend.
 
+⚠️ **Portée assumée, à revoir si besoin** : la porte de l'outil refuse TOUTE clé
+refacturée qui gagne, quel que soit le connecteur — y compris un connecteur que le
+commerce ne facture pas à l'appel (un compte de messagerie hébergé, facturé au siège).
+Le cœur ne connaît pas les prix du commerce ; resserrer la porte demanderait que le
+commerce pousse aussi la liste des connecteurs concernés.
+
 ## 5. Choix assumés
 
 - **Fail-open**, à l'inverse de la suspension : une limite est un garde-fou que le client
