@@ -2914,7 +2914,7 @@ le même geste qu'une perte qui continue ce matin.
 `last_run` (sa dernière occurrence `{status, due_at, finished_at}` sur 35 jours —
 `status` celui de la file : l'occurrence a-t-elle tourné, pas ce que l'agent a conclu,
 le run lié au travail étant celui du worker) et `last_done_at` (la fin de son dernier
-passage réussi), lus en une requête pour toute la liste (`db.derniers_travaux`).
+passage réussi), lus en deux requêtes pour toute la liste (`db.derniers_travaux`).
 La seule autre réponse était la liste des runs de l'org (`oto_org_monitoring
 op=runs`), qui s'arrête aux cent plus récents : un agent toutes les quinze minutes la
 remplit en une dizaine d'heures, et un agent de veille y cherchant le soir le passage

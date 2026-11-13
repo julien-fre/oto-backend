@@ -623,7 +623,7 @@ DERNIERS_TRAVAUX_JOURS = 35
 def derniers_travaux(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
     """« Cet agent a-t-il tourné ? », servi AVEC l'agent : par déclencheur, sa
     dernière occurrence (`last_run` : `{status, due_at, finished_at}`) et la
-    fin de son dernier passage réussi (`last_done_at`), en UNE lecture pour toute
+    fin de son dernier passage réussi (`last_done_at`), en DEUX lectures pour toute
     la liste. Chaque id demandé est présent ; `None` = rien sur
     `DERNIERS_TRAVAUX_JOURS` jours.
 
@@ -641,43 +641,50 @@ def derniers_travaux(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
     cles = [str(i) for i in ids]
     filtre = PREDICAT_DECLENCHEUR.replace("payload", "j.payload")
     with _connect() as conn:
-        # UNE passe agrégée (pas de tri de toute la fenêtre, que `DISTINCT ON` payait),
-        # puis, par agent, la ligne de sa dernière échéance retrouvée sur
-        # `(org_id, due_at)` — une égalité d'index, pas un parcours.
-        rows = conn.execute(
+        # Une passe AGRÉGÉE (pas de tri de toute la fenêtre, que `DISTINCT ON` payait),
+        # puis les lignes des seules dernières échéances, retrouvées par égalité sur
+        # `(org_id, due_at)` : deux lectures pour toute la liste, jamais une par agent.
+        derniers = conn.execute(
             f"""
-            WITH m AS (
-                SELECT j.payload->>'trigger_id' AS trigger_id,
-                       MAX(j.due_at) AS due_at,
-                       MAX(j.finished_at) FILTER (WHERE j.status = 'done') AS last_done_at
-                  FROM runner_jobs j
-                 WHERE j.org_id = %s AND j.kind = 'start'
-                   AND j.due_at >= NOW() - make_interval(days => %s)
-                   AND {filtre} AND j.payload->>'trigger_id' = ANY(%s)
-                 GROUP BY 1
-            )
-            SELECT m.trigger_id, m.due_at, m.last_done_at, d.status, d.finished_at
-              FROM m
-              CROSS JOIN LATERAL (
-                SELECT j.status, j.finished_at
-                  FROM runner_jobs j
-                 WHERE j.org_id = %s AND j.due_at = m.due_at AND j.kind = 'start'
-                   AND {filtre} AND j.payload->>'trigger_id' = m.trigger_id
-                 ORDER BY j.id DESC
-                 LIMIT 1
-              ) d
+            SELECT j.payload->>'trigger_id' AS trigger_id,
+                   MAX(j.due_at)::text AS echeance,
+                   MAX(j.finished_at) FILTER (WHERE j.status = 'done') AS last_done_at
+              FROM runner_jobs j
+             WHERE j.org_id = %s AND j.kind = 'start'
+               AND j.due_at >= NOW() - make_interval(days => %s)
+               AND {filtre} AND j.payload->>'trigger_id' = ANY(%s)
+             GROUP BY 1
             """,
-            (org_id, DERNIERS_TRAVAUX_JOURS, cles, org_id),
+            (org_id, DERNIERS_TRAVAUX_JOURS, cles),
         ).fetchall()
-    par_id = {int(r["trigger_id"]): r for r in rows}
+        lignes = conn.execute(
+            f"""
+            SELECT j.id, j.payload->>'trigger_id' AS trigger_id, j.due_at::text AS echeance,
+                   j.due_at, j.status, j.finished_at
+              FROM runner_jobs j
+             WHERE j.org_id = %s AND j.kind = 'start'
+               AND j.due_at = ANY(%s::timestamptz[])
+               AND {filtre} AND j.payload->>'trigger_id' = ANY(%s)
+            """,
+            (org_id, [r["echeance"] for r in derniers], cles),
+        ).fetchall() if derniers else []
+    # L'échéance voyage en `::text` pleine précision : `_str_dict_row` rend `due_at`
+    # tronqué à la seconde, et deux travaux d'une même seconde ne s'y distingueraient pas.
+    echeance = {r["trigger_id"]: r["echeance"] for r in derniers}
+    fins = {r["trigger_id"]: r["last_done_at"] for r in derniers}
+    occurrence: dict[str, dict] = {}
+    for r in lignes:
+        t = r["trigger_id"]
+        if r["echeance"] == echeance.get(t) and (t not in occurrence or r["id"] > occurrence[t]["id"]):
+            occurrence[t] = r
     sortie: dict[int, dict] = {}
     for i in ids:
-        r = par_id.get(i)
+        r = occurrence.get(str(i))
         sortie[i] = {
             "last_run": None if r is None else {
                 "status": r["status"], "due_at": r["due_at"],
                 "finished_at": r["finished_at"]},
-            "last_done_at": None if r is None else r["last_done_at"],
+            "last_done_at": fins.get(str(i)),
         }
     return sortie
 
