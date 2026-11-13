@@ -133,3 +133,39 @@ def test_un_auteur_qui_ne_peut_pas_partager_ne_sert_pas_le_tableau(monde):
     with pytest.raises(AuthzDenied):
         _appel(m, m["use"], action="read_rows", table="leads")
     assert db.apps.get_for_call(m["app"]) is not None
+
+
+def test_l_invite_dont_l_espace_est_suspendu_ouvre_toujours_l_app(monde):
+    """Une app se juge par l'org de l'APP : la maison suspendue d'un invité du dehors
+    (essai fini) n'éteint pas l'app d'une org qui paie ; l'org de l'app suspendue la
+    ferme à tous."""
+    from oto_mcp import org_store, org_suspension
+    from oto_mcp.capabilities import apps as A
+    from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+    m = monde
+    _partager(m, f"{m['use']}@example.test", "contributor")
+    maison = org_store.ensure_home_org(m["use"], f"{m['use']}@example.test")
+    assert maison != m["org"]
+    ctx = ResolvedCtx(sub=m["use"], org_id=maison)
+    org_store.suspend_org(maison, by="test", reason="trial")
+    org_suspension.invalider()
+    # La garde de l'adaptateur la laisse passer ; le handler juge l'org de l'app.
+    org_suspension.garde_capacite("me.app.call", ctx)
+    org_suspension.garde_capacite("me.app", ctx)
+    assert A._app(ctx, A.AppInput(op="get", app_id=m["app"]))["app"]["can_use"] is True
+    assert [r["name"] for r in _appel(m, m["use"], action="read_rows", table="leads")["rows"]] == ["Acme"]
+    # Lister ou créer reste jugé par l'org de l'appel, la maison suspendue.
+    with pytest.raises(AuthzDenied) as e:
+        A._app(ctx, A.AppInput(op="list"))
+    assert e.value.code == "org_suspended"
+
+    org_store.suspend_org(m["org"], by="test", reason="trial")
+    org_suspension.invalider()
+    for geste in (lambda: A._app(ctx, A.AppInput(op="get", app_id=m["app"])),
+                  lambda: _appel(m, m["use"], action="read_rows", table="leads")):
+        with pytest.raises(AuthzDenied) as e:
+            geste()
+        assert e.value.code == "org_suspended"
+    org_store.resume_org(maison)
+    org_store.resume_org(m["org"])
+    org_suspension.invalider()

@@ -354,7 +354,14 @@ def _org_list(ctx: ResolvedCtx, archived: bool) -> tuple[list[dict], set[int]]:
 
 
 def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
+    from .. import org_suspension
+
     sub = ctx.sub
+    # Jugée ici, pas dans l'adaptateur (`org_suspension.JUGEES_PAR_L_APP`) : lister,
+    # valider une app à créer ou créer, par l'org de l'appel ; tout geste sur une app
+    # existante, par l'org de l'APP (plus bas, après `_app_or_404`).
+    if inp.op in ("list", "create") or (inp.op == "validate" and inp.app_id is None):
+        org_suspension.exiger(ctx.org_id)
 
     if inp.op == "list":
         ids = list(inp.project_ids or ([] if inp.project_id is None else [inp.project_id]))
@@ -378,6 +385,8 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         # manifeste à corriger (chaque appel y paraîtrait hors manifeste).
         app = _app_or_404(sub, inp.app_id, "read") if inp.app_id is not None else None
         org = org_de_l_app(app) if app is not None else ctx.org_id
+        if app is not None:
+            org_suspension.exiger(org)
         clean, problems = _problemes(sub, org, inp.manifest)
         out: dict = {"ok": not problems, "problems": problems}
         if not problems:
@@ -409,6 +418,7 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
 
     row = _app_or_404(sub, inp.app_id,
                       "read" if inp.op in ("get", "revisions", "read_file", "put_file") else "write")
+    org_suspension.exiger(org_de_l_app(row))
 
     if inp.op == "get":
         view = _view(sub, row)

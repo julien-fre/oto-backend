@@ -51,6 +51,11 @@ d'`ownership` (`apps.owner_type/owner_id`, partages dans `resource_grants`,
   propriétaire, admin, gérant). Les partages `viewer` d'avant le 13/11 sont restés
   View : ils ne cliquent plus. Transférer l'app à l'org ou à une équipe la rend à tous
   leurs membres (propriétaires : ils cliquent).
+- **Un invité de l'extérieur** (pas membre de l'org de l'app) reçoit l'app seule, View
+  ou Use, par son lien — il ne rejoint pas l'org. L'app se juge par l'org de l'APP, pas
+  par son espace à lui (`docs/orgs-suspendues.md` §3) ; il ne lance pas les agents de
+  l'auteur (réservés aux membres). Le front l'ouvre en plein écran, sans le reste de
+  Tulina (`/apps/<id>`).
 - **L'org d'une app** (`apps_manifeste.org_de_l_app`) est celle de son propriétaire :
   l'org, l'org de l'équipe, et pour une app perso l'org où elle a été créée (sinon
   l'org perso de la personne). C'est là que vivent ses tableaux et ses agents, et là

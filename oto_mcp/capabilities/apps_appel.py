@@ -265,10 +265,15 @@ def peut_cliquer(sub: str, app_id: int) -> bool:
 
 def _app_pour(ctx: ResolvedCtx, app_id: int, draft: bool = False,
               geste_: bool = False) -> dict:
+    from .. import org_suspension
+
     app = db.apps.get_for_call(int(app_id))
     if (app is None or app.get("archived_at") is not None
             or not ownership.can_access(ctx.sub, APP_RTYPE, str(app["id"]), "read")):
         raise _refus(404, "unknown_app", f"App {app_id} doesn't exist or isn't shared with you.")
+    # L'org de l'APP, pas celle de l'appel : un invité de l'extérieur l'ouvre depuis son
+    # espace à lui (`org_suspension.JUGEES_PAR_L_APP`).
+    org_suspension.exiger(org_de_l_app(app))
     if draft:
         # L'APERÇU du brouillon (`docs/apps.md` § Brouillon et publication) : ses seuls
         # éditeurs l'ouvrent, et il se juge comme une app à part entière — SON
