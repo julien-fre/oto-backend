@@ -300,6 +300,8 @@ ga4_metadata	-	54cf7b5b88bb5d4d
 ga4_properties	-	9b08acf0180a7c4c
 ga4_realtime	-	9a9f1fe817ed560a
 ga4_report	-	04e2f4c1400e66d4
+gemini_image	estimate list_models	ca73694214b9f8e0
+gemini_image_act	create_image	cb1912ec6f665ff4
 github_act	create_branch	bad269b2d63e7a1e
 github_actions	artifact artifacts cancel delete_artifact delete_run dispatch download job jobs logs rerun rerun_failed run runs workflow workflows	b5ab722d87762b7b
 github_files	delete list read readme write	551b191d35304f2e

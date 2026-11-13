@@ -328,6 +328,7 @@ chemins = [
   "oto_mcp/db/org_d_inscription.py",
   "oto_mcp/db/paths.py",
   "oto_mcp/db/platform_key_rate.py",
+  "oto_mcp/db/usage_org.py",
   "oto_mcp/db/platform_instructions.py",
   "oto_mcp/db/portee.py",
   "oto_mcp/db/query.py",

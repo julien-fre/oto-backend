@@ -321,6 +321,8 @@ CLASSEMENT: dict[str, Table] = {
     "limite_refus_jour": instance("palmarès des refus des limiteurs de l'instance "
                                   "(#1232) : empreintes, trente jours"),
     "usage": possedee(ParSub(), "compteurs par compte, sans org"),
+    "usage_org": possedee(ParOrg(), "compteur du jour de l'org sur une clé plateforme "
+                          "à quota par org"),
     "usage_signals": possedee(_ORG_OU_COMPTE),
     "usage_signal_occurrences": indirecte(Via("usage_signals", ("signal_id",)),
                                           comptes=("sub",)),

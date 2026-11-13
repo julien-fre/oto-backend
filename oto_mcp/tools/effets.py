@@ -426,6 +426,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "ga4_properties": "lire",
     "ga4_realtime": "lire",
     "ga4_report": "lire",
+    "gemini_image_act": {"ecrire": "create_image"},
     "github_act": {"ecrire": "create_branch"},
     # dispatch/rerun trigger real runs (builds, deployments)
     "github_actions": {"lire": "workflows workflow runs run jobs job logs artifacts artifact download", "envoyer": "dispatch rerun rerun_failed", "detruire": "cancel delete_run delete_artifact"},
@@ -1535,6 +1536,8 @@ PAS_UN_LOT: dict[str, str] = {
     "fullenrich_enrich_linkedin": "enrich_fields",
     "ga4_realtime": "metrics dimensions order_by",
     "ga4_report": "metrics dimensions order_by",
+    # the input images of ONE generation, not a batch of generations
+    "gemini_image_act": "images",
     "github_issues": "labels",
     "gmail": "attachments",
     "gmail_act": "message_ids attachments",

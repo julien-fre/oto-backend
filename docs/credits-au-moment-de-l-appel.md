@@ -56,12 +56,21 @@ son propre relevé ; l'enveloppe ne reçoit jamais `CLES_REGLEMENT`) et `jev_job
 
 | l'arête qui sert | le compte du refus |
 | --- | --- |
+| toute arête, connecteur à quota **par org** (`Connector.grant_quota_per = "org"`) | `usage_org(org_id, tool, day)`, l'org de l'appel, tous ses membres ensemble |
 | `user` (connecteur chaîné) | son compteur d'arête, arêtes archivées comprises |
 | `org` ou `group` | `usage(sub, tool, day)`, par personne |
 | aucune (chaîne muette, connecteur non chaîné) | `usage(sub, tool, day)`, par personne |
 
 Le refus, la sonde (`platform_quota_hint`), le mode affiché et l'instantané `/api/me`
-lisent ce même nombre. Là où la chaîne accorde ou refuse, l'ancien chemin n'est plus lu,
+lisent ce même nombre.
+
+Un connecteur à quota par org est une décision par connecteur : sa clé partagée est
+facturée au coût à l'org, donc l'octroi plafonne l'org, pas chacun de ses membres. Le
+barreau plateforme nomme alors `org_counter` (l'org de l'appel, quelle que soit la
+portée qui accorde ; sans org, la clé n'est pas servie), et le règlement débite le
+compteur de la même org (`scope.current_org`, la couture que lit la résolution) par un
+seul upsert atomique, en plus de l'historique par personne. Seul `gemini_image` le déclare
+(`tests/test_quota_par_org.py`). Là où la chaîne accorde ou refuse, l'ancien chemin n'est plus lu,
 et le journal d'écart (accès, quota, compteur) disparaît avec lui. Le compteur d'une
 arête d'org continue d'être débité : c'est la consommation de l'org entière, lue par
 l'administration des arêtes.

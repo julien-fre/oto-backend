@@ -353,6 +353,10 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `elevenlabs` by situation (media production): images and video
     # clips generated on the customer's prepaid Higgsfield balance — wired 2026-10-28.
     "higgsfield",
+    # Neighbour of `higgsfield` by situation (media production): images generated and
+    # edited by Google's Gemini image models (Nano Banana), billed at the tokens Google
+    # counted — wired 2026-11-09.
+    "gemini_image",
     # --- document management (GED), read-only — wired 2026-10-20 -------------
     # The documents a company keeps indexed in Zeendoc (supplier invoices…): a
     # Zeendoc user's login and password and the cabinet id travel together.

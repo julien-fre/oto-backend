@@ -101,6 +101,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.connectors.ACCOUNT_RULES,  # règles d'accès des comptes de connecteur, et leur journal
     schema.runs.AGENT_ALERT_SETTINGS,  # où une org est prévenue qu'un agent ne fonctionne plus
     schema.orgs.ORG_FAVORITES,       # pages et tableaux épinglés pour tous les membres d'une org
+    schema.usage.USAGE_ORG,          # compteur du jour d'une org sur une clé plateforme à quota par org
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)
