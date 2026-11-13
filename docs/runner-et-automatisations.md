@@ -3196,14 +3196,35 @@ passe AVANT l'alerte.
   carte de l'agent n'en dit rien non plus, son agent compte comme fonctionnant — puis se
   dit par sa propre phrase, `lasting` : la ligne grise de D3, dans l'onglet seulement, ni
   Slack ni courriel pour nos pannes —, `fixed` — les épisodes guéris après un geste du médecin
-  ces 30 jours (la note de réparation de l'agent, sinon la phrase d'une relance ; `undo`
-  reste false tant qu'aucune route ne défait), `auto_repair`, et `covered` (false : org
+  ces 30 jours (la note de réparation de l'agent, sinon la phrase d'une relance ;
+  `episode_id`, `undo`, `undone`, ci-dessous), `auto_repair`, et `covered` (false : org
   d'un tenant tiers, que le médecin ne suit pas). `PUT` (admins) pose « laisser Tulina réparer mes agents »
   (`agent_health_settings`, aucune ligne = ALLUMÉ) : éteint, la boucle ne relance plus
   les agents de l'org (`reparation_eteinte` au bilan ; réglage illisible = aucune
   relance) et un agent hébergé se voit refuser `rerun` et `add_tool`
   (`auto_repair_off`) ; un opérateur garde la main, les épisodes et les messages
   continuent.
+- **Défaire une réparation** (14/11/2026) : `POST /api/orgs/{id}/agent-health/undo`
+  `{episode_id}` (membres, sous le même réglage) — seul l'ajout d'un outil de lecture par
+  le médecin (`add_tool`) se défait ; une relance, non. Permis à qui peut MODIFIER l'agent
+  (`_acces_agent.exiger(ECRIRE)` : propriétaire, admin, éditeur ; un agent invisible est
+  404 `trigger_not_found`, un lecteur 403 `trigger_edit_forbidden`, comme un agent sur le
+  forfait personnel d'autrui sans prêt — le `can_edit` de la liste des agents) ; un
+  épisode d'une autre org est 404 `episode_not_found`, un épisode sans ajout à défaire (ou
+  déjà défait) 404 `repair_not_undoable`. Dans l'ordre : la marque durable
+  `runner_triggers.repair_undone_tools` (colonne JSONB, révision
+  `20261114_0900_outils_annules` et démarrage, hors de `_COLS` ; idempotente, posée
+  d'abord) ; l'annulation s'écrit sur l'épisode (`reparations` : `{action: annulation,
+  acteur, outils, detail}`, sous garde dans le WHERE — deux clics, un geste ; l'épisode
+  garde son statut, clos reste clos) ; l'outil sort des outils
+  de l'agent s'il y est encore (`updated_by` = la personne) ; la note « réparé par
+  Tulina » (`repair_note`) s'efface si elle date de cet épisode. Rend la santé relue.
+  Ensuite le médecin ne redonne plus cet outil à cet agent : `add_tool` → 409
+  `repair_undone`, et `missing_tools` le dit (`undone: true`) ; un ajout défait ne
+  compte plus comme réparation pour `rerun`. L'outil ajouté est rangé à part sur le geste
+  (`outil`, en plus du `detail` « + <outil> », qui reste lu pour les gestes d'avant).
+  Dans `GET`, chaque `fixed` porte `episode_id`, `undo` (un ajout pas encore défait, sur
+  un agent que l'appelant peut modifier) et `undone` (défaite : `what` le dit).
 - **L'écran Admin des causes** (`capabilities/agent_causes_admin.py`, 13/11/2026) :
   `GET /api/admin/agent-causes` (`status`, `limit`) et `PUT /api/admin/agent-causes/{key}`
   (`status`, `classe`, `cote`, `client_copy` par langue), admin plateforme, REST

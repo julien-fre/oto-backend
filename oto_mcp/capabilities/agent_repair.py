@@ -148,18 +148,19 @@ def _contexte(ep: dict) -> tuple[Optional[dict], Optional[dict]]:
     return agent, job
 
 
-#: Les gestes qui CHANGENT l'agent — après l'un d'eux, la relance est permise même du
-#: côté du titulaire : c'est précisément ce qui vient d'être réparé.
-_REPARATIONS = ("ajout_outil",)
-
-
 def _outils_manquants(t: dict, org_id: int) -> list[dict]:
     """Ce que la procédure de l'agent et les recettes qu'elle lance appellent, hors de ses
-    outils — `[{tool, called_by, read}]` (la même lecture que `missing_tools` d'oto_trigger)."""
+    outils — `[{tool, called_by, read, undone}]` (la même lecture que `missing_tools`
+    d'oto_trigger). `undone` : quelqu'un qui peut modifier l'agent a défait cet ajout du
+    médecin — `add_tool` le refuse (`repair_undone`)."""
     from . import runner_triggers as cap_triggers
     from .. import tool_registry
-    return [{"tool": nom, "called_by": par, "read": tool_registry.effet_de(nom) == "read"}
-            for nom, par in cap_triggers._outils_non_accordes(org_id, t)]
+    from ..db import runner_triggers as db_triggers
+    manquants = cap_triggers._outils_non_accordes(org_id, t)
+    annules = db_triggers.outils_annules(int(t["id"]), org_id) if manquants else set()
+    return [{"tool": nom, "called_by": par, "read": tool_registry.effet_de(nom) == "read",
+             "undone": nom in annules}
+            for nom, par in manquants]
 
 
 def _ajouter_un_outil(ctx: ResolvedCtx, ep: dict, inp: AgentRepairInput) -> dict:
@@ -186,6 +187,13 @@ def _ajouter_un_outil(ctx: ResolvedCtx, ep: dict, inp: AgentRepairInput) -> dict
         raise AuthzDenied(400, "client_note_required",
                           "`client_note` : ce que tu as changé, en une phrase pour le client.")
     outil = deprecations.tool_canonique(inp.tool.strip())
+    from ..db import runner_triggers as db_triggers
+    if outil in db_triggers.outils_annules(tid, org_id):
+        # Une personne qui peut modifier l'agent a défait cet ajout (onglet Santé,
+        # `agent_health._defaire`) : le redonner défairait SON geste.
+        raise AuthzDenied(409, "repair_undone",
+                          f"`{outil}` a été retiré de cet agent par une personne après ton "
+                          "ajout : ne le redonne pas — escalade au titulaire.")
     manquants = {m["tool"]: m for m in _outils_manquants(t, org_id)}
     if outil not in manquants:
         return {"episode": ep, "refus": (
@@ -197,8 +205,8 @@ def _ajouter_un_outil(ctx: ResolvedCtx, ep: dict, inp: AgentRepairInput) -> dict
             f"`{outil}` n'est pas une lecture : donner un outil qui écrit ou envoie revient "
             "au titulaire de l'agent — escalade-le"),
             "missing_tools": list(manquants.values())}
-    if episodes_agents.noter_reparation(int(ep["id"]), action="ajout_outil",
-                                        acteur=ctx.sub, detail=f"+ {outil}",
+    if episodes_agents.noter_reparation(int(ep["id"]), action=episodes_agents.AJOUT_OUTIL,
+                                        acteur=ctx.sub, detail=f"+ {outil}", outil=outil,
                                         maximum=5) is None:
         return {"episode": episodes_agents.lire(int(ep["id"])),
                 "refus": "épisode clos, ou plafond d'ajouts atteint"}
@@ -366,8 +374,10 @@ def _agent_repair(ctx: ResolvedCtx, inp: AgentRepairInput) -> dict:
             return {"episode": ep, "relance": False, "refus": "épisode clos"}
         if t is None or not t.get("enabled"):
             return {"episode": ep, "relance": False, "refus": "agent éteint ou supprimé"}
-        repare = any((r or {}).get("action") in _REPARATIONS
-                     for r in (ep.get("reparations") or []))
+        # Le geste qui CHANGE l'agent (`ajout_outil`) : après lui, la relance est permise
+        # même du côté du titulaire — c'est ce qui vient d'être réparé. Un ajout qu'une
+        # personne a défait ne compte plus.
+        repare = bool(episodes_agents.outils_a_defaire(ep.get("reparations")))
         if ep["cote"] == "proprietaire" and not repare:
             return {"episode": ep, "relance": False,
                     "refus": "panne du côté du titulaire : relancer ne la répare pas"}
@@ -439,13 +449,16 @@ CAPABILITIES += [
             "the workspace's language, shown on the agent in the app and sent to the "
             "org's Slack) / escalate (hand "
             "it to a human, with your `diagnostic`) / close (`resolution`). "
-            "op=get also serves `missing_tools` ([{tool, called_by, read}]: what its "
-            "procedure or a published recipe it runs calls and the agent lacks). ONE "
+            "op=get also serves `missing_tools` ([{tool, called_by, read, undone}]: what "
+            "its procedure or a published recipe it runs calls and the agent lacks). ONE "
             "undoable repair, written on the episode before it is done and told to the "
             "client: add_tool (`tool`: ONE read tool from `missing_tools` — never a tool "
             "that writes or sends; `client_note`, one plain sentence in the workspace's "
             "language, required, served on the agent as `repair`). After it, `rerun` is "
-            "allowed even on an owner-side episode. Nothing here touches a key, an "
+            "allowed even on an owner-side episode. Someone who can edit the agent may "
+            "UNDO it from the Health tab: the tool is removed, and add_tool refuses that "
+            "tool on that agent from then on (409 `repair_undone`, `undone: true` in "
+            "`missing_tools`) — escalate instead. Nothing here touches a key, an "
             "identity, a procedure, a schedule or any data: those fixes belong to the "
             "agent's owner — say what they are in `diagnostic`. The CAUSE CATALOGUE "
             "(in shadow: it decides nothing yet, the loop compares it with its own "

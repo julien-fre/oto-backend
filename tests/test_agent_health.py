@@ -5,7 +5,8 @@ arrête ; une panne de notre côté ne se dit qu'après six heures (D3), à part
 et son agent compte d'ici là comme fonctionnant ;
 un membre ne voit que les agents qu'il voit ; ce que Tulina a réparé se lit avec sa
 phrase ; « laisser Tulina réparer mes agents » naît allumé, s'éteint, et la boucle comme
-l'agent médecin s'y tiennent.
+l'agent médecin s'y tiennent ; un ajout d'outil du médecin se défait par qui peut modifier
+l'agent, et le médecin ne le redonne plus.
 """
 from __future__ import annotations
 
@@ -93,7 +94,9 @@ def test_ce_que_tulina_a_repare_se_lit_avec_sa_phrase(live):
     fixed = {f["agent"]["label"]: f for f in _lire()["fixed"]}
     assert fixed["Relances"]["what"].startswith("Il s'est arrêté sur une panne passagère")
     assert (fixed["Veille"]["what"], fixed["Veille"]["undo"]) == (
-        "Nous avons ajouté la recherche web.", False), "aucune route ne défait encore"
+        "Nous avons ajouté la recherche web.", False), "un geste sans outil ne se défait pas"
+    assert fixed["Relances"]["undo"] is False, "une relance ne se défait pas"
+    assert fixed["Relances"]["undone"] is False
 
 
 def test_reparer_mes_agents_nait_allume_et_s_eteint(live):
@@ -152,3 +155,115 @@ def test_une_panne_de_notre_cote_qui_dure_six_heures_se_dit_autrement(live):
     assert "rien à faire du vôtre" in plateforme["headline"]
     assert operateur["lasting"] is False, "D3 : la plateforme seulement"
     assert "six heures" not in operateur["headline"]
+
+
+# ── Défaire la réparation du médecin (`POST …/agent-health/undo`) ───────────────
+
+def _repare(agent, outil="serper_search"):
+    """Un épisode guéri après un ajout d'outil du médecin, comme `add_tool` l'écrit."""
+    from oto_mcp.db import episodes_agents, runner_triggers as rt
+    ep = _panne(agent, cote="inconnu", classe="inconnu")
+    episodes_agents.noter_reparation(ep["id"], action="ajout_outil", acteur="medecin",
+                                     detail=f"+ {outil}", outil=outil, maximum=5)
+    t = rt.get_trigger(agent, ORG)
+    rt.update_trigger(agent, ORG, {"tools": list(t["tools"]) + [outil]}, par="medecin")
+    rt.noter_reparation_pour_le_client(agent, ORG, "Nous avons ajouté la recherche web.")
+    episodes_agents.poser(int(ep["id"]), statut="clos", resolution="gueri")
+    return ep
+
+
+def _defaire(episode_id, sub="jane"):
+    return H._defaire(ResolvedCtx(sub=sub, org_id=ORG),
+                      H.AgentHealthUndoInput(org_id=ORG, episode_id=episode_id))
+
+
+def test_defaire_retire_l_outil_et_le_medecin_ne_le_redonne_plus(live, monkeypatch):
+    from oto_mcp.db import episodes_agents, runner_triggers as rt
+    a = _agent("Veille")
+    ep = _repare(a)
+    (f,) = _lire()["fixed"]
+    assert (f["episode_id"], f["undo"], f["undone"]) == (ep["id"], True, False)
+
+    out = _defaire(ep["id"])
+    t = rt.get_trigger(a, ORG)
+    assert t["tools"] == ["a"], "l'outil ajouté sort des outils de l'agent"
+    assert t["repair"] is None, "l'agent ne se dit plus « réparé par Tulina »"
+    assert rt.outils_annules(a, ORG) == {"serper_search"}, "la marque durable"
+    (f,) = out["fixed"]
+    assert (f["undo"], f["undone"]) == (False, True)
+    assert "annulé" in f["what"]
+    lu = episodes_agents.lire(ep["id"])
+    assert lu["statut"] == "clos", "défaire ne rouvre pas l'épisode"
+    assert lu["reparations"][-1]["action"] == "annulation"
+    assert lu["reparations"][-1]["outils"] == ["serper_search"]
+
+    with pytest.raises(AuthzDenied) as e:
+        _defaire(ep["id"])
+    assert (e.value.status, e.value.code) == (404, "repair_not_undoable"), "une fois"
+
+    # Le médecin, sur une panne suivante du même agent, ne redonne pas cet outil.
+    from oto_mcp import tool_registry
+    from oto_mcp.capabilities import agent_repair as AR, runner_triggers as RT
+    monkeypatch.setattr(RT, "_outils_non_accordes",
+                        lambda org, t: [("serper_search", "procedure")])
+    monkeypatch.setitem(tool_registry._EFFETS, "serper_search", "read")
+    suivant = _panne(a, cote="inconnu", classe="inconnu")
+    get = AR._agent_repair(ResolvedCtx(sub="medecin"),
+                           AR.AgentRepairInput(op="get", episode_id=suivant["id"]))
+    assert get["missing_tools"][0]["undone"] is True
+    with pytest.raises(AuthzDenied) as e:
+        AR._agent_repair(ResolvedCtx(sub="medecin"), AR.AgentRepairInput(
+            op="add_tool", episode_id=suivant["id"], tool="serper_search",
+            client_note="Nous avons ajouté la recherche web."))
+    assert (e.value.status, e.value.code) == (409, "repair_undone")
+    assert rt.get_trigger(a, ORG)["tools"] == ["a"]
+
+
+def test_un_outil_deja_retire_a_la_main_se_defait_quand_meme(live):
+    from oto_mcp.db import runner_triggers as rt
+    a = _agent("Veille")
+    ep = _repare(a)
+    rt.update_trigger(a, ORG, {"tools": ["a"]}, par="jane")
+    _defaire(ep["id"])
+    assert rt.outils_annules(a, ORG) == {"serper_search"}
+
+
+def test_sans_droit_de_modifier_on_ne_defait_pas(live):
+    from oto_mcp import ownership
+    from oto_mcp.db import runner_triggers as rt
+    lu, cache = _agent("Partagé", sub="bob"), _agent("Caché", sub="bob")
+    ep_lu, ep_cache = _repare(lu), _repare(cache)
+    ownership.grant("runner_trigger", str(lu), "user", "jane", "read", granted_by="bob")
+    (f,) = _lire()["fixed"]
+    assert (f["agent"]["id"], f["undo"]) == (lu, False), "un lecteur voit, sans défaire"
+    with pytest.raises(AuthzDenied) as e:
+        _defaire(ep_lu["id"])
+    assert (e.value.status, e.value.code) == (403, "trigger_edit_forbidden")
+    with pytest.raises(AuthzDenied) as e:
+        _defaire(ep_cache["id"])
+    assert (e.value.status, e.value.code) == (404, "trigger_not_found")
+    assert "serper_search" in rt.get_trigger(lu, ORG)["tools"]
+    assert rt.outils_annules(lu, ORG) == set()
+
+
+def test_un_episode_d_une_autre_org_ou_une_relance_ne_se_defont_pas(live):
+    from oto_mcp.db import episodes_agents
+    ep = _panne(_agent("Relances"), cote="plateforme", classe="refus_passager")
+    episodes_agents.noter_reparation(ep["id"], action="relance", acteur="medecin", job_id=1)
+    episodes_agents.poser(int(ep["id"]), statut="clos", resolution="gueri")
+    with pytest.raises(AuthzDenied) as e:
+        _defaire(ep["id"])
+    assert e.value.code == "repair_not_undoable"
+    with pytest.raises(AuthzDenied) as e:
+        H._defaire(ResolvedCtx(sub="jane", org_id=ORG + 1),
+                   H.AgentHealthUndoInput(org_id=ORG + 1, episode_id=ep["id"]))
+    assert (e.value.status, e.value.code) == (404, "episode_not_found")
+
+
+def test_un_geste_d_avant_se_lit_par_son_detail():
+    from oto_mcp.db import episodes_agents as E
+    reps = [{"action": "relance"}, {"action": "ajout_outil", "detail": "+ serper_search"},
+            {"action": "ajout_outil", "outil": "web_read", "detail": "+ web_read"}]
+    assert E.outils_ajoutes(reps) == ["serper_search", "web_read"]
+    reps.append({"action": "annulation", "outils": ["serper_search"]})
+    assert E.outils_a_defaire(reps) == ["web_read"]

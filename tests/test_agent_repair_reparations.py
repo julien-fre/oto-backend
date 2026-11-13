@@ -69,6 +69,8 @@ def test_add_tool_donne_une_lecture_appelee_et_le_dit_au_client(agent):
     assert t["tools"] == ["oto_recipe", "serper_search"]
     assert t["repair"]["what"] == "Nous avons ajouté la recherche web à l'agent."
     assert [r["action"] for r in out["episode"]["reparations"]] == ["ajout_outil"]
+    assert out["episode"]["reparations"][0]["outil"] == "serper_search", \
+        "l'outil rangé à part, pour qu'une personne puisse le défaire"
 
 
 def test_add_tool_refuse_un_outil_qui_envoie(agent):

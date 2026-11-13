@@ -721,6 +721,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # la même que pose la révision `20261109_2110_note_de_reparation` : ordre indifférent.
     if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_REPARATION):
         conn.execute(runner_triggers.DDL_COLONNE_REPARATION)
+    # Les outils qu'une personne a retirés après le médecin (`runner_triggers.
+    # annuler_outils`) — la même que pose la révision `20261114_0900_outils_annules` :
+    # ordre indifférent.
+    if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_OUTILS_ANNULES):
+        conn.execute(runner_triggers.DDL_COLONNE_OUTILS_ANNULES)
     # Le message au client et les messages Slack partis, sur l'épisode (`alertes_slack`) —
     # les mêmes que pose la révision `20261109_2120_alertes_slack` : ordre indifférent.
     from . import alertes_slack
