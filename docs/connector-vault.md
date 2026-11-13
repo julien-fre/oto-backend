@@ -710,6 +710,15 @@ ici sans attendre oto 2 ; il ne fixe rien pour oto 2. Point par point :
 Le jour où oto 2 sert les connecteurs privés, une définition d'ici s'y convertit champ à champ
 (`GET …/http/definition`, sans secret) : ses champs sont ceux de `function`, à plat.
 
+**La clé d'un membre** (13/11/2026) : la carte `api` déclare `byo_user` en plus de `byo_org`. Un membre
+non-admin pose SA clé par la route du membre (`POST /api/me/credentials/api`) ; elle est rangée dans son
+org (`member`, `{org}:{sub}`), et le walker la préfère à celle de l'équipe puis de l'org — qui n'en a pas
+garde la clé de l'org. Les routes de la définition et des opérations prennent `scope` : `org` (défaut,
+droits ci-dessus) ou `member` (la clé de l'APPELANT dans cette org, lue et écrite par lui seul).
+La ligne membre se déduit de l'identité de l'appelant, jamais d'un argument : aucune route n'atteint
+la clé d'un autre membre ; l'autorisation se branche sur `scope` (`BY_OP`). Le jar du mode `session`
+vit dans la ligne résolue, donc un par personne. Banc : `tests/test_api_cle_membre_live.py`.
+
 ### Le mode `session` du Custom API : un état propre au compte, scellé dans `meta` (12/11/2026)
 
 Pour un service sans clé d'API, la carte `api` prend `auth_mode=session` : un identifiant, un mot de passe

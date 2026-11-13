@@ -8,8 +8,8 @@ from __future__ import annotations
 from ._model import CredentialField, _c
 
 # Multi-auth HTTP client: unlike the bridge, oto HOLDS the target API's
-# secret (AES vault, byo_org) and calls the API directly (no remote
-# service). `auth_mode` discriminates the mode (bearer/header/query/basic/oauth2/
+# secret (AES vault: the org's key, byo_org, or a member's own, byo_user) and
+# calls the API directly (no remote service). `auth_mode` discriminates the mode (bearer/header/query/basic/oauth2/
 # session/none); the required secret fields depend on the mode (validated at call-time by
 # oto_http.build_auth).
 # TO BE DISTINGUISHED from the bridge (credential outside the platform): here the key
@@ -31,7 +31,7 @@ from ._model import CredentialField, _c
 AUTH_MODES = ("bearer", "header", "query", "basic", "oauth2", "session", "none")
 
 CONNECTOR = _c(
-    "api", ["api"], auth_modes={"byo_org"}, secret_kind="fields",
+    "api", ["api"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
     # Presented as "Custom API": the connector a person looks for when the tool they
     # use (a payroll or ERP SaaS…) is not in the catalogue. Named `http` until
     # 12/11/2026: the old connector name refuses, naming `api`

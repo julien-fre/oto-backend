@@ -31,6 +31,10 @@ def dept(monkeypatch):
     # segment `account` (ici la ligne mono '' de chaque département).
     monkeypatch.setattr(org_store, "get_org_secret",
                         lambda org, prov, account="": None)  # pas de secret ORG
+    # Ni clé perso (`api` porte le palier membre depuis le 13/11/2026) : seule celle
+    # du département peut servir.
+    monkeypatch.setattr(access.db, "get_member_api_key",
+                        lambda sub, org, prov, account="": None)
     vault = {
         (FINANCE, "api"): pack_secret("api", {
             "base_url": "https://acme-bridge.oto.zone/finance", "auth_mode": "bearer",
@@ -43,7 +47,8 @@ def dept(monkeypatch):
                         lambda gid, prov, account="": vault.get((gid, prov)))
     monkeypatch.setattr(credentials_store, "list_accounts",
                         lambda et, eid, con: ([{"account": ""}]
-                                              if (int(eid), con) in vault else []))
+                                              if et == "group" and (int(eid), con) in vault
+                                              else []))
     return vault
 
 
