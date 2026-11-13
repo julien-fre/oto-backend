@@ -40,9 +40,6 @@ _ID = {"id": "org_id"}
 
 #: Ce qui se dit d'une panne qui est à NOUS, par côté et par langue : aucun geste.
 _A_NOUS = {
-    "plateforme": {
-        "fr": "Un problème de notre côté l'arrête. Nous nous en occupons : rien à faire du vôtre.",
-        "en": "A problem on our side stops it. We are on it: nothing to do on yours."},
     "inconnu": {
         "fr": "Nous cherchons pourquoi il s'est arrêté. Nous vous dirons s'il y a quelque "
               "chose à faire.",
@@ -50,9 +47,10 @@ _A_NOUS = {
               "to do."},
 }
 
-#: D3 (13/11) : une panne de NOTRE côté qui dure se dit autrement passé six heures — une
-#: ligne grise par incident, dans l'onglet seulement (ni Slack, ni courriel). La durée se
-#: lit sur l'épisode (`ouvert_at`), pas sur l'incident de la boucle, qui vit en mémoire.
+#: D3 (13/11) : une panne de NOTRE côté ne se dit pas avant six heures — la carte de
+#: l'agent n'en dit rien non plus, la boucle la relance. Passé six heures, une ligne grise
+#: par incident, dans l'onglet seulement (ni Slack, ni courriel). La durée se lit sur
+#: l'épisode (`ouvert_at`), pas sur l'incident de la boucle, qui vit en mémoire.
 DUREE_LONGUE = timedelta(hours=6)
 _A_NOUS_LONGUE = {
     "fr": "Un problème de notre côté l'arrête depuis plus de six heures. Nous y travaillons : "
@@ -81,9 +79,9 @@ class AgentHealth(BaseModel):
     """`watched` agents allumés que l'appelant voit, dont `working` fonctionnent ;
     `needs_you` = un problème par cause qui attend le client : `{headline, todo, action,
     link, since, agents: [{id, label}]}` ; `on_us` = ce qui est à nous, par côté :
-    `{side: platform|operator, headline, since, lasting, agents}` — `lasting` : une
-    panne de la plateforme ouverte depuis six heures au moins (D3), dite par sa propre
-    phrase ; `fixed` = ce que Tulina a
+    `{side: platform|operator, headline, since, lasting, agents}` — une panne de la
+    plateforme ne s'y dit qu'ouverte depuis six heures au moins (D3, `lasting`) ; avant,
+    son agent compte comme fonctionnant, comme sur sa carte ; `fixed` = ce que Tulina a
     réparé ces trente derniers jours, le plus récent d'abord : `{agent: {id, label}, at,
     what, undo}` — `undo` reste false tant qu'aucune route ne défait une réparation ;
     `auto_repair` = le réglage de l'org ; `covered` = le médecin suit cette org (false :
@@ -135,15 +133,22 @@ def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
 
     problemes: dict[tuple, dict] = {}
     a_nous: dict[str, dict] = {}
+    maintenant = datetime.now(timezone.utc)
     for ep in sante_agents.episodes_vivants(org_id):
         t = allumes.get(int(ep["trigger_id"]))
         if t is None:
             continue
+        if ep["cote"] == "plateforme" and maintenant - _date(ep["ouvert_at"]) < DUREE_LONGUE:
+            # D3 : une panne de NOTRE côté se tait six heures, comme sur la carte de
+            # l'agent (`agent-state.ts` : rien de dit) — la boucle la relance ; l'agent
+            # compte comme fonctionnant.
+            continue
         if ep["cote"] != "proprietaire":
-            cote = ep["cote"] if ep["cote"] in _A_NOUS else "inconnu"
+            cote = "plateforme" if ep["cote"] == "plateforme" else "inconnu"
+            phrases = _A_NOUS_LONGUE if cote == "plateforme" else _A_NOUS[cote]
             p = a_nous.setdefault(cote, {
                 "side": "platform" if cote == "plateforme" else "operator",
-                "headline": _A_NOUS[cote].get(langue, _A_NOUS[cote]["en"]),
+                "headline": phrases.get(langue, phrases["en"]),
                 "since": ep["ouvert_at"], "agents": []})
             p["since"] = min(p["since"], ep["ouvert_at"])
             p["agents"].append({"id": int(t["id"]), "label": _nom(t)})
@@ -169,12 +174,9 @@ def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
 
     needs_you = sorted(problemes.values(), key=lambda p: p["since"])
     on_us = sorted(a_nous.values(), key=lambda p: p["since"])
-    maintenant = datetime.now(timezone.utc)
     for p in on_us:
-        p["lasting"] = (p["side"] == "platform"
-                        and maintenant - _date(p["since"]) >= DUREE_LONGUE)
-        if p["lasting"]:
-            p["headline"] = _A_NOUS_LONGUE.get(langue, _A_NOUS_LONGUE["en"])
+        # Une panne de la plateforme n'arrive ici qu'après six heures (plus haut).
+        p["lasting"] = p["side"] == "platform"
     for p in [*needs_you, *on_us]:
         p["since"] = _quand(p["since"])
     return {"watched": len(allumes), "working": len(set(allumes) - arretes),

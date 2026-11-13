@@ -3178,9 +3178,10 @@ passe AVANT l'alerte.
   client, au texte et au regroupement de Slack, avec les agents qu'il arrête et depuis
   quand —, `on_us` — ce qui est à nous, côté plateforme ou pas encore compris, une
   phrase sans geste : DEUX états comme la carte d'un agent, ces agents-là ne
-  fonctionnent pas non plus ; une panne de la plateforme ouverte depuis six heures
-  (`DUREE_LONGUE`, lu sur `ouvert_at`, pas sur l'incident en mémoire de la boucle) se dit
-  par sa propre phrase, `lasting` — la ligne grise de D3, dans l'onglet seulement : ni
+  fonctionnent pas non plus ; une panne de la PLATEFORME se tait six heures
+  (`DUREE_LONGUE`, lu sur `ouvert_at`, pas sur l'incident en mémoire de la boucle) — la
+  carte de l'agent n'en dit rien non plus, son agent compte comme fonctionnant — puis se
+  dit par sa propre phrase, `lasting` : la ligne grise de D3, dans l'onglet seulement, ni
   Slack ni courriel pour nos pannes —, `fixed` — les épisodes guéris après un geste du médecin
   ces 30 jours (la note de réparation de l'agent, sinon la phrase d'une relance ; `undo`
   reste false tant qu'aucune route ne défait), `auto_repair`, et `covered` (false : org
