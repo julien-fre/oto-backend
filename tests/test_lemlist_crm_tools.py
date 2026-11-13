@@ -590,3 +590,148 @@ def test_dupliquer_une_campagne_annonce_que_la_copie_tourne():
         assert out["_id"] == "cam_2"
         assert "fresh DRAFT" not in tool.description
         assert "duplicated campaign lands in DRAFT" not in " ".join(tool.description.split())
+
+
+# --- La base partagée : une page lisible (signal d'usage 1489, 13/11/2026) ---------
+# 3 personnes pesaient 228k caractères, 50 entreprises 7,7 M : illisible dans un run
+# d'agent. Le client d'oto-core façonne la page (`fields`, `compact`) ; le tool
+# transmet, et rend en paramètre invalide ce que le client refuse.
+
+@pytest.mark.parametrize("op,method", [("people", "search_people_database"),
+                                       ("companies", "search_companies_database")])
+def test_la_vue_de_la_base_est_transmise_au_client(op, method):
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        getattr(inst, method).return_value = {"results": []}
+        _tool("lemlist_database").fn(op=op, compact=True,
+                                     fields=["experiences.title"], size=50)
+        kwargs = getattr(inst, method).call_args.kwargs
+        assert kwargs["compact"] is True
+        assert kwargs["fields"] == ["experiences.title"]
+        assert kwargs["size"] == 50
+
+
+@pytest.mark.parametrize("op,method", [("people", "search_people_database"),
+                                       ("companies", "search_companies_database")])
+def test_sans_vue_l_appel_au_client_est_inchange(op, method):
+    """Ni `fields` ni `compact` : rien de neuf ne part au client — l'appel est celui
+    d'avant, quel que soit l'oto-core installé."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        _tool("lemlist_database").fn(op=op)
+        kwargs = getattr(inst, method).call_args.kwargs
+        assert "fields" not in kwargs and "compact" not in kwargs
+
+
+@pytest.mark.parametrize("op", ["filters", "personas"])
+def test_la_vue_est_ignoree_hors_recherche(op):
+    """Comme `search` ou `mode` hors de leur op : ignorés, pas transmis."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        _tool("lemlist_database").fn(op=op, compact=True, fields=["full_name"])
+        assert not inst.search_people_database.called
+        assert not inst.search_companies_database.called
+        called = (inst.get_database_filters if op == "filters" else inst.list_personas)
+        assert "fields" not in called.call_args.kwargs
+        assert "compact" not in called.call_args.kwargs
+
+
+def test_une_vue_refusee_par_le_client_est_un_parametre_invalide():
+    from mcp.types import INVALID_PARAMS
+    from oto_mcp.mcp_errors import McpError
+
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        client_cls.return_value.search_people_database.side_effect = ValueError(
+            "fields is a non-empty list of field names")
+        with pytest.raises(McpError, match="non-empty list") as exc:
+            _tool("lemlist_database").fn(op="people", fields=[])
+    assert exc.value.error.code == INVALID_PARAMS
+
+
+def test_une_erreur_de_transport_n_est_pas_un_parametre_invalide():
+    """`requests` a ses propres ValueError (corps non JSON, URL invalide) : elles ne
+    disent rien des arguments, et ne deviennent pas `invalid_input`."""
+    import requests
+
+    from oto_mcp.mcp_errors import McpError
+
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        client_cls.return_value.search_people_database.side_effect = \
+            requests.exceptions.InvalidJSONError("not json")
+        with pytest.raises(requests.exceptions.InvalidJSONError):
+            _tool("lemlist_database").fn(op="people", compact=True)
+        client_cls.return_value.search_people_database.side_effect = ValueError("x")
+        with pytest.raises(ValueError) as exc:
+            _tool("lemlist_database").fn(op="people")
+        assert not isinstance(exc.value, McpError)
+
+
+def _fake_lemlist(monkeypatch, body):
+    import json
+
+    import requests
+
+    sent = []
+    texte = json.dumps(body)  # hors de la classe : son `def json` y masquerait le module
+
+    class _Rep:
+        status_code = 200
+        ok = True
+        headers = {}
+        text = texte
+        content = texte.encode()
+
+        def json(self):
+            return body
+
+    def _request(method, url, **kw):
+        sent.append((method, url, kw.get("json")))
+        return _Rep()
+
+    monkeypatch.setattr(requests, "request", _request)
+    return sent
+
+
+def test_compact_atteint_le_vrai_client(monkeypatch):
+    """Le VRAI client d'oto-core, seul `requests` doublé : les tests ci-dessus doublent
+    le client et ne voient pas qu'un oto-core sans `compact` lève `TypeError` au premier
+    vrai appel. Rouge tant que le pin n'inclut pas oto-now/connectors#224."""
+    person = {
+        "lead_id": "l1", "full_name": "Ada Lovelace", "title": "CTO",
+        "skills": ["x"] * 500,
+        "experiences": [
+            {"title": "CTO", "company_name": "Acme", "date_to": None,
+             "company_technologies": ["y"] * 500},
+            {"title": "Engineer", "company_name": "Old", "date_to": "2020-01-01"},
+        ],
+    }
+    sent = _fake_lemlist(monkeypatch, {"total": 1, "page": 1, "results": [person]})
+    with patch("oto_mcp.access.resolve_api_key", return_value=("fake-key", False)):
+        out = _tool("lemlist_database").fn(op="people", compact=True)
+
+    assert len(sent) == 1 and sent[0][0] == "POST"
+    assert "compact" not in (sent[0][2] or {}), "la vue ne part jamais à lemlist"
+    assert out["total"] == 1
+    (record,) = out["results"]
+    assert record["full_name"] == "Ada Lovelace"
+    assert "skills" not in record
+    assert [e["title"] for e in record["experiences"]] == ["CTO"]
+    assert "company_technologies" not in record["experiences"][0]
+    assert "skills" in out["omitted_fields"]
+
+
+def test_des_fields_malformes_sont_refuses_avant_toute_requete(monkeypatch):
+    from mcp.types import INVALID_PARAMS
+    from oto_mcp.mcp_errors import McpError
+
+    sent = _fake_lemlist(monkeypatch, {"results": []})
+    with patch("oto_mcp.access.resolve_api_key", return_value=("fake-key", False)):
+        with pytest.raises(McpError) as exc:
+            _tool("lemlist_database").fn(op="companies", fields=["a..b"])
+    assert exc.value.error.code == INVALID_PARAMS
+    assert not sent

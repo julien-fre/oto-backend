@@ -35,6 +35,7 @@ import html
 import re
 from typing import Literal, Optional
 
+import requests
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
@@ -751,6 +752,8 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         size: Optional[int] = None,
         mode: Optional[str] = None,
+        fields: Optional[list[str]] = None,
+        compact: bool = False,
     ) -> dict:
         """Search lemlist's SHARED prospecting database. Reads only.
 
@@ -760,20 +763,61 @@ def register(mcp: FastMCP) -> None:
         call spends the quota of your lemlist key. Saving or deleting a persona
         is `lemlist_act`.
 
+        Records are large: one person carries a whole career, one company its
+        technologies and job posts (3 people ≈ 228k characters, 50 companies
+        several million). Pass `compact=True` unless you need a field it drops.
+
         Args by op:
-        - `people`: `filters`, `search`, `excludes`, `page`, `size`.
-        - `companies`: `filters`, `page`, `size`.
+        - `people`: `filters`, `search`, `excludes`, `page`, `size`, `fields`,
+          `compact`.
+        - `companies`: `filters`, `page`, `size`, `fields`, `compact`.
         - `filters`: no argument — the available filters.
         - `personas`: optional `mode` — the saved personas.
+
+        Shaping a page (`people` and `companies` only, applied to each element
+        of `results`; `total`, `page`, `size` are kept as lemlist sends them):
+        - `compact=True`: the short view. A person keeps its identity, title,
+          headline, seniority, department, country, location, LinkedIn URL,
+          `potential_email`, current company, and only its CURRENT positions
+          (no end date), each reduced to title, start date and the company's
+          name, domain, website, LinkedIn, headcount, industry, country. A
+          company keeps its identity, domain, website, LinkedIn, headcount and
+          growth, headquarters, industry, type, founding year, revenue bucket,
+          last funding date, and its 5 most recent job posts (title and dates)
+          with their count (`<key>_total`). The page then carries
+          `omitted_fields`: the record keys the view left out — ask for one of
+          them by `fields`.
+        - `fields`: keep only these keys of each record, a nested one by a
+          dotted path (`experiences.title`, lists traversed, no indexes). A key
+          a record lacks is skipped. With `compact=True`, the fields named are
+          added on top of the short view, whole.
+        - Neither: the page as lemlist sends it.
         """
         client, is_platform = _client()
-        if op == "people":
-            result = client.search_people_database(
-                filters=filters, page=page, size=size, excludes=excludes,
-                search=search)
-        elif op == "companies":
-            result = client.search_companies_database(
-                filters=filters, page=page, size=size)
+        # Passed only when asked for: a call without a view stays the call lemlist
+        # has always received, whatever the installed client.
+        view = {}
+        if fields is not None:
+            view["fields"] = fields
+        if compact:
+            view["compact"] = compact
+        if op in ("people", "companies"):
+            try:
+                if op == "people":
+                    result = client.search_people_database(
+                        filters=filters, page=page, size=size, excludes=excludes,
+                        search=search, **view)
+                else:
+                    result = client.search_companies_database(
+                        filters=filters, page=page, size=size, **view)
+            except ValueError as e:
+                # A malformed `fields` or `compact`: the client refuses it before any
+                # request. Raised bare, it would reach the agent as an internal error.
+                # Only then: `requests` has ValueErrors of its own (a bad URL, a body
+                # that is not JSON), which say nothing about the caller's arguments.
+                if not view or isinstance(e, requests.RequestException):
+                    raise
+                raise _bad(str(e)) from e
         elif op == "filters":
             result = {"filters": client.get_database_filters()}
         elif op == "personas":
