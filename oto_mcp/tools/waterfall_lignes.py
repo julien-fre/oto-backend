@@ -242,8 +242,8 @@ def _pas_un_verdict(out: dict, trouve: Any, attempts: list[dict],
         return None
     if any(a.get("status") == "unqualified" for a in attempts):
         return None
-    if any(a.get("status") == "skipped" and a.get("code") == "time_budget"
-           for a in attempts):
+    # Skipped for time — or a miss whose searches were cut short by it (`moteur._read_find`).
+    if any(a.get("code") == "time_budget" for a in attempts):
         return "time_budget"
     if _hors_liste(attempts):
         # Un fournisseur n'a pas tourné parce que l'agent n'a pas son outil : un `no_match`
