@@ -121,7 +121,10 @@ en Python. Une recette-code se range comme les autres (mêmes tables, même cycl
   run), leur ligne dans `tool_calls`. Le pont rétrécit ce que le code leur passe, il
   n'ouvre jamais le store lui-même.
 - **Le budget** est `limits` : unités facturées (`max_units`, obligatoire), appels,
-  secondes. Atteint, les appels suivants sont refusés et le reçu le dit (`stopped`).
+  secondes. Les `units` du reçu additionnent la `quantity` de chaque appel, **dans l'unité
+  de chaque outil** (crédits Serper, profils AI Ark… ; **micro-dollars** pour Apify,
+  1 $ = 1 000 000 — `docs/monitoring.md` §Le coût des runs Apify) : une recette qui mêle
+  deux outils additionne deux unités. Atteint, les appels suivants sont refusés et le reçu le dit (`stopped`).
 - **Une place dans le bac à sable** : une recette-code en prend une, comme une fonction
   (`docs/fonctions.md` §Combien d'exécutions à la fois) — au plus une par compte, au plus
   `OTO_FUNCTIONS_MAX_SIMULTANEES` par processus. Pas de place : 429 `sandbox_busy` avec

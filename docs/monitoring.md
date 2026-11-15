@@ -1092,6 +1092,25 @@ TERMINÉ trace son coût. Quatre garde-fous (`tools/apify.py`, `apify_releve.py`
   autre org ne facture personne ; une lecture dont la fiche de lancement est illisible non
   plus (le relevé facture le lanceur). Le relevé sert UNE clé plateforme : s'il en trouve
   plusieurs, il échoue en les nommant.
+- **Le coût d'un run terminé est son chiffre FINAL, ou rien** (`apify._cout`). Un acteur
+  payé à l'événement atteint SUCCEEDED avant qu'Apify ne réserve ses événements
+  (`accountedChargedEventCounts` en retard sur `chargedEventCounts`) : l'écart se chiffre
+  au prix de l'acteur, souvent tarifé **par palier d'abonnement**
+  (`eventTieredPricingUsd`, FREE … DIAMOND, sans `eventPriceUsd` : 10 des 11 acteurs
+  des outils dédiés le 15/11/2026) — le prix est alors
+  celui du palier du compte qui a lancé le run (`plan.tier` de `GET /v2/users/me`, lu
+  seulement quand un écart à palier se chiffre, gardé une heure par clé et par
+  processus). Un écart qui ne se chiffre pas (palier illisible, événement sans prix)
+  n'est **pas** facturé à ce qui est réservé : ce chiffre, premier du job, restait pour de
+  bon (signalé le 12/11/2026 : des runs d'employés LinkedIn rendant 25 profils facturés 0, ou le
+  seul démarrage). Sans comptes réservés lisibles (absents ou `null`), pareil. La lecture
+  trace 0 sans le job, la fiche de lancement reste ouverte, et la lecture suivante ou le
+  relevé de nuit facture le vrai chiffre — le relevé prend `usageTotalUsd` tel quel pour
+  un run fini depuis plus d'une heure (tout est réservé), sans quoi un tel run resterait
+  `illisibles` pour toujours.
+- **L'unité est le micro-dollar** : la `quantity` d'un appel Apify — donc les `units` d'un
+  reçu de recette et son `max_units` — compte le coût du run en millionièmes de dollar
+  (1 $ = 1 000 000), arrondi au supérieur comme Jev.
 - **Le mois se compare à ce qu'Apify compte** : au-delà de 5 $ d'écart, un signal `gap` de
   cible `apify_cost_gap`. Il ne se compare qu'une fois la table couvrant tout le cycle.
   Une comparaison en échec se journalise à part (`comparaison.echec`) : le bilan du relevé
