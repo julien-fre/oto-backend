@@ -391,7 +391,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             # The PRIMARY tenant's key, which the operator pays and re-bills like the
             # platform's: the units budget, after the edge's quota (a refusal there
             # leaves no hold).
-            limite_du_jour.reserver(sub, heritage.org_des_cles(sub, active_org), "tenant")
+            limite_du_jour.reserver(sub, heritage.org_des_cles(sub, active_org), "tenant", provider)
     if win.mode != "platform":
         return ResolvedCredential(provider, win.payload, False, win.mode,
                                   *prets_vus.ligne_servie(win), account=win.account)
@@ -432,7 +432,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     if check_usage:
         # The units budget: a tool of the perimeter reserves its worst case on the
         # operator's key, after every other guard — a refusal above leaves no hold.
-        limite_du_jour.reserver(sub, heritage.org_des_cles(sub, active_org), "platform")
+        limite_du_jour.reserver(sub, heritage.org_des_cles(sub, active_org), "platform", provider)
     return ResolvedCredential(provider, win.payload["secret"], True, "platform",
                               credentials_store.PLATFORM, win.payload["label"])
 

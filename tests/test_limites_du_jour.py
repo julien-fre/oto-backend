@@ -195,7 +195,7 @@ def test_le_resolveur_passe_par_la_porte_sur_chaque_cle_refacturee():
     assert "credits.reserver(" not in src.replace("limite_du_jour.reserver(", "")
     for rang in ("tenant", "platform"):
         assert (f'limite_du_jour.reserver(sub, heritage.org_des_cles(sub, active_org), '
-                f'"{rang}")') in src
+                f'"{rang}", provider)') in src
 
 
 def test_la_porte_refuse_avant_de_reserver(liste, monkeypatch):
@@ -209,6 +209,24 @@ def test_la_porte_refuse_avant_de_reserver(liste, monkeypatch):
     with pytest.raises(McpError):
         limite_du_jour.reserver("u-1", 7, "platform")
     assert len(vu) == 1, "un refus ne laisse aucune réservation"
+
+@pytest.mark.parametrize("connecteur", ["unipile", "whatsapp", "linkedin_unipile"])
+def test_la_messagerie_hebergee_passe_meme_bloquee(liste, monkeypatch, connecteur):
+    """La messagerie se paie au siège et au mois, pas à l'appel : une personne bloquée
+    la garde — ses six canaux compris, qui délèguent leur clé à `unipile`."""
+    from oto_mcp import providers
+    from oto_mcp.access import credits
+    if providers.REGISTRY.get(connecteur) is None:
+        pytest.skip(f"{connecteur} absent du registre de cette instance")
+    vu = []
+    monkeypatch.setattr(credits, "reserver", lambda *a: vu.append(a))
+    liste["blocs"] = [_bloc(7, "u-1", "member")]
+    limite_du_jour.invalider()
+    limite_du_jour.reserver("u-1", 7, "platform", connecteur)
+    assert vu == [("u-1", 7, "platform")]
+    with pytest.raises(McpError):  # le contrefactuel : un outil facturé à l'appel
+        limite_du_jour.reserver("u-1", 7, "platform", "serper")
+
 
 class _Ctx:
     sub = "worker-1"
