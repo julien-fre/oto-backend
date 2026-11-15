@@ -579,13 +579,78 @@ def test_update_without_autoreview_goes_through():
     with key, cls as client_cls:
         inst = client_cls.return_value
         tool = _tool("lemlist_campaign")
+        inst.update_campaign.return_value = {
+            "name": "Q4", "stopOnEmailReplied": True,
+            "sendUsers": [{"id": "usr_1", "mailboxes": [{"sendUserMailboxId": "usm_1"}]}]}
 
-        tool.fn(op="update", campaign_id="cam_1", name="Q4",
-                sender_user_ids=["usr_1"], settings={"stopOnEmailReplied": True})
+        out = tool.fn(op="update", campaign_id="cam_1", name="Q4",
+                      sender_user_ids=["usr_1"], settings={"stopOnEmailReplied": True})
 
         inst.update_campaign.assert_called_once_with("cam_1", {
             "stopOnEmailReplied": True, "name": "Q4", "sendUserIds": ["usr_1"],
         })
+        assert "not_confirmed" not in out and "senders_excluded" not in out
+        # sendUserIds n'attache que la PREMIÈRE boîte de chaque utilisateur : dit.
+        assert "FIRST mailbox" in out["warning"]
+
+
+# --- signal 1279 : une mise à jour qui n'a rien appliqué ne rend pas `{}` ------
+
+def _code(exc_info) -> str:
+    return exc_info.value.error.data["code"]
+
+
+def test_update_refuses_a_key_lemlist_would_drop_silently():
+    """`settings.sendUsers` (clé de la RÉPONSE de lemlist) : lemlist l'ignorait et
+    répondait `{}`, lu comme un succès. Refusé avant tout appel, en disant que
+    `sender_user_ids` n'attache que la première boîte."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        with pytest.raises(Exception) as e:
+            tool.fn(op="update", campaign_id="cam_1", settings={"sendUsers": [
+                {"id": "usr_1", "mailboxes": [{"sendUserMailboxId": "usm_1"}]}]})
+        assert _code(e) == "lemlist_unknown_campaign_setting"
+        assert e.value.error.data["unknown"] == ["sendUsers"]
+        assert "`sender_user_ids`" in e.value.error.message
+        inst.update_campaign.assert_not_called()
+
+
+def test_update_whose_answer_confirms_nothing_is_an_error_not_an_empty_success():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.update_campaign.return_value = {}
+        with pytest.raises(Exception) as e:
+            tool.fn(op="update", campaign_id="cam_1", sender_user_ids=["usr_1"])
+        assert _code(e) == "lemlist_update_not_applied"
+        assert e.value.error.data["not_confirmed"] == ["sendUserIds"]
+
+
+def test_update_says_which_keys_lemlist_did_not_confirm():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.update_campaign.return_value = {"name": "Q4"}
+        out = tool.fn(op="update", campaign_id="cam_1", name="Q4",
+                      settings={"stopOnEmailReplied": True, "tracking": {"trackOpens": True}})
+        assert out["name"] == "Q4"
+        assert out["not_confirmed"] == ["stopOnEmailReplied"]
+        # `tracking` n'est pas renvoyé par lemlist : invérifiable, et dit comme tel.
+        assert out["unverified"] == ["tracking"]
+
+
+def test_update_names_a_sender_lemlist_excluded():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.update_campaign.return_value = {"sendUsers": [{"id": "usr_1", "mailboxes": []}]}
+        out = tool.fn(op="update", campaign_id="cam_1", sender_user_ids=["usr_1", "usr_2"])
+        assert out["senders_excluded"] == ["usr_2"]
 
 
 def test_update_refuses_an_empty_patch():

@@ -132,7 +132,7 @@ def test_les_trois_listes_de_desinscription_ne_se_confondent_pas():
 
 
 @pytest.mark.parametrize("op,method,key", [
-    ("list", "list_unsubscribes", "unsubscribes"),
+    ("list", "list_unsubscribed_variables", "unsubscribes"),
     ("var_list", "list_unsubscribed_variables", "variables"),
 ])
 def test_une_liste_de_desinscription_omise_ne_rend_quune_page(op, method, key):
@@ -161,6 +161,20 @@ def test_une_liste_de_desinscription_omise_ne_rend_quune_page(op, method, key):
         getattr(inst, method).return_value = [{"value": "v"}] * 100
         out = tool.fn(op=op, limit=500, offset=200)
         assert (out["limit"], out["offset"], out["next_offset"]) == (500, 200, 300)
+
+
+def test_list_ne_tape_plus_la_route_v1_retiree():
+    """Signal 1673 : `GET /unsubscribes` (liste v1) répond 404 « Route not found »,
+    avec ou sans `limit`. `op="list"` lit la liste v2, qui porte aussi emails et
+    domaines, et garde sa clé de réponse `unsubscribes`."""
+    key_patch, cls = _with_fake_client()
+    with key_patch, cls as client_cls:
+        inst = client_cls.return_value
+        inst.list_unsubscribed_variables.return_value = [{"value": "example.test"}]
+        out = _tool("lemlist_unsubscribe").fn(op="list")
+        inst.list_unsubscribes.assert_not_called()
+        inst.list_unsubscribed_variables.assert_called_once_with(offset=None, limit=100)
+        assert out["unsubscribes"] == [{"value": "example.test"}]
 
 
 def test_ajouter_ou_retirer_dune_liste_de_contacts_partage_une_route():

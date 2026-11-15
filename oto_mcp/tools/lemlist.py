@@ -298,6 +298,81 @@ def _refuse_auto_review(settings: dict) -> None:
         )
 
 
+#: The keys `PATCH /campaigns/{id}` takes (lemlist OpenAPI v2, read on
+#: 2026-11-15), auto-review aside (refused above). lemlist drops any OTHER key
+#: without an error and answers `{}`: signal 1279 sent `sendUsers` (a key of the
+#: ANSWER), got `{}`, and believed six mailboxes attached. Refused here instead.
+CAMPAIGN_PATCH_KEYS = frozenset({
+    "name", "emoji", "stopOnEmailReplied", "stopOnMeetingBooked",
+    "stopOnLinkClicked", "stopOnLinkClickedFilter", "leadsPausedByInterest",
+    "opportunityReplied", "opportunityClicked", "autoLeadInterest",
+    "disableTrackOpen", "disableTrackClick", "disableTrackReply",
+    "disableOutOfOffice", "sequenceSharing", "sendUserIds", "aiFeatures",
+    "tracking", "onReplied", "onLinkClicked", "onMeetingBooked",
+})
+
+#: The keys lemlist's answer echoes once applied (its 200 schema); `sendUserIds`
+#: comes back as `sendUsers`. The others (emoji, aiFeatures, tracking, on*) are
+#: not echoed, so their absence proves nothing.
+_ECHOED = {k: k for k in (
+    "name", "stopOnEmailReplied", "stopOnMeetingBooked", "stopOnLinkClicked",
+    "stopOnLinkClickedFilter", "leadsPausedByInterest", "opportunityReplied",
+    "opportunityClicked", "autoLeadInterest", "disableTrackOpen",
+    "disableTrackClick", "disableTrackReply", "disableOutOfOffice",
+    "sequenceSharing")} | {"sendUserIds": "sendUsers"}
+
+#: Keys an agent reaches for to pick senders, none of which PATCH takes.
+_SENDER_LOOKALIKES = {"sendUsers", "senders", "sendUserMailboxIds",
+                      "sendUserMailboxId", "mailboxes", "sendUserEmails"}
+
+
+def _refuse_unknown_settings(settings: dict) -> None:
+    unknown = sorted(set(settings) - CAMPAIGN_PATCH_KEYS - set(AUTO_REVIEW_KEYS))
+    if not unknown:
+        return
+    hint = ""
+    if set(unknown) & _SENDER_LOOKALIKES:
+        hint = (" `sender_user_ids` sets the senders, but attaches only the "
+                "FIRST mailbox of each user; choosing several mailboxes of a "
+                "user is done in the lemlist app, in the campaign's senders.")
+    raise _refus(
+        "lemlist_unknown_campaign_setting",
+        f"lemlist's campaign update does not take {unknown}: it would drop "
+        f"them silently and answer {{}}.{hint}",
+        unknown=unknown, accepted=sorted(CAMPAIGN_PATCH_KEYS))
+
+
+def _check_patch_echo(patch: dict, answer) -> dict:
+    """What lemlist's answer confirms of `patch`. Raises when it confirms NONE
+    of the keys it echoes (a bare `{}` must not read as success); otherwise
+    adds `not_confirmed` / `unverified` beside the answer."""
+    answer = answer if isinstance(answer, dict) else {}
+    checkable = [k for k in patch if k in _ECHOED]
+    missing = [k for k in checkable if _ECHOED[k] not in answer]
+    unverified = [k for k in patch if k not in _ECHOED]
+    if checkable and len(missing) == len(checkable):
+        raise _refus(
+            "lemlist_update_not_applied",
+            f"lemlist answered the campaign update without confirming any of "
+            f"{missing}: nothing is known to have changed. Re-read the campaign "
+            "before retrying.", not_confirmed=missing, answer=answer)
+    out = dict(answer)
+    if missing:
+        out["not_confirmed"] = missing
+    if unverified:
+        out["unverified"] = unverified
+    if "sendUserIds" in patch and isinstance(answer.get("sendUsers"), list):
+        attached = {u.get("id") for u in answer["sendUsers"] if isinstance(u, dict)}
+        dropped = [u for u in patch["sendUserIds"] if u not in attached]
+        if dropped:
+            out["senders_excluded"] = dropped
+        out["warning"] = (
+            "`sender_user_ids` attaches the FIRST mailbox of each user only "
+            "(see `sendUsers`). Several mailboxes of a user are chosen in the "
+            "lemlist app, in the campaign's senders.")
+    return out
+
+
 def _found_digest(data: dict) -> dict:
     """What was REALLY found, per axis — `data` always carries the key of
     the requested axis, even empty, so its mere presence says nothing.
@@ -1039,7 +1114,8 @@ def register(mcp: FastMCP) -> None:
           senders) and/or `settings` (raw PATCH body: `stopOnEmailReplied`,
           `stopOnMeetingBooked`, `stopOnLinkClicked`, `disableTrackOpen`,
           `disableTrackClick`, `disableTrackReply`, `tracking`, `onReplied`,
-          `aiFeatures`…). Only the keys sent change.
+          `aiFeatures`…). Only the keys sent change; unknown keys are refused.
+          `sender_user_ids` takes the FIRST mailbox of each user.
         - `pause`: `campaign_id`. THE off switch — a campaign created here is
           already running. Stops it advancing; already-scheduled leads are NOT
           recalled. Errors if the campaign is not running.
@@ -1108,6 +1184,7 @@ def register(mcp: FastMCP) -> None:
             if not campaign_id:
                 raise _bad("`campaign_id` required")
             _refuse_auto_review(settings)
+            _refuse_unknown_settings(settings)
             if name is not None:
                 settings["name"] = name
             if sender_user_ids is not None:
@@ -1116,7 +1193,8 @@ def register(mcp: FastMCP) -> None:
                 raise _bad(
                     "nothing to update — pass `name`, `sender_user_ids` "
                     "and/or `settings`")
-            result = client.update_campaign(campaign_id, settings)
+            result = _check_patch_echo(
+                settings, client.update_campaign(campaign_id, settings))
 
         elif op == "pause":
             if not campaign_id:

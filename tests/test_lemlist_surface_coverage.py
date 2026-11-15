@@ -61,6 +61,10 @@ NON_EXPOSEES = {
     "sync_campaign": "composite local, écrit un fichier côté serveur",
     "save_campaign_tree": "écrit un fichier sur le serveur — jamais exposé",
     "get_sequence_steps": "composite local au-dessus de get_sequences",
+    # La liste v1 des désinscriptions (`GET /unsubscribes`) répond 404 et a quitté
+    # la doc lemlist (signal 1673) : `lemlist_unsubscribe(op="list")` lit la liste
+    # v2 par `list_unsubscribed_variables`, que le client sert aussi sous ce nom.
+    "list_unsubscribes": "route v1 retirée — op=list lit list_unsubscribed_variables",
 }
 
 
