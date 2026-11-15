@@ -83,7 +83,7 @@ send and read slack messages from claude — in your name or under the app's, de
 - "send a message in #general" → `slack_post_message`
 - "dm jean by email" → `slack_find_user_by_email` then `slack_open_dm` then `slack_post_message`
 - "read the latest messages of this channel" → `slack_read_history` (top-level messages; `oldest`/`latest` to read only a window)
-- "what was said in this thread?" → `slack_read_thread` — a thread's **replies**, which `slack_read_history` does not return (it only shows the count)
+- "what was said in this thread?" → `slack_read_thread` — a thread's **replies**, which `slack_read_history` does not return (it only shows the count); given a reply's own ts (a `latest_reply`), it reads that reply's thread and names the parent's ts to keep
 - "get oto into #channel" → `slack_join_channel` (public channels only)
 - "react 👍 to this message" → `slack_add_reaction`
 - "who is in @sales?" → `slack(op="usergroups")` (all groups), `slack(op="usergroup_members", usergroup=…)` (one group's members)

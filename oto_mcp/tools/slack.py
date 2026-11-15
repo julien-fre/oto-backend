@@ -140,6 +140,23 @@ def _refus_entree(message: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=message))
 
 
+def _parent_d_une_reponse(message: dict) -> Optional[str]:
+    """The parent's ts when `message` is a thread REPLY (`thread_ts` ≠ `ts`), else None:
+    a parent carries its own ts as `thread_ts`, a message without a thread carries none."""
+    parent = message.get("thread_ts")
+    return parent if parent and parent != message.get("ts") else None
+
+
+def _fil(msgs: list, data: dict) -> dict:
+    """A `conversations.replies` page in the tool's shape: the parent (Slack repeats
+    it as `messages[0]` on every page) kept out of `replies`."""
+    return {
+        "parent": msgs[0],
+        "replies": msgs[1:],
+        "has_more": bool(data.get("has_more")),
+        "next_cursor": (data.get("response_metadata") or {}).get("next_cursor"),
+    }
+
 
 def _auteur(bot: bool, user: bool, author: Optional[str]) -> bool:
     """`as_user` to use for a write, or a refusal that says what to pass.
@@ -481,10 +498,15 @@ def register(mcp: FastMCP) -> None:
         of `replies` because Slack repeats it on every page. Paginate by feeding
         `next_cursor` back as `cursor`; pages walk the thread newest → oldest.
 
+        Given a REPLY's own ts (a `latest_reply` kept from an earlier sweep), the
+        reply's thread is read instead, with the same window, and the answer says so:
+        `thread_ts` (the parent actually read), `requested_ts` and a `note`. Keep
+        `thread_ts` for the next pages.
+
         Args:
             channel: Channel ID (C…/D…/G…) holding the thread.
-            thread_ts: `ts` of the PARENT message (a reply's `thread_ts`). Passing
-                a reply's own `ts` is refused, with the parent's ts to retry with.
+            thread_ts: `ts` of the PARENT message (a reply's `thread_ts`). A reply's
+                own `ts` reads its thread, and the answer names the parent's ts.
             limit: Max replies per page (the parent does not count against it).
             cursor: `next_cursor` from a previous call.
             oldest: Only replies after this ts — exclusive.
@@ -492,33 +514,52 @@ def register(mcp: FastMCP) -> None:
             inclusive: Also return replies sitting exactly on oldest/latest.
         """
         client, is_platform = _client()
-        with _traduit(channel):
-            data = client.replies(channel, thread_ts, limit=limit, cursor=cursor,
-                                  oldest=oldest, latest=latest, inclusive=inclusive)
-        msgs = data.get("messages") or []
+
+        def _page(ts: str) -> tuple[list, dict]:
+            with _traduit(channel):
+                data = client.replies(channel, ts, limit=limit, cursor=cursor,
+                                      oldest=oldest, latest=latest, inclusive=inclusive)
+            msgs = data.get("messages") or []
+            if msgs or not (oldest or latest or cursor):
+                return msgs, data
+            # A window can empty the answer: on a REPLY's ts, Slack's "thread" is that
+            # one message, and `oldest` = its own ts (exclusive) filters it out — the
+            # exact shape of a sweep restarting from a `latest_reply` (signal #1157).
+            # One look WITHOUT the window says what this ts is: a reply (the caller
+            # reads its parent), or a parent with nothing in the window (zero reply,
+            # not an error).
+            with _traduit(channel):
+                sonde = client.replies(channel, ts, limit=1)
+            return (sonde.get("messages") or [])[:1], {}
+
+        msgs, data = _page(thread_ts)
         if not msgs:
             # Slack raises `thread_not_found` on an unknown ts; an empty `ok:true`
             # has never been observed. Refuse rather than return a phantom thread.
             raise _refus_entree(
                 "Slack returns an empty thread for `" + thread_ts + "` in `" + channel
                 + "` — check the parent message's ts with `slack_read_history`.")
-        parent = msgs[0]
         # ⚠️ Trap probed on 28/08: called with the `ts` of a REPLY, Slack does NOT return
         # the thread — it returns that single message, with `ok:true`. Returned as is, it says
         # "this thread has no reply": the reassuring message that excuses investigating,
-        # on the most likely calling error. Slack gives the right ts, we return it.
-        vrai_parent = parent.get("thread_ts")
-        if vrai_parent and vrai_parent != parent.get("ts"):
+        # on the most likely calling error. Slack names the parent: we read ITS thread,
+        # with the caller's window, and say so.
+        vrai_parent = _parent_d_une_reponse(msgs[0])
+        if vrai_parent is None:
+            return _fil(msgs, data)
+        msgs, data = _page(vrai_parent)
+        if not msgs or _parent_d_une_reponse(msgs[0]) is not None:
             raise _refus_entree(
-                "`thread_ts` points to a REPLY, not the thread's parent: Slack "
-                "therefore returned only that message, and nothing of the thread. Call again with "
-                "thread_ts=`" + vrai_parent + "`.")
-        return {
-            "parent": parent,
-            "replies": msgs[1:],
-            "has_more": bool(data.get("has_more")),
-            "next_cursor": (data.get("response_metadata") or {}).get("next_cursor"),
-        }
+                "`thread_ts`=`" + thread_ts + "` is a REPLY, not the thread's parent, and "
+                "its thread (parent ts `" + vrai_parent + "`) could not be read. Call "
+                "again with thread_ts=`" + vrai_parent + "`.")
+        out = _fil(msgs, data)
+        out["thread_ts"] = vrai_parent
+        out["requested_ts"] = thread_ts
+        out["note"] = ("`" + thread_ts + "` is a REPLY: its thread, parent ts `"
+                       + vrai_parent + "`, was read instead, with the same window. Pass "
+                       "thread_ts=`" + vrai_parent + "` on the next calls, `cursor` included.")
+        return out
 
     @mcp.tool()
     def slack_join_channel(channel: str) -> dict:

@@ -881,7 +881,7 @@ slack_list_channels	-	052f6eff30556b87
 slack_open_dm	-	b61f549022ade21c
 slack_post_message	-	64c7e44a595db56f
 slack_read_history	-	cedd83c9468b2b5a
-slack_read_thread	-	ee9f39b0b0ee8b0f
+slack_read_thread	-	d77990df53c80330
 snitcher_contact	list reveal_email	8f181b8dcce6c61b
 snitcher_custom_field	clear create delete get list set set_many update values	22cb706b7c5708e8
 snitcher_organisation	get list search tag untag	1d174e1619d9504a
