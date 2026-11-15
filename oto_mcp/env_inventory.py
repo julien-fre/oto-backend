@@ -273,6 +273,14 @@ _REGLAGES: tuple[Variable, ...] = (
              "sans préférence connue (un invité sans compte). Vide = FR ; toute autre "
              "valeur lève `LangueInconnue` à l'envoi.",
              ("oto_mcp/email_brand.py:131",)),
+    Variable("OTO_BRAND_CHARTE", Classe.REGLAGE, "",
+             "La charte des emails du tenant primaire, en JSON : les sept teintes "
+             "(`fond`, `surface`, `encre`, `discret`, `filet`, `bouton_fond`, "
+             "`bouton_encre`, hexadécimales), en option `bouton_rayon` (px) et `logo` "
+             '(`{"url": "https://…", "largeur": n, "hauteur": n}`). Vide = la charte du '
+             "code ; une déclaration invalide ou partielle est ignorée en entier et dite "
+             "au journal, jamais bloquante.",
+             ("oto_mcp/email_brand.py:146",)),
     Variable("OTO_ENV", Classe.REGLAGE, None,
              "`prod`|`preprod`, DÉCLARÉ jamais deviné (ADR 0070). Absente → `None` "
              "(poste de dev, tests) : rien n'engage un tiers. Une valeur hors des "

@@ -39,9 +39,13 @@ champ transport sur l'expéditeur).
   Celle d'un partenaire écrite dans notre code obligeait à nous redéployer pour
   accueillir le suivant — même défaut que son `dashboard_url`, même remède, même
   table. Le tenant **primaire** a sa marque à part (`email_brand.marque_instance`) :
-  ses teintes sont dans le code, son **nom et son site se déclarent**
-  (`OTO_BRAND_NAME`, `OTO_BRAND_SITE`, #968) — le site était écrit en dur, donc toute
-  autre instance signait ses emails de notre adresse.
+  son **nom et son site se déclarent** (`OTO_BRAND_NAME`, `OTO_BRAND_SITE`, #968) — le
+  site était écrit en dur, donc toute autre instance signait ses emails de notre
+  adresse. Ses teintes sont celles du code tant que l'instance ne pose pas
+  `OTO_BRAND_CHARTE` (15/11/2026) : sept teintes, le rayon du bouton et un logo
+  (https), validés comme une palette de tenant — invalide ou partielle, la charte est
+  ignorée en entier et l'email part dans celle du code. Un logo déclaré remplace le
+  nom en tête, au-dessus de la carte, avec le nom en `alt`.
   ⚠️ **Sans marque, on passe `None`, jamais `"oto"`** : `None` (une org sans
   `front_brand`) résout vers la marque de l'instance. Le littéral `"oto"` n'est le
   primaire que sur UNE instance ; ailleurs c'est un slug tiers, donc le gabarit neutre

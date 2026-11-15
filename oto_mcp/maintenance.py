@@ -448,8 +448,22 @@ def _cles_ko_par_org() -> dict[int, list[dict]]:
         if not agents:
             continue
         par_org.setdefault(int(l["org_id"]), []).append(
-            {**dict(l), "agents": [a.get("label") or a.get("procedure") for a in agents]})
+            {**dict(l), "agents": _agents_nommes(agents)})
     return par_org
+
+
+def _agents_nommes(triggers: list[dict]) -> list[dict]:
+    """`[{id, label}]` des déclencheurs : l'alerte NOMME chaque agent et le relie à sa
+    page — un nombre seul laisse le destinataire chercher lesquels."""
+    return [{"id": t.get("id"), "label": t.get("label") or t.get("procedure")}
+            for t in triggers]
+
+
+def _agents_du_retrait(org_id: int, connecteurs: list) -> dict[str, list[dict]]:
+    """Par connecteur retiré, les agents programmés actifs qui en dépendent encore."""
+    from .db import runner_triggers
+    return {c: _agents_nommes(runner_triggers.triggers_actifs_utilisant(org_id, c))
+            for c in connecteurs or []}
 
 
 def alertes_credential(*, dry_run: bool = False) -> dict:
@@ -518,9 +532,11 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
         _base, marque = org_store.org_front(org_id)
         destinataire, adresse = dest
         fiche = db_users.get_user(destinataire) or {}
+        if g:
+            g = {**dict(g), "agents": _agents_du_retrait(org_id, list(g.get("connectors") or []))}
         if _gabarits.send_credential_alert_email(
                 adresse, retrait=g, cles_ko=ko, brand=marque,
-                locale=fiche.get("locale")):
+                locale=fiche.get("locale"), org_id=org_id, sub=destinataire):
             envoyes += 1
             if g:
                 marques += db_alertes.marquer_notifie(list(g["ids"] or []))

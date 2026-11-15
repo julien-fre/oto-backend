@@ -34,6 +34,11 @@ D'où ce qui suit, qui n'est pas un goût mais une contrainte de client :
   littérales ; sans la déclaration, Outlook mobile et Apple Mail repeignent le fond en
   sombre et laissent le texte en place — c'est exactement l'accident qu'a connu la
   page de connexion Logto du partenaire (cf. `logto/custom.css` côté front).
+
+**4. La charte du tenant primaire se DÉCLARE (15/11/2026).** Ses sept teintes, le rayon
+du bouton et un logo viennent de `OTO_BRAND_CHARTE` quand l'instance la pose
+(`_charte_declaree`) ; sans elle, le rendu du code, inchangé. Un logo déclaré prend la
+place du nom en tête, au-dessus de la carte, avec le nom en `alt`.
 """
 from __future__ import annotations
 
@@ -95,6 +100,11 @@ class Marque:
     # `users.locale` (un invité sans compte) — vide ⟹ français, comme avant.
     expediteur: str = ""
     langue: str = ""
+    # Déclarés par l'instance pour son tenant PRIMAIRE (`OTO_BRAND_CHARTE`), sinon le
+    # rendu d'avant : un bouton en pilule (999) et le NOM en tête de carte. `logo` =
+    # `(url https, largeur, hauteur)` ; vide ⟹ pas d'image.
+    bouton_rayon: int = 999
+    logo: tuple = ()
 
 
 # La charte du tenant PRIMAIRE — nos teintes, à l'octet. Les palettes de partenaires
@@ -109,6 +119,71 @@ _TEINTES_PRIMAIRES = dict(
 )
 
 
+#: La charte que l'instance DÉCLARE pour son tenant primaire (15/11/2026). Les teintes
+#: ci-dessus sont celles du code, donc celles de toute instance qui ne dit rien — et le
+#: produit d'une instance peut ne pas leur ressembler du tout : ses emails partaient
+#: alors dans une charte que son application ne porte pas. Comme le nom et le site
+#: (#968), c'est l'instance qui la déclare, pas ce fichier : écrire ici les teintes ou
+#: le logo d'un produit les imposerait à toutes les autres instances.
+_ENV_CHARTE = "OTO_BRAND_CHARTE"
+_RAYON_MAX = 999
+_LOGO_MAX = 600
+
+
+def _charte_declaree() -> dict:
+    """Ce que `OTO_BRAND_CHARTE` déclare, prêt à passer à `Marque`, ou `{}`.
+
+    JSON : les sept teintes (`fond`, `surface`, `encre`, `discret`, `filet`,
+    `bouton_fond`, `bouton_encre`, en hexadécimal), et en option `bouton_rayon` (entier,
+    en px) et `logo` (`{"url": "https://…", "largeur": n, "hauteur": n}`).
+
+    ⚠️ **Validée comme une palette de tenant (`_declaree`)** : une teinte absente ou qui
+    n'est pas une couleur, un rayon ou un logo invalide, un JSON illisible — la charte
+    est ignorée EN ENTIER, dit au journal, et l'email part dans le rendu du code. Une
+    déclaration à moitié juste ne doit jamais empêcher un envoi, ni mélanger deux
+    chartes ; et rien d'elle ne finit dans un attribut `style` sans être validé."""
+    import json
+    brut = (os.environ.get(_ENV_CHARTE) or "").strip()
+    if not brut:
+        return {}
+    try:
+        decl = json.loads(brut)
+    except ValueError:
+        logger.warning("%s illisible (JSON attendu) — charte du code", _ENV_CHARTE)
+        return {}
+    if not isinstance(decl, dict):
+        logger.warning("%s : objet JSON attendu — charte du code", _ENV_CHARTE)
+        return {}
+    out: dict = {}
+    for champ in _CHAMPS_COULEUR:
+        val = decl.get(champ)
+        if not isinstance(val, str) or not _COULEUR_RE.match(val.strip()):
+            logger.warning("%s : « %s » absent ou pas une couleur (%r) — charte du code, "
+                           "on ne mélange pas deux chartes", _ENV_CHARTE, champ, val)
+            return {}
+        out[champ] = val.strip()
+    if "bouton_rayon" in decl:
+        r = decl["bouton_rayon"]
+        if isinstance(r, bool) or not isinstance(r, int) or not 0 <= r <= _RAYON_MAX:
+            logger.warning("%s : bouton_rayon %r invalide — charte du code", _ENV_CHARTE, r)
+            return {}
+        out["bouton_rayon"] = r
+    if decl.get("logo") is not None:
+        logo = decl["logo"]
+        url = logo.get("url") if isinstance(logo, dict) else None
+        dims = [logo.get(k) for k in ("largeur", "hauteur")] if isinstance(logo, dict) else []
+        if (not isinstance(url, str) or not url.startswith("https://")
+                or any(c in url for c in "\"'<> \r\n")
+                or len(dims) != 2
+                or not all(isinstance(d, int) and not isinstance(d, bool)
+                           and 0 < d <= _LOGO_MAX for d in dims)):
+            logger.warning("%s : logo invalide (url https et largeur/hauteur entières "
+                           "attendues) — charte du code", _ENV_CHARTE)
+            return {}
+        out["logo"] = (url, dims[0], dims[1])
+    return out
+
+
 def marque_instance() -> Marque:
     """La marque du tenant PRIMAIRE de cette instance : son NOM et son SITE sont
     DÉCLARÉS (`OTO_BRAND_NAME`, `OTO_BRAND_SITE` — décision du 28/09/2026, #968), les
@@ -119,7 +194,8 @@ def marque_instance() -> Marque:
     `OTO_BRAND_SITE` est un hôte nu (`exemple.tld`) : il s'affiche en pied d'email et
     devient `https://<site>` dans le pied des pages publiques."""
     return Marque(slug=primary_slug(), nom=nom_instance(), site=site_instance(),
-                  langue=langue_instance(), **_TEINTES_PRIMAIRES)
+                  langue=langue_instance(),
+                  **{**_TEINTES_PRIMAIRES, **_charte_declaree()})
 
 
 def langue_instance() -> str:
@@ -291,10 +367,10 @@ def bouton(m: Marque, url: Optional[str], libelle: str) -> str:
     return (
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
         f'style="margin:4px 0 12px"><tr>'
-        f'<td align="center" style="border-radius:999px;background:{m.bouton_fond}">'
+        f'<td align="center" style="border-radius:{m.bouton_rayon}px;background:{m.bouton_fond}">'
         f'<a href="{_email._esc_attr(url)}" style="display:inline-block;padding:12px 24px;'
         f'font-family:{POLICE};font-size:15px;font-weight:600;line-height:1;'
-        f'color:{m.bouton_encre};text-decoration:none;border-radius:999px">'
+        f'color:{m.bouton_encre};text-decoration:none;border-radius:{m.bouton_rayon}px">'
         f'{_email._esc(libelle)}</a></td></tr></table>'
         # L'adresse en clair sous le bouton est échappée en ATTRIBUT alors qu'elle
         # est du texte : `_esc` laisse passer les guillemets, et un `"` venu d'une
@@ -378,6 +454,27 @@ def mention_transactionnelle(m: Marque, locale: Optional[str]) -> str:
             f"répondez-y si quelque chose cloche.")
 
 
+def _logo(m: Marque) -> str:
+    """Le logo DÉCLARÉ, au-dessus de la carte sur le fond de page, ou RIEN.
+
+    Il remplace le nom en tête de carte. `alt` = le nom de la marque : beaucoup de
+    clients bloquent les images, l'email doit se lire sans elle — l'alt s'affiche alors
+    à la place, dans la typo du texte. Largeur et hauteur explicites : sans elles,
+    Outlook affiche l'image à sa taille native."""
+    if not m.logo:
+        return ""
+    url, largeur, hauteur = m.logo
+    return (
+        f'<table role="presentation" width="{LARGEUR}" cellpadding="0" cellspacing="0" '
+        f'border="0" style="width:100%;max-width:{LARGEUR}px"><tr>'
+        f'<td style="padding:0 0 24px 2px"><img src="{_email._esc_attr(url)}" '
+        f'width="{largeur}" height="{hauteur}" alt="{_email._esc_attr(m.nom)}" '
+        f'style="display:block;border:0;outline:none;width:{largeur}px;height:{hauteur}px;'
+        f'font-family:{POLICE};font-size:16px;font-weight:600;color:{m.encre}"></td>'
+        f'</tr></table>'
+    )
+
+
 def page(m: Marque, contenu: str, *, preheader: str, mention: Optional[str],
          locale: Optional[str] = None, desinscription: Optional[tuple] = None,
          signature: bool = True) -> str:
@@ -414,12 +511,15 @@ def page(m: Marque, contenu: str, *, preheader: str, mention: Optional[str],
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'border="0" style="width:100%;background:{m.fond}">'
         f'<tr><td align="center" style="padding:32px 12px">'
+        + _logo(m) +
         f'<table role="presentation" width="{LARGEUR}" cellpadding="0" cellspacing="0" '
         f'border="0" style="width:100%;max-width:{LARGEUR}px;background:{m.surface};'
         f'border:1px solid {m.filet};border-radius:12px">'
-        f'<tr><td style="padding:28px 32px 0 32px;font-family:{POLICE};font-size:15px;'
-        f'font-weight:600;letter-spacing:-0.01em;color:{m.encre}">{_email._esc(m.nom)}</td></tr>'
-        f'<tr><td style="padding:20px 32px 4px 32px;font-family:{POLICE};'
+        + ("" if m.logo else
+           f'<tr><td style="padding:28px 32px 0 32px;font-family:{POLICE};font-size:15px;'
+           f'font-weight:600;letter-spacing:-0.01em;color:{m.encre}">{_email._esc(m.nom)}'
+           f'</td></tr>') +
+        f'<tr><td style="padding:{32 if m.logo else 20}px 32px 4px 32px;font-family:{POLICE};'
         f'font-size:16px;line-height:1.6;color:{m.encre}">{contenu}</td></tr>'
         + _pied(m, mention, desinscription, signature) +
         '</table></td></tr></table></body></html>'
