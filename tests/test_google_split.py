@@ -182,7 +182,9 @@ def test_search_console_demande_webmasters_readonly_seul_depuis_sa_carte():
     assert "https://www.googleapis.com/auth/webmasters" not in G.KNOWN_SCOPES
     assert gsc in G.KNOWN_SCOPES
     assert G.services_granted(f"{gsc} {EMAIL}") == ["search_console"]
-    assert G.SERVICE_LABELS["search_console"] == "Google Search Console"
+    # Le nom de SA carte, que le refus « n'a pas encore autorisé … » cite : jamais celui
+    # de la carte du compte de service (« Google Search Console »).
+    assert G.SERVICE_LABELS["search_console"] == "Search Console (Google sign-in)"
 
 
 def test_un_connecteur_inconnu_nobtient_aucun_scope():

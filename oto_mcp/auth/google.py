@@ -115,7 +115,7 @@ SERVICE_SCOPES: dict[str, tuple[str, ...]] = {
     # calls only `listAccessibleCustomers`, `googleAds:search` and `googleAdsFields:search`
     # (`oto.tools.google.ads`) — no mutate endpoint is ever built.
     "google_ads": ("https://www.googleapis.com/auth/adwords",),
-    # Google Search Console (SENSITIVE), read-only: `webmasters.readonly` lets the
+    # Google Search Console, read-only: `webmasters.readonly` lets the
     # person's Google user read the properties THEY can open — performance, URL
     # inspection, sitemaps. `webmasters` (submit a sitemap, add a property) is not
     # asked: the service-account connector `google_search_console` keeps that write.
@@ -125,7 +125,7 @@ SERVICES: tuple[str, ...] = tuple(SERVICE_SCOPES)
 SERVICE_LABELS = {"gmail": "Gmail", "drive": "Google Drive", "sheets": "Google Sheets",
                   "calendar": "Google Calendar", "tasks": "Google Tasks",
                   "chat": "Google Chat", "bigquery": "Google BigQuery",
-                  "google_ads": "Google Ads", "search_console": "Google Search Console"}
+                  "google_ads": "Google Ads", "search_console": "Search Console (Google sign-in)"}
 
 # What the ACCOUNT (`google`) requests under our app: the six services from before the
 # split, for a dashboard with a single Google card. FROZEN at these six — a service

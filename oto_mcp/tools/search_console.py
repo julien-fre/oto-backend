@@ -6,8 +6,9 @@ can open, nothing more — no key to paste, no service account to add to a prope
 
 **One tool, `search_console`, read-only** (`<ns>` of the `<ns>`/`<ns>_act` pair; no
 `_act`: the scope asked cannot write). Its ops and arguments are those of the
-service-account connector `google_search_console` (described in oto-core), so a recipe
-written for one runs on the other by changing the tool name:
+service-account connector `google_search_console` (described in oto-core), and so are
+the answers (Google's JSON; `list_sitemaps` under `items`), so a recipe written for one
+runs on the other by changing the tool name:
 - `list_sites` — the properties, with the permission level of the user on each;
 - `query_search_analytics` — clicks, impressions, CTR, position, grouped and filtered;
 - `inspect_url` — the index status of one URL (2,000 a day per property);
@@ -281,7 +282,8 @@ def register(mcp: FastMCP) -> None:
             data = await asyncio.to_thread(
                 _call, token, "GET", f"/webmasters/v3/sites/{_path_site(site)}/sitemaps",
                 params=params)
-            return {"sitemap": data.get("sitemap") or []}
+            # `items`, as the described connector's `output: {items: sitemap}` serves it.
+            return {"items": data.get("sitemap") or []}
         # get_sitemap
         path = _need(feedpath, "feedpath", op)
         if not _URL.match(path):

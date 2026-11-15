@@ -140,7 +140,7 @@ def test_query_search_analytics_un_segment_et_les_noms_de_google(google):
 def test_une_propriete_prefixe_d_url_est_encodee_entiere(google):
     google.replies = [(200, {"sitemap": [{"path": "https://www.exemple.test/sitemap.xml"}]})]
     out = _call(op="list_sitemaps", site_url="https://www.exemple.test/")
-    assert out["sitemap"][0]["path"].endswith("sitemap.xml")
+    assert out["items"][0]["path"].endswith("sitemap.xml")
     assert google.calls[0]["url"] == (f"{API}/webmasters/v3/sites/"
                                       "https%3A%2F%2Fwww.exemple.test%2F/sitemaps")
 
@@ -158,7 +158,7 @@ def test_get_sitemap_et_inspect_url(google):
 
 def test_list_sitemaps_vide_rend_une_liste(google):
     google.replies = [(200, {})]
-    assert _call(op="list_sitemaps", site_url=SITE) == {"sitemap": []}
+    assert _call(op="list_sitemaps", site_url=SITE) == {"items": []}
 
 
 # --- 4. refus ----------------------------------------------------------------------------
