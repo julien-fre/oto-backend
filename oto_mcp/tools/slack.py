@@ -11,6 +11,9 @@ user). WRITES (post, delete, react) take `author`:
 chosen by the caller, refused if ambiguous or without a token — never inferred
 (decision of 23/09). The instance's published app, installed in one click, writes
 the same credential (`auth/slack.py`).
+
+An ORG or TEAM connection always acts as the app (15/11/2026): its user token is the
+personal token of whoever clicked "Add to Slack", so it is never used (`_partage`).
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ from typing import Literal, Optional, Union
 from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, file_content
+from .. import access, credentials_store, file_content
 from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
 from ..auth import slack as _slack_auth  # noqa: F401 — declares the "Add to Slack" flow
@@ -141,12 +144,44 @@ def _refus_entree(message: str) -> McpError:
 
 
 
-def _auteur(bot: bool, user: bool, author: Optional[str]) -> bool:
+#: Levels whose credential is SHARED by several people — never one person's identity.
+_NIVEAUX_PARTAGES = (credentials_store.ORG, "group", credentials_store.TENANT)
+
+
+def _partage(rc) -> bool:
+    """Does this credential belong to the org, a team or the tenant — rather than to
+    the person calling? (A platform grant keeps its historical routing.)
+
+    ⚠️ The user token of such a credential is NOBODY's own: "Add to Slack" at the org
+    tier stores `authed_user.access_token`, the token of whoever clicked install
+    (`auth/slack.finish`). Posting with it put the installer's name on messages from
+    another member's run, and `open_dm` opened the installer's DM, where the app cannot
+    post — a likely path to an agent retrying as `author="me"`. Reported 15/11/2026;
+    fixed by routing: a shared credential acts as the app, only a member's own
+    credential speaks as them."""
+    return getattr(rc, "entity_type", None) in _NIVEAUX_PARTAGES
+
+
+def _auteur(bot: bool, user: bool, author: Optional[str], partage: bool = False) -> bool:
     """`as_user` to use for a write, or a refusal that says what to pass.
 
-    A single token set: it is used, nothing to choose. Both: the caller names
-    the author. An author requested without the token that carries it: refusal, never a fallback
-    to the other identity."""
+    A shared connection (`_partage`): always the app. A single token set: it is used,
+    nothing to choose. Both: the caller names the author. An author requested without
+    the token that carries it: refusal, never a fallback to the other identity."""
+    if partage:
+        if author == "me":
+            raise _refus_entree(
+                "`author=\"me\"` impossible: this Slack workspace is connected for the "
+                "organisation or a team, and such a connection only writes as the app "
+                "(`author=\"app\"`, or omit `author`). To write in your own name, connect "
+                "your own Slack account on the connector card (for you, not the organisation).")
+        if not bot:
+            raise _refus_entree(
+                "This Slack workspace is connected for the organisation or a team with a "
+                "user token only (`xoxp-`), and such a connection only writes as the app. "
+                "Reconnect it with \"Add to Slack\" (or set the app's bot token `xoxb-`) "
+                "on the connector card.")
+        return False
     if author is None:
         if bot and user:
             raise _refus_entree(
@@ -249,8 +284,9 @@ def _refus(e, channel: Optional[str] = None) -> ValueError:
         return ValueError(
             "Slack refuses: this identity is not allowed to manage user groups in this "
             "workspace. A bot token (`author=\"app\"`) only can when the workspace lets "
-            "everyone manage them; otherwise write with `author=\"me\"` and the user token "
-            "of a member allowed by that setting (an admin, by default).")
+            "everyone manage them; otherwise write with `author=\"me\"` from a member's OWN "
+            "Slack connection (an org connection only acts as the app), that member "
+            "being allowed by that setting (an admin, by default).")
 
     if code in ("plan_upgrade_required", "paid_teams_only"):
         return ValueError(
@@ -302,7 +338,7 @@ def register(mcp: FastMCP) -> None:
         except SlackError as e:
             raise _refus(e, channel) from e
 
-    def _jetons() -> tuple[Optional[str], Optional[str], bool]:
+    def _jetons() -> tuple[Optional[str], Optional[str], bool, bool]:
         # Multi-field BYO (#25): bot token (xoxb-) and/or user token (xoxp-),
         # resolved by (sub, active org) via the credential cascade (user > active
         # group > active org). ⚠️ It is THIS result that says which identities the
@@ -320,18 +356,24 @@ def register(mcp: FastMCP) -> None:
                 bot = raw
             elif raw:
                 user = raw
-        return bot, user, rc.is_platform
+        partage = _partage(rc)
+        if partage and bot:
+            # A shared connection's user token is the installer's (`_partage`): never
+            # used, for reads either — `open_dm` would open THEIR DM, history read
+            # THEIR conversations. A legacy user-token-only org row keeps its reads.
+            user = None
+        return bot, user, rc.is_platform, partage
 
     def _client() -> tuple[SlackClient, bool]:
         # READS: the client routes itself (channel → bot, DM → user).
-        bot, user, is_platform = _jetons()
+        bot, user, is_platform, _ = _jetons()
         return SlackClient(bot_token=bot, user_token=user,
                            default_as_user=bool(user)), is_platform
 
     def _ecrivain(author: Optional[str]) -> tuple[SlackClient, bool, str]:
         # WRITES: the author is chosen (`_auteur`), then held for the whole call.
-        bot, user, is_platform = _jetons()
-        as_user = _auteur(bool(bot), bool(user), author)
+        bot, user, is_platform, partage = _jetons()
+        as_user = _auteur(bool(bot), bool(user), author, partage)
         client = SlackClient(bot_token=bot, user_token=user, default_as_user=as_user)
         return client, is_platform, "me" if as_user else "app"
 
@@ -384,7 +426,8 @@ def register(mcp: FastMCP) -> None:
             thread_ts: Parent message ts to reply into a thread.
             author: Who writes — `"me"` (as you, user token) or `"app"` (as the
                 Slack app, bot token). Required when the workspace holds both
-                tokens; with a single one, it is used and may be omitted.
+                tokens; with a single one, it is used and may be omitted. An
+                org or team connection always writes as the app.
             unfurl: `false` = Slack shows NO preview under this message, no
                 link card and no media (every part, when it is split). Default
                 `true` = Slack's usual previews. A procedure that says "no
@@ -414,7 +457,8 @@ def register(mcp: FastMCP) -> None:
             ts: Message timestamp returned by `slack_post_message`.
             author: Who writes — `"me"` (as you, user token) or `"app"` (as the
                 Slack app, bot token). Required when the workspace holds both
-                tokens; with a single one, it is used and may be omitted.
+                tokens; with a single one, it is used and may be omitted. An
+                org or team connection always writes as the app.
         """
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
@@ -632,7 +676,8 @@ def register(mcp: FastMCP) -> None:
             name: Emoji name without colons (e.g. `white_check_mark`).
             author: Who writes — `"me"` (as you, user token) or `"app"` (as the
                 Slack app, bot token). Required when the workspace holds both
-                tokens; with a single one, it is used and may be omitted.
+                tokens; with a single one, it is used and may be omitted. An
+                org or team connection always writes as the app.
         """
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
@@ -735,7 +780,8 @@ def register(mcp: FastMCP) -> None:
             channels: Default channel IDs (C…) (`create_usergroup`, `update_usergroup`).
             users: Member user IDs (U…) — the member ops; `create_usergroup` too.
             author: Who acts — `"me"` (user token) or `"app"` (bot token).
-                Required when the workspace holds both tokens.
+                Required when the workspace holds both tokens. An org or team
+                connection always acts as the app.
             dry_run: Validate and preview, write nothing.
         """
         champs = {k: v for k, v in (("name", name), ("handle", handle),
