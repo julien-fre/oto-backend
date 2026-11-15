@@ -52,6 +52,7 @@ def agents_bloques(seuil: int) -> list[dict[str, Any]]:
             f"""
             SELECT t.id AS trigger_id, t.org_id,
                    COALESCE(NULLIF(t.label, ''), t.procedure) AS libelle,
+                   t.model AS modele,
                    f.travaux, f.depuis, f.dernier, f.motif
               FROM runner_triggers t
               CROSS JOIN LATERAL (

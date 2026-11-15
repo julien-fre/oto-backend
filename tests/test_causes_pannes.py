@@ -97,3 +97,15 @@ def test_la_reponse_du_fournisseur_et_rien_de_notre_texte(motif, attendu):
 def test_le_libelle_jamais_le_slug_en_minuscules():
     assert C.libelle_connecteur("hubspot") == "HubSpot"
     assert C.libelle_connecteur("un_inconnu") == "Un Inconnu"
+
+
+def test_une_cle_de_modele_refusee_nomme_le_fournisseur_du_modele():
+    """Le motif ne nomme pas le fournisseur : le modèle de l'agent le dit — seulement
+    pour une réponse de fournisseur, jamais pour notre texte interne."""
+    refus = "fin_anormale (authentication_failed, HTTP 401 : Invalid API key)"
+    assert C.connecteur_de_la_panne(refus, "claude-sonnet-5") == "Anthropic"
+    assert C.connecteur_de_la_panne(refus, None) is None
+    assert C.connecteur_de_la_panne(refus, "modele-inconnu") is None
+    assert C.connecteur_de_la_panne("RuntimeError : run_start : refusé",
+                                    "claude-sonnet-5") is None
+    assert C.connecteur_de_la_panne("pas de clé `hubspot`", "claude-sonnet-5") == "HubSpot"

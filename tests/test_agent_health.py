@@ -35,10 +35,10 @@ def base(live, monkeypatch):
     monkeypatch.setattr(A, "marque_de_l_org", lambda org: SimpleNamespace(nom="Acme", langue=""))
 
 
-def _agent(label, sub="jane", enabled=True):
+def _agent(label, sub="jane", enabled=True, model=None):
     from oto_mcp.db import runner_triggers as rt
     t = rt.create_trigger(ORG, sub, procedure="p", tz="UTC", tools=["a"], cron="0 6 * * *",
-                          next_due="2999-01-01 00:00:00+00", label=label)
+                          next_due="2999-01-01 00:00:00+00", label=label, model=model)
     if not enabled:
         from oto_mcp.db._conn import _connect
         with _connect() as conn:
@@ -46,10 +46,11 @@ def _agent(label, sub="jane", enabled=True):
     return t["id"]
 
 
-def _panne(agent, cote="proprietaire", classe="cle_refusee", empreinte=None):
+def _panne(agent, cote="proprietaire", classe="cle_refusee", empreinte=None,
+           motif="HTTP 401"):
     from oto_mcp.db import episodes_agents
     return episodes_agents.ouvrir_ou_rafraichir(
-        org_id=ORG, trigger_id=agent, classe=classe, cote=cote, motif="HTTP 401",
+        org_id=ORG, trigger_id=agent, classe=classe, cote=cote, motif=motif,
         job_id=None, travaux=1, empreinte=empreinte)
 
 
@@ -267,3 +268,20 @@ def test_un_geste_d_avant_se_lit_par_son_detail():
     assert E.outils_ajoutes(reps) == ["serper_search", "web_read"]
     reps.append({"action": "annulation", "outils": ["serper_search"]})
     assert E.outils_a_defaire(reps) == ["web_read"]
+
+
+def test_chaque_item_dit_le_connecteur_et_la_reponse_du_fournisseur(live):
+    """Comme le courriel : le connecteur que le motif nomme — ou, pour une clé de modèle
+    refusée, le fournisseur du modèle de l'agent — et la réponse du fournisseur ; jamais
+    notre texte interne. `connectors` est une liste (vide sinon), `error` un texte ou null."""
+    a = _agent("Relances", model="claude-sonnet-5")
+    b = _agent("Veille", model="claude-sonnet-5")
+    _panne(a, motif="fin_anormale (authentication_failed, HTTP 401 : Invalid API key)")
+    _panne(b, cote="inconnu", classe="inconnu",
+           motif="RuntimeError : run_start : un texte interne `x_y`")
+    out = _lire()
+    (pb,) = out["needs_you"]
+    assert pb["connectors"] == ["Anthropic"], "le fournisseur du modèle, en repli"
+    assert pb["error"] == "HTTP 401 : Invalid API key"
+    (nous,) = out["on_us"]
+    assert nous["connectors"] == [] and nous["error"] is None, "notre texte ne sort pas"

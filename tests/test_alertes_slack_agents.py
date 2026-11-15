@@ -561,3 +561,41 @@ def test_le_medecin_ne_touche_pas_la_copie_d_une_cause_approuvee(agent):
     _diagnose(ep, client_headline="Un autre texte.")
     assert causes_agents.lire("test-d5b")["copie"]["fr"]["headline"].startswith(
         "Le compte de paiement")
+
+
+# --- la ligne de détails (15/11/2026) : comme le courriel et l'onglet Santé -------------
+
+def _ep_seul(tid, motif, modele=None, **kw):
+    return {"id": 900 + tid, "org_id": 1, "trigger_id": tid, "libelle": f"agent {tid}",
+            "classe": "cle_refusee", "cote": "proprietaire", "message": "alerte",
+            "motif": motif, "modele": modele, "agent_sub": "u", "ouvert_at": None,
+            "message_client": None, "cause_copie": None, **kw}
+
+
+@pytest.fixture()
+def sans_liens(monkeypatch):
+    from oto_mcp import links
+    monkeypatch.setattr(links, "link_for", lambda kind, **kw: None)
+
+
+def test_le_message_dit_le_connecteur_et_l_erreur_quand_on_les_connait(sans_liens):
+    """Une clé de modèle refusée : le fournisseur du modèle de l'agent, et sa réponse
+    entre accents graves — une seule ligne, après le geste."""
+    texte, _ = A.composer(_ep_seul(1, "fin_anormale (authentication_failed, HTTP 401 : "
+                                      "Invalid API key)", "claude-sonnet-5"),
+                          "en", marque="Acme")
+    assert "Connector: Anthropic · Error: `HTTP 401 : Invalid API key`" in texte
+    assert texte.splitlines()[-1].startswith("Connector:"), "après le geste"
+
+
+def test_un_paquet_dit_ses_connecteurs_une_fois(sans_liens):
+    eps = [_ep_seul(1, "pas de clé `hubspot` déposée"), _ep_seul(2, "pas de clé `hubspot`")]
+    texte, _ = A.composer_paquet(eps, "fr", marque="Acme")
+    assert texte.count("Connecteur : HubSpot") == 1 and "Erreur" not in texte
+
+
+def test_rien_de_connu_aucune_ligne_et_jamais_notre_texte(sans_liens):
+    texte, _ = A.composer(_ep_seul(1, "RuntimeError : run_start : `x_y` refusé",
+                                   "claude-sonnet-5"), "fr", marque="Acme")
+    assert "Connecteur :" not in texte and "Erreur :" not in texte
+    assert "RuntimeError" not in texte

@@ -94,6 +94,7 @@ _PHRASES = {
         "reparer": "Réparer avec {marque}",
         "faire": "Le faire maintenant",
         "ouvrir": "Ouvrir l'agent",
+        "connecteur": "Connecteur : {c}", "erreur": "Erreur : `{e}`",
         "test": "Test : c'est ici que {marque} vous préviendra quand un de vos agents ne "
                 "fonctionne plus, avec le geste pour le réparer.",
         "classes": {
@@ -117,6 +118,7 @@ _PHRASES = {
         "reparer": "Fix it with {marque}",
         "faire": "Do it now",
         "ouvrir": "Open the agent",
+        "connecteur": "Connector: {c}", "erreur": "Error: `{e}`",
         "test": "Test: this is where {marque} will tell you when one of your agents stops "
                 "working, with what to do to fix it.",
         "classes": {
@@ -244,6 +246,31 @@ def _depuis(quand: Any, langue_: str) -> str:
     return f"{quand:%b} {quand.day} at {quand:%H:%M} UTC"
 
 
+def _ligne_details(eps: list[dict], langue_: str) -> Optional[str]:
+    """La ligne de détails d'un message, comme le courriel : le connecteur
+    (`causes_pannes.connecteur_de_la_panne`, modèle de l'agent en repli) et la réponse du
+    fournisseur, seulement ce qui est connu — None quand rien ne l'est. Rien de notre
+    texte interne. Échappée comme un libellé (`|`, `>`, et l'accent grave dans l'erreur,
+    qui fermerait le bloc de code)."""
+    from . import causes_pannes
+    p = _PHRASES[langue_]
+    connecteurs: list[str] = []
+    erreur = None
+    for e in eps:
+        c = causes_pannes.connecteur_de_la_panne(e.get("motif"), e.get("modele"))
+        if c and c not in connecteurs:
+            connecteurs.append(c)
+        erreur = erreur or causes_pannes.erreur_du_fournisseur(e.get("motif"))
+    morceaux = []
+    if connecteurs:
+        morceaux.append(p["connecteur"].format(
+            c=", ".join(connecteurs).replace("|", "/").replace(">", "›")))
+    if erreur:
+        morceaux.append(p["erreur"].format(
+            e=erreur.replace("`", "'").replace("|", "/").replace(">", "›")))
+    return " · ".join(morceaux) or None
+
+
 def composer(ep: dict, langue_: str, *, marque: str) -> tuple[str, Optional[list]]:
     """Le texte (et les blocs) du message que l'épisode attend (`ep["message"]`). Les
     liens sont ceux du tableau de bord du titulaire de l'agent (`ep["agent_sub"]`)."""
@@ -259,6 +286,9 @@ def composer(ep: dict, langue_: str, *, marque: str) -> tuple[str, Optional[list
     pb = message_du_probleme(org, ep, langue_, marque=marque, sub=sub)
     titre = p["titre"].format(agent=agent, depuis=_depuis(ep.get("ouvert_at"), langue_))
     lignes = [titre, pb["headline"]] + ([pb["todo"]] if pb.get("todo") else [])
+    details = _ligne_details([ep], langue_)
+    if details:
+        lignes.append(details)
     page_agent = links.link_for("agent", sub=sub, org=org, id=tid)
     reparer = links.link_for("agent_repair", sub=sub, org=org, id=tid)
     premier = ({"text": p["faire"], "url": pb["link"]} if pb.get("link")
@@ -338,6 +368,9 @@ def composer_paquet(eps: list[dict], langue_: str, *,
     depuis = _depuis(min(ouverts) if ouverts else premier.get("ouvert_at"), langue_)
     lignes = [p["titre_n"].format(n=len(eps), depuis=depuis, agents=_nommer(eps, langue_)),
               pb["headline"]] + ([pb["todo"]] if pb.get("todo") else [])
+    details = _ligne_details(eps, langue_)
+    if details:
+        lignes.append(details)
     boutons = []
     if pb.get("link"):
         boutons.append({"type": "button", "style": "primary",

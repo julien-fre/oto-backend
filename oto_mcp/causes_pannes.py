@@ -173,3 +173,23 @@ def erreur_du_fournisseur(motif: Optional[str]) -> Optional[str]:
         sortie = f"HTTP {m.group('code')}" + (f" : {msg}" if msg else "")
         return sortie[:ERREUR_MAX]
     return None
+
+
+def connecteur_de_la_panne(motif: Optional[str], modele: Optional[str] = None
+                           ) -> Optional[str]:
+    """Le connecteur d'une panne : celui que le motif NOMME d'abord ; sinon, quand le
+    motif est la réponse d'un fournisseur de modèle (une clé refusée, sans espace de
+    travail, un crédit épuisé — `erreur_du_fournisseur` la lit) et ne le nomme pas, le
+    fournisseur du MODÈLE de l'agent (`runner_models.famille`). La clé d'une famille
+    servie par son seul fabricant est celle de son hôte (`claude_subscription` →
+    Anthropic). Notre texte interne ne nomme rien : None."""
+    nomme = connecteur_du_motif(motif)
+    if nomme or not modele or erreur_du_fournisseur(motif) is None:
+        return nomme
+    from . import runner_models
+    famille = runner_models.famille(modele)
+    if not famille:
+        return None
+    connus = _connecteurs_decrits()
+    hote = runner_models._HOTE_DE_LA_FAMILLE.get(famille)
+    return connus.get(famille) or (connus.get(hote) if hote else None)

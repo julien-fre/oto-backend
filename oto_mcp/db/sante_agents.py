@@ -48,7 +48,7 @@ def episodes_vivants(org_id: int) -> list[dict[str, Any]]:
         return [dict(r) for r in conn.execute(
             """
             SELECT e.id, e.org_id, e.trigger_id, e.classe, e.cote, e.statut, e.motif,
-                   e.message_client, e.ouvert_at, e.empreinte,
+                   e.message_client, e.ouvert_at, e.empreinte, t.model AS modele,
                    c.copie AS cause_copie, c.cote AS cause_cote
               FROM agent_episodes e
               JOIN runner_triggers t ON t.id = e.trigger_id AND t.enabled

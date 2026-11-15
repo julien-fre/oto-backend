@@ -133,7 +133,8 @@ def problemes(org_id: int, agents: list[dict], langue_: str, *, marque: str,
         # Le connecteur et la réponse du fournisseur, quand le motif les dit (option 1
         # de Julien, 15/11) — lus, jamais recopiés : le motif brut ne sort toujours pas.
         motif = a.get("motif") or ep.get("motif")
-        connecteur = causes_pannes.connecteur_du_motif(motif)
+        connecteur = causes_pannes.connecteur_de_la_panne(
+            motif, a.get("modele") or ep.get("modele"))
         if connecteur and connecteur not in p["connectors"]:
             p["connectors"].append(connecteur)
         p["error"] = p["error"] or causes_pannes.erreur_du_fournisseur(motif)

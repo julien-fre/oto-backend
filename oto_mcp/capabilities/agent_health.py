@@ -99,8 +99,11 @@ class AgentHealthUndoInput(BaseModel):
 class AgentHealth(BaseModel):
     """`watched` agents allumés que l'appelant voit, dont `working` fonctionnent ;
     `needs_you` = un problème par cause qui attend le client : `{headline, todo, action,
-    link, since, agents: [{id, label}]}` ; `on_us` = ce qui est à nous, par côté :
-    `{side: platform|operator, headline, since, lasting, agents}` — une panne de la
+    link, since, agents: [{id, label}], connectors, error}` ; `on_us` = ce qui est à
+    nous, par côté : `{side: platform|operator, headline, since, lasting, agents,
+    connectors, error}` — `connectors` = les connecteurs que nomment les motifs de ses
+    agents (libellés de produit, sans doublon, liste vide sinon), `error` = la première
+    réponse de fournisseur lue (texte ou null), jamais notre texte interne ; une panne de la
     plateforme ne s'y dit qu'ouverte depuis six heures au moins (D3, `lasting`) ; avant,
     son agent compte comme fonctionnant, comme sur sa carte ; `fixed` = ce que Tulina a
     réparé ces trente derniers jours, le plus récent d'abord : `{episode_id, agent: {id,
@@ -152,6 +155,17 @@ def _date(v: Any) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def _details(p: dict, ep: dict) -> None:
+    """Ajoute à l'item ce que le motif de l'épisode dit au client, comme le courriel : le
+    connecteur (`causes_pannes.connecteur_de_la_panne`, modèle de l'agent en repli) et la
+    réponse du fournisseur — jamais notre texte interne."""
+    from .. import causes_pannes
+    connecteur = causes_pannes.connecteur_de_la_panne(ep.get("motif"), ep.get("modele"))
+    if connecteur and connecteur not in p["connectors"]:
+        p["connectors"].append(connecteur)
+    p["error"] = p["error"] or causes_pannes.erreur_du_fournisseur(ep.get("motif"))
+
+
 def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
     from .. import alertes_slack_agents as A
     from ..alerte_agents_bloques import org_a_nous
@@ -182,15 +196,18 @@ def _lire(ctx: ResolvedCtx, inp: AgentHealthInput) -> dict:
             p = a_nous.setdefault(cote, {
                 "side": "platform" if cote == "plateforme" else "operator",
                 "headline": phrases.get(langue, phrases["en"]),
-                "since": ep["ouvert_at"], "agents": []})
+                "since": ep["ouvert_at"], "agents": [], "connectors": [], "error": None})
             p["since"] = min(p["since"], ep["ouvert_at"])
             p["agents"].append({"id": int(t["id"]), "label": _nom(t)})
+            _details(p, ep)
             continue
         pb = A.message_du_probleme(org_id, ep, langue, marque=marque, sub=ctx.sub)
         cle = (pb["headline"], pb.get("todo"), pb.get("link"), pb.get("action"))
-        p = problemes.setdefault(cle, {**pb, "since": ep["ouvert_at"], "agents": []})
+        p = problemes.setdefault(cle, {**pb, "since": ep["ouvert_at"], "agents": [],
+                                       "connectors": [], "error": None})
         p["since"] = min(p["since"], ep["ouvert_at"])
         p["agents"].append({"id": int(t["id"]), "label": _nom(t)})
+        _details(p, ep)
     arretes = {a["id"] for p in [*problemes.values(), *a_nous.values()]
                for a in p["agents"]}
 

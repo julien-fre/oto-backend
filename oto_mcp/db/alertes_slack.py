@@ -111,7 +111,7 @@ def a_annoncer(org_ids: list[int], attente_min: int = 120) -> list[dict[str, Any
                    e.diagnostic, e.message_client, e.ouvert_at, e.clos_at, e.resolution,
                    e.slack_alerte_at, e.slack_repare_at, e.slack_retour_at,
                    COALESCE(NULLIF(t.label, ''), t.procedure) AS libelle,
-                   t.repair_note, t.sub AS agent_sub, e.empreinte,
+                   t.repair_note, t.sub AS agent_sub, e.empreinte, t.model AS modele,
                    c.copie AS cause_copie, c.cote AS cause_cote,
                    CASE
                      WHEN e.statut <> 'clos' AND e.cote = 'proprietaire'
