@@ -496,14 +496,18 @@ def send_credential_alert_email(to: str, *, retrait: dict | None, cles_ko: list,
     if retrait:
         par_cnx = retrait.get("agents") or {}
         for cnx in retrait.get("connectors") or []:
+            nom = libelle_connecteur(cnx)
             sections.append(_section_cle(
-                m, t, t["retiree"].format(c=libelle_connecteur(cnx)),
+                m, t, t["retiree"].format(c=nom), t["geste_retiree"].format(c=nom),
                 par_cnx.get(cnx) or [], int(retrait.get("agents_max") or 0), None,
                 org, sub))
     for c in cles_ko or []:
+        # À sec, le geste est CHEZ le fournisseur (recharger), pas chez nous : le
+        # bouton Connecteurs ne sert alors qu'à brancher une autre clé.
         etat = "a_sec" if c.get("verdict") == _sans_credit() else "refusee"
+        nom = libelle_connecteur(c.get("connector"))
         sections.append(_section_cle(
-            m, t, t[etat].format(c=libelle_connecteur(c.get("connector"))),
+            m, t, t[etat].format(c=nom), t["geste_" + etat].format(c=nom),
             c.get("agents") or [], len(c.get("agents") or []), c.get("raison"), org, sub))
     titre = t["titre_un"] if len(sections) == 1 else t["titre_n"]
     lien = links.link_for("connectors", sub=sub, org=org) if org is not None else None
@@ -528,16 +532,24 @@ _ALERTE_CLE = {
     "fr": {"titre_un": "Une clé est à remplacer", "titre_n": "Des clés sont à remplacer",
            "retiree": "Clé {c} retirée", "refusee": "Clé {c} refusée par le fournisseur",
            "a_sec": "Compte {c} sans crédit",
+           "geste_retiree": "Reposez une clé dans Connecteurs.",
+           "geste_refusee": "Créez une nouvelle clé chez {c} et collez-la dans Connecteurs.",
+           "geste_a_sec": "Rechargez votre compte {c} chez {c}, ou branchez une autre clé "
+                          "dans Connecteurs.",
            "utilisee": "Utilisée par", "erreur": "Erreur",
            "n_agents": "{n} agent(s) programmé(s) actif(s) l'utilisent",
-           "fin": "Tant que ce n'est pas réglé, ces agents échouent à chaque passage.",
+           "fin": "D'ici là, ces agents échouent à chaque passage.",
            "ouvrir": "Ouvrir Connecteurs"},
     "en": {"titre_un": "A key needs replacing", "titre_n": "Keys need replacing",
            "retiree": "{c} key removed", "refusee": "{c} key refused by the provider",
            "a_sec": "{c} account out of credit",
+           "geste_retiree": "Add a key again in Connectors.",
+           "geste_refusee": "Create a new key with {c} and paste it in Connectors.",
+           "geste_a_sec": "Top up your {c} account with {c}, or connect another key in "
+                          "Connectors.",
            "utilisee": "Used by", "erreur": "Error",
            "n_agents": "{n} active scheduled agent(s) use it",
-           "fin": "Until this is fixed, these agents fail on every run.",
+           "fin": "These agents fail on every run until then.",
            "ouvrir": "Open Connectors"},
 }
 
@@ -557,8 +569,10 @@ def libelle_connecteur(nom) -> str:
     return label or slug.replace("_", " ").strip().capitalize() or "?"
 
 
-def _section_cle(m, t: dict, titre: str, agents: list, nb: int, raison, org, sub) -> str:
-    """Une clé : son état en gras, puis « utilisée par » (les agents nommés, chacun lien
+def _section_cle(m, t: dict, titre: str, geste: str, agents: list, nb: int, raison, org,
+                 sub) -> str:
+    """Une clé : son état en gras, ce qu'il faut faire (une ligne, propre à l'état : reposer,
+    recréer, ou recharger chez le fournisseur), puis « utilisée par » (les agents nommés, chacun lien
     vers sa page quand l'instance la déclare ; à défaut leur nombre) et l'erreur du
     fournisseur. Tout est échappé : libellés d'agents et raison viennent de tiers."""
     from . import links
@@ -584,6 +598,7 @@ def _section_cle(m, t: dict, titre: str, agents: list, nb: int, raison, org, sub
         f'{v}</td></tr>' for k, v in lignes if v)
     return (f'<div style="margin-top:20px;padding-top:20px;border-top:1px solid {m.filet}">'
             f'<p style="margin:0;font-weight:600">{esc(titre)}</p>'
+            f'<p style="margin:2px 0 0">{esc(geste)}</p>'
             + (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
                f'style="margin:10px 0 0;font-size:14px;line-height:1.45">{tr}</table>'
                if tr else "")

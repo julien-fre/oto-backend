@@ -167,6 +167,8 @@ def test_une_cle_REFUSEE_sous_un_agent_programme_est_annoncee(cles_rouges, monke
         "le connecteur par son NOM de produit, jamais le slug en minuscules")
     assert "veille quotidienne" in envois[0]["html"], "l'agent qui en dépend est NOMMÉ"
     assert "403 Forbidden" in envois[0]["html"], "ce que le fournisseur a répondu"
+    assert "Créez une nouvelle clé chez Snitcher et collez-la dans Connecteurs." in (
+        envois[0]["html"]), "refusée : le geste est de recréer la clé"
     assert [l["connector"] for l in annoncees] == ["snitcher"], (
         "la clé est marquée annoncée APRÈS l'envoi : c'est ce qui fait UNE alerte par "
         "épisode, pas une par passage")
@@ -178,7 +180,30 @@ def test_une_cle_A_SEC_dit_recharger_pas_reposer(cles_rouges, monkeypatch):
     lignes[0].update(verdict=NO_QUOTA_VERDICT, raison="Not enough credits")
     monkeypatch.setenv(M._ENV_ALERTE, "1")
     M.alertes_credential()
-    assert "Compte Snitcher sans crédit" in envois[0]["html"]
+    html = envois[0]["html"]
+    assert "Compte Snitcher sans crédit" in html
+    assert ("Rechargez votre compte Snitcher chez Snitcher, ou branchez une autre clé "
+            "dans Connecteurs.") in html, "à sec : le geste est CHEZ le fournisseur"
+    assert "Créez une nouvelle clé" not in html, "jamais « recréer » une clé qui marche"
+
+
+def test_en_anglais_chaque_etat_dit_son_geste(cles_rouges, monkeypatch):
+    envois, lignes, _, _ = cles_rouges
+    from oto_mcp.credentials_store import NO_QUOTA_VERDICT
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "get_user", lambda s: {"locale": "en"})
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    M.alertes_credential()
+    assert "Create a new key with Snitcher and paste it in Connectors." in envois[0]["html"]
+    envois.clear()
+    lignes[0].update(verdict=NO_QUOTA_VERDICT)
+    from oto_mcp.db import alertes_credential as A
+    monkeypatch.setattr(A, "cles_ko_a_annoncer", lambda: list(lignes))
+    M.alertes_credential()
+    html = envois[0]["html"]
+    assert ("Top up your Snitcher account with Snitcher, or connect another key in "
+            "Connectors.") in html
+    assert "These agents fail on every run until then." in html
 
 
 def test_une_cle_rouge_que_RIEN_ne_fait_tourner_ne_part_pas(cles_rouges, monkeypatch):
@@ -203,6 +228,8 @@ def test_retrait_et_cle_rouge_dans_la_meme_org_font_UN_courriel(cles_rouges, mon
     out = M.alertes_credential()
     assert len(envois) == 1 and out["orgs_a_prevenir"] == 1
     assert "Clé Slack retirée" in envois[0]["html"] and "Snitcher" in envois[0]["html"]
+    assert "Reposez une clé dans Connecteurs." in envois[0]["html"], (
+        "retirée : le geste est de reposer une clé")
     assert marques == [4] and len(annoncees) == 1
 
 
