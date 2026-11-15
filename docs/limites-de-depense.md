@@ -74,11 +74,11 @@ seule.
 La clé de l'org ou de la personne n'est **jamais** refusée : elle ne consomme pas de
 crédits. Le refus le dit, et dit quand ça reprend.
 
-⚠️ **Portée assumée, à revoir si besoin** : la porte de l'outil refuse TOUTE clé
-refacturée qui gagne, quel que soit le connecteur — y compris un connecteur que le
-commerce ne facture pas à l'appel (un compte de messagerie hébergé, facturé au siège).
-Le cœur ne connaît pas les prix du commerce ; resserrer la porte demanderait que le
-commerce pousse aussi la liste des connecteurs concernés.
+**La messagerie hébergée reste servie** (`limite_du_jour.facture_a_l_appel`) : son option
+payante paie des SIÈGES, que le commerce facture à la connexion et au mois, jamais à
+l'appel — un appel de plus ne coûte rien, et la dépense du jour ne la compte pas. La porte
+de l'outil la laisse donc passer, ses six canaux compris (`quotas.paid_option_for` suit la
+délégation de clé). Tout autre connecteur sur une clé refacturée est refusé.
 
 ## 5. Choix assumés
 

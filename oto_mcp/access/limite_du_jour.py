@@ -7,7 +7,8 @@ jusqu'à la remise à zéro. Le cœur ne compte RIEN et ne connaît aucune limit
 seulement, à une personne bloquée (ou à toute une org bloquée), les appels payés par une
 clé que l'opérateur refacture — clé de plateforme, ou clé refacturée du tenant primaire.
 La clé de l'org ou de la personne reste servie : elle ne consomme pas de crédits
-(`docs/limites-de-depense.md`).
+(`docs/limites-de-depense.md`). La messagerie hébergée aussi (`facture_a_l_appel`) :
+le commerce la facture au siège et au mois, jamais à l'appel.
 
 **Trois portes**, toutes sur ce module (`refus`, `blocage`) :
 - l'outil : le résolveur, au moment où une clé refacturée gagne (`access/resolve.py`
@@ -39,7 +40,7 @@ from typing import Optional
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from ..db import spend_blocks
-from . import credits
+from . import credits, quotas
 from ..mcp_errors import McpError
 
 logger = logging.getLogger(__name__)
@@ -113,8 +114,8 @@ def message(b: dict) -> str:
     fin = b["until"].astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return (f"You have reached {_PORTEE.get(b['scope'], 'a daily credit limit')}, set by "
             f"an admin of your organization. Calls on the platform's shared keys resume "
-            f"at {fin}. Keys your organization or you set yourselves still work; an admin "
-            "can raise the limit in the organization's usage settings.")
+            f"at {fin}. Hosted messaging and keys your organization or you set yourselves "
+            "still work; an admin can raise the limit in the organization's usage settings.")
 
 
 def donnees(b: dict) -> dict:
@@ -139,9 +140,19 @@ def exiger(sub: Optional[str], org_id: Optional[int]) -> None:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=message(b), data=donnees(b)))
 
 
-def reserver(sub: str, org: Optional[int], key_mode: str) -> None:
+def facture_a_l_appel(connecteur: Optional[str]) -> bool:
+    """Un appel de `connecteur` sur une clé refacturée compte dans la dépense du jour.
+    Pas la messagerie hébergée : son option payante (`quotas.paid_option_for`, qui suit la
+    délégation des six canaux) paie des SIÈGES, que le commerce facture à la connexion et
+    au mois — un appel de plus ne coûte rien, une personne bloquée garde sa messagerie."""
+    return not connecteur or quotas.paid_option_for(connecteur) is None
+
+
+def reserver(sub: str, org: Optional[int], key_mode: str,
+             connecteur: Optional[str] = None) -> None:
     """La porte du RÉSOLVEUR, quand une clé que l'opérateur refacture gagne : la limite du
     jour d'abord — un refus ne laisse aucune réservation —, puis le budget d'unités
-    (`credits.reserver`, inchangé)."""
-    exiger(sub, org)
+    (`credits.reserver`, inchangé). La messagerie hébergée passe (`facture_a_l_appel`)."""
+    if facture_a_l_appel(connecteur):
+        exiger(sub, org)
     credits.reserver(sub, org, key_mode)
