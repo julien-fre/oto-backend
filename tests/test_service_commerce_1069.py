@@ -124,6 +124,17 @@ def test_les_membres_sortent_par_anciennete_avec_leur_derniere_activite(live):
     assert out["members"][0]["email"] == f"{aine}@exemple.test"
 
 
+def test_chaque_membre_porte_sa_langue_choisie(live):
+    # Le commerce écrit ses e-mails aux admins dans la langue de CHACUN (users.locale).
+    org = _org()
+    fr, sans = _membre(org, T0), _membre(org, T0 + timedelta(days=1))
+    with _connect() as conn:
+        conn.execute("UPDATE users SET locale = 'fr' WHERE sub = %s", (fr,))
+    out = {m["sub"]: m for m in _appel("service.org.members", org_id=org)["members"]}
+    assert out[fr]["locale"] == "fr"
+    assert out[sans]["locale"] is None, "jamais choisie : None, pas une langue devinée"
+
+
 def test_une_org_archivee_ou_inconnue_est_un_404_nomme(live):
     assert _refus("service.org.members", org_id=_org(archivee=True)).code == "unknown_org"
     assert _refus("service.org.entitlements.list", org_id=10**12).code == "unknown_org"

@@ -112,6 +112,9 @@ class ServiceMemberRow(BaseModel):
     is_active: bool
     joined_at: str
     last_activity_at: Optional[str] = None
+    locale: Optional[str] = Field(
+        default=None, description="The account's chosen language (`users.locale`, "
+                                  "e.g. `fr`/`en`), `None` when never set.")
 
 
 class ServiceMembers(BaseModel):
