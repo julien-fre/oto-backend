@@ -270,6 +270,23 @@ def _ref_adoption_lignes(org_id, days):
             (days, days, days, int(org_id))).fetchall()]
 
 
+def _ref_membres_par_anciennete(org_id):
+    """`service.org.members` avant la bascule : une sonde `MAX(created_at)` par membre."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT m.sub, u.email, m.org_role, m.is_active, m.joined_at,
+                      a.last_activity_at
+                 FROM org_members m
+                 LEFT JOIN users u ON u.sub = m.sub
+                 LEFT JOIN LATERAL (
+                     SELECT MAX(c.created_at) AS last_activity_at
+                       FROM tool_calls c
+                      WHERE c.kind = 'mcp' AND c.sub = m.sub AND c.org_id = m.org_id
+                 ) a ON TRUE
+                WHERE m.org_id = %s
+                ORDER BY m.joined_at, m.sub""", (int(org_id),)).fetchall()]
+
+
 def _ref_appels_par_sub(days, subs=None):
     """Le journal de la fiche d'un tenant (et de sa ligne) : par sub, appels et dernier."""
     par_sub = "" if subs is None else "sub = ANY(%(subs)s) AND "
@@ -383,6 +400,18 @@ def test_adoption(registre, jours):
     assert _trie(neuf["members"], "sub") == _trie(ref, "sub")
     assert neuf["active"] == sum(1 for r in ref if r["calls"])
     assert neuf["blocked_by_connector"] == sum(1 for r in ref if r["connector_failures"])
+
+
+def test_membres_par_anciennete(registre):
+    """La dernière activité de chaque membre (`service.org.members`) : la même qu'à la
+    sonde par membre, un membre sans appel (`u9`) compris ; `activity=False` rend la
+    même population sans elle."""
+    ref = _ref_membres_par_anciennete(1)
+    assert any(r["last_activity_at"] for r in ref) and any(
+        r["last_activity_at"] is None for r in ref), "le banc couvre les deux cas"
+    assert db.org_members_by_seniority(1) == ref
+    assert db.org_members_by_seniority(1, activity=False) == [
+        {**r, "last_activity_at": None} for r in ref]
 
 
 @pytest.mark.parametrize("jours", FENETRES_GLISSANTES)

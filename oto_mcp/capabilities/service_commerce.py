@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import db, entitlements_catalogue as catalogue, group_store, org_store
 from ..db import entitlements as db_entitlements
 from ._authz import COMMERCE_SERVICE
+from ._lecture_bornee import bornee
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding, cap_limit
 from .registry import CAPABILITIES
 
@@ -105,6 +106,13 @@ class ServiceOrgInput(BaseModel):
     org_id: int
 
 
+class ServiceMembersInput(BaseModel):
+    org_id: int
+    # `false` : les membres seuls, `last_activity_at` à `None` — sans lire l'activité
+    # (`db.org_members_by_seniority`). Pour qui n'a besoin que de la population.
+    activity: bool = True
+
+
 class ServiceMemberRow(BaseModel):
     sub: str
     email: Optional[str] = None
@@ -117,17 +125,18 @@ class ServiceMemberRow(BaseModel):
 class ServiceMembers(BaseModel):
     """Les membres de l'org PAR ANCIENNETÉ (`joined_at`, puis `sub`) — l'ordre dans
     lequel le commerce désigne les membres payants. `last_activity_at` = dernier appel
-    d'outil émis sous CETTE org, `None` s'il n'y en a jamais eu."""
+    d'outil émis sous CETTE org, `None` s'il n'y en a jamais eu (ou `activity=false`)."""
     org_id: int
     members: list[ServiceMemberRow]
 
 
-def _members(ctx: ResolvedCtx, inp: ServiceOrgInput) -> dict:
+def _members(ctx: ResolvedCtx, inp: ServiceMembersInput) -> dict:
     _org_ou_404(inp.org_id)
+    rows = db.org_members_by_seniority(inp.org_id, activity=inp.activity)
     return {"org_id": inp.org_id,
             "members": [{**r, "joined_at": _iso(r["joined_at"]),
                          "last_activity_at": _iso(r["last_activity_at"])}
-                        for r in db.org_members_by_seniority(inp.org_id)]}
+                        for r in rows]}
 
 
 # ── Les équipes ──────────────────────────────────────────────────────────────
@@ -532,11 +541,13 @@ CAPABILITIES += [
                description="[service commerce] The org's teams by name, each with every "
                            "member's `sub` (whichever team each has active).",
                rest=RestBinding("GET", "/api/service/orgs/{id}/groups", _ID)),
-    Capability(key="service.org.members", handler=_members, Input=ServiceOrgInput,
+    Capability(key="service.org.members", handler=bornee(_members),
+               Input=ServiceMembersInput,
                authz=COMMERCE_SERVICE, mcp=None, Output=ServiceMembers,
                errors=(_ORG_INCONNUE,),
                description="[service commerce] Members of an org by seniority "
-                           "(`joined_at`), with email and last activity under this org.",
+                           "(`joined_at`), with email and last activity under this org "
+                           "(`activity=false`: members only, `last_activity_at` null).",
                rest=RestBinding("GET", "/api/service/orgs/{id}/members", _ID)),
     Capability(key="service.org.usage", handler=_usage, Input=ServiceUsageInput,
                authz=COMMERCE_SERVICE, mcp=None, Output=ServiceUsage,

@@ -8,8 +8,9 @@ type: explanation
 > Posé le **2026-11-13**. Surfaces : `service.org.spend_blocks.put|get`
 > (`PUT|GET /api/service/orgs/{id}/spend-blocks`, identité de service `commerce`),
 > `service.org.usage.calls` (`GET /api/service/orgs/{id}/usage/calls`),
-> `service.org.groups` (`GET /api/service/orgs/{id}/groups`), et la colonne `sub` du flux
-> `service.credits.movements`.
+> `service.org.groups` (`GET /api/service/orgs/{id}/groups`), `service.org.members`
+> (`GET /api/service/orgs/{id}/members?activity=false` : la population seule, sans lire
+> l'activité), et la colonne `sub` du flux `service.credits.movements`.
 
 ## 1. Le besoin
 

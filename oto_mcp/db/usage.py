@@ -2577,30 +2577,59 @@ def activation_funnel(active_window_days: int = 30) -> dict:
 _ADOPTION_LIST_CAP = 500
 
 
-def org_members_by_seniority(org_id: int) -> list[dict]:
+def org_members_by_seniority(org_id: int, *, activity: bool = True) -> list[dict]:
     """Les membres de l'org PAR ANCIENNETÉ (`joined_at`, puis `sub`), avec leur email et
     leur dernier appel d'outil émis sous CETTE org (`None` s'il n'y en a jamais eu) —
     la lecture du service commerce (`service.org.members`) : il désigne les membres
     payants dans cet ordre et écrit ses relances à partir de la dernière activité.
 
     Toute la population, sans plafond : une liste tronquée ferait retomber au gratuit
-    des membres qui paient."""
-    with _connect() as conn:
+    des membres qui paient.
+
+    Le dernier appel se lit sur les totaux par jour plus le journal direct (#1147),
+    comme le dernier appel d'`org_adoption` — tout l'historique consolidé, donc au-delà
+    des 30 jours que le journal garde en ligne. Il se lisait au journal, une sonde
+    `MAX(created_at)` par membre : aucun index ne part de `(org_id, sub)`, chaque sonde
+    relisait au tas TOUS les appels du membre (`idx_tool_calls_sub`) recoupés avec ceux
+    de l'org (`idx_tool_calls_org`). Le coût croissait comme le nombre de membres actifs
+    × le volume de l'org : sur une grosse org, plus que le délai du commerce (30 s).
+    Sur les totaux, le journal direct ne porte plus que la veille et le jour courant.
+
+    `activity=False` : la liste seule, `last_activity_at` à `None` partout, sans lire ni
+    journal ni totaux — pour qui n'a besoin que des membres (le commerce qui applique
+    une limite de dépense par membre). Lève `AgregatIncomplet` / `LectureTropLongue`
+    (activité seulement) : la face en fait un refus nommé (`bornee`)."""
+    if not activity:
+        with _connect() as conn:
+            return [dict(r) for r in conn.execute(
+                """
+                SELECT m.sub, u.email, m.org_role, m.is_active, m.joined_at,
+                       NULL::timestamptz AS last_activity_at
+                FROM org_members m
+                LEFT JOIN users u ON u.sub = m.sub
+                WHERE m.org_id = %s
+                ORDER BY m.joined_at, m.sub
+                """,
+                (int(org_id),),
+            ).fetchall()]
+    objet = "membres d'une org"
+    with _agregat(objet) as conn:
+        tout, pt = journal_jour.source(
+            conn, objet, prefixe="tout", kinds=("mcp",), mesures=("dernier_at",),
+            filtres={"org_id": int(org_id), "sub_non_nul": True})
         return [dict(r) for r in conn.execute(
-            """
+            f"""
+            WITH d AS (SELECT sub, MAX(dernier_at) AS last_activity_at
+                         FROM ({tout}) t GROUP BY sub)
             SELECT m.sub, u.email, m.org_role, m.is_active, m.joined_at,
-                   a.last_activity_at
+                   d.last_activity_at
             FROM org_members m
             LEFT JOIN users u ON u.sub = m.sub
-            LEFT JOIN LATERAL (
-                SELECT MAX(c.created_at) AS last_activity_at
-                FROM tool_calls c
-                WHERE c.kind = 'mcp' AND c.sub = m.sub AND c.org_id = m.org_id
-            ) a ON TRUE
-            WHERE m.org_id = %s
+            LEFT JOIN d ON d.sub = m.sub
+            WHERE m.org_id = %(org_id)s
             ORDER BY m.joined_at, m.sub
             """,
-            (int(org_id),),
+            {**pt, "org_id": int(org_id)},
         ).fetchall()]
 
 

@@ -230,7 +230,7 @@ identité de service (`docs/auth-logto.md` §Identité de service). REST seule, 
 | Route | Rend |
 |---|---|
 | `GET /api/service/orgs` | orgs non archivées par id, curseur `after_id` |
-| `GET /api/service/orgs/{id}/members` | membres **par ancienneté** (`joined_at`), email, dernière activité sous l'org |
+| `GET /api/service/orgs/{id}/members` | membres **par ancienneté** (`joined_at`), email, dernière activité sous l'org (lue sur les totaux par jour, `docs/monitoring.md`) ; `?activity=false` : les membres seuls, sans activité |
 | `GET /api/service/orgs/{id}/usage` | par personne sur `[since, until)` (défaut : le mois en cours) : appels réussis, dont sur clé de plateforme |
 | `GET /api/service/orgs/{id}/entitlements` | `list_for_org` |
 | `PUT /api/service/orgs/{id}/entitlements/{right_key}/{source}` | `grant`, `granted_by = service:<client_id>` ; rend la ligne |
