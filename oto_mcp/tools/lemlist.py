@@ -332,9 +332,9 @@ def _refuse_unknown_settings(settings: dict) -> None:
         return
     hint = ""
     if set(unknown) & _SENDER_LOOKALIKES:
-        hint = (" `sender_user_ids` sets the senders, but attaches only the "
-                "FIRST mailbox of each user; choosing several mailboxes of a "
-                "user is done in the lemlist app, in the campaign's senders.")
+        hint = (" To choose the sending mailboxes, pass `senders` "
+                "([{userId, channels: [{type: \"email\", id: \"usm_…\"}]}]); "
+                "`sender_user_ids` attaches only the FIRST mailbox of each user.")
     raise _refus(
         "lemlist_unknown_campaign_setting",
         f"lemlist's campaign update does not take {unknown}: it would drop "
@@ -368,8 +368,67 @@ def _check_patch_echo(patch: dict, answer) -> dict:
             out["senders_excluded"] = dropped
         out["warning"] = (
             "`sender_user_ids` attaches the FIRST mailbox of each user only "
-            "(see `sendUsers`). Several mailboxes of a user are chosen in the "
-            "lemlist app, in the campaign's senders.")
+            "(see `sendUsers`). To send from several mailboxes of a user, pass "
+            "`senders` with their ids (usm_…).")
+    return out
+
+
+def _set_senders(client, campaign_id: str, senders: list, mode: str) -> dict:
+    """Attach the senders AND the mailboxes named, through the sender-pool
+    routes (the only ones that pick WHICH accounts of a user send), then check
+    the pool lemlist returns against what was asked."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    if mode == "replace" and not senders:
+        raise _bad("`senders` is empty: replacing the pool with nothing would "
+                   "leave the campaign without a sender.")
+    call = (client.replace_campaign_senders if mode == "replace"
+            else client.add_campaign_senders)
+    try:
+        answer = call(campaign_id, senders)
+    except ValueError as e:
+        raise _bad(f"`senders`: {e}")
+    except UpstreamHTTPError as e:
+        if e.status_code == 402:
+            raise _refus(
+                "lemlist_sender_pool_needs_email_pro",
+                "lemlist serves the choice of sending mailboxes only on its Email "
+                "Pro plan. Without it, pick the mailboxes in the lemlist app, in "
+                "the campaign's sender settings.")
+        if e.status_code == 409:
+            raise _refus(
+                "lemlist_sender_pool_dynamic",
+                "this campaign picks its sender per lead (contact owner, lead "
+                "importer or a custom field): its pool cannot be set. Switch it "
+                "to a fixed sender pool in the lemlist app first.")
+        raise
+    pool = answer.get("data") if isinstance(answer, dict) else None
+    if not isinstance(pool, dict) or "senders" not in pool:
+        read = client.get_campaign_senders(campaign_id)
+        pool = (read.get("data") if isinstance(read, dict) else None) or {}
+    in_pool = pool.get("senders") or []
+    users = {s.get("userId") for s in in_pool if isinstance(s, dict)}
+    channels = {(s.get("userId"), ch.get("type"), ch.get("id"))
+                for s in in_pool if isinstance(s, dict)
+                for ch in s.get("channels") or [] if isinstance(ch, dict)}
+    asked = [(s["userId"], ch["type"], ch["id"]) for s in senders
+             for ch in s.get("channels") or [] if ch.get("id")]
+    missing = [{"userId": u, "type": t, "id": i} for u, t, i in asked
+               if (u, t, i) not in channels]
+    missing_users = [s["userId"] for s in senders if s["userId"] not in users]
+    if (asked and len(missing) == len(asked)) or len(missing_users) == len(senders):
+        raise _refus(
+            "lemlist_senders_not_attached",
+            "lemlist answered, but its sender pool holds none of the senders or "
+            "mailboxes asked for.", not_attached=missing or missing_users, pool=pool)
+    out = {"sender_pool": pool, "mode": mode}
+    if isinstance(answer, dict) and answer.get("impact"):
+        out["impact"] = answer["impact"]
+    if missing or missing_users:
+        out["not_attached"] = missing + [{"userId": u} for u in missing_users]
+        out["senders_warning"] = (
+            "lemlist's pool does not hold everything asked for: see "
+            "`not_attached` and the `diagnostics` of `sender_pool`.")
     return out
 
 
@@ -1080,6 +1139,8 @@ def register(mcp: FastMCP) -> None:
         timezone: Optional[str] = None,
         settings: Optional[dict] = None,
         sender_user_ids: Optional[list[str]] = None,
+        senders: Optional[list[dict]] = None,
+        senders_mode: Literal["replace", "add"] = "replace",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         channels: Optional[list[str]] = None,
@@ -1115,7 +1176,10 @@ def register(mcp: FastMCP) -> None:
           `stopOnMeetingBooked`, `stopOnLinkClicked`, `disableTrackOpen`,
           `disableTrackClick`, `disableTrackReply`, `tracking`, `onReplied`,
           `aiFeatures`…). Only the keys sent change; unknown keys are refused.
-          `sender_user_ids` takes the FIRST mailbox of each user.
+          `sender_user_ids` takes the FIRST mailbox of each user; to pick
+          mailboxes: `senders=[{userId, channels: [{type: "email", id:
+          "usm_…"}]}]`; `senders_mode` replace (default: drops unlisted
+          senders) or add.
         - `pause`: `campaign_id`. THE off switch — a campaign created here is
           already running. Stops it advancing; already-scheduled leads are NOT
           recalled. Errors if the campaign is not running.
@@ -1188,13 +1252,32 @@ def register(mcp: FastMCP) -> None:
             if name is not None:
                 settings["name"] = name
             if sender_user_ids is not None:
+                if senders is not None:
+                    raise _bad("pass `senders` or `sender_user_ids`, not both: "
+                               "each sets the sender pool")
                 settings["sendUserIds"] = sender_user_ids
-            if not settings:
+            if not settings and senders is None:
                 raise _bad(
-                    "nothing to update — pass `name`, `sender_user_ids` "
-                    "and/or `settings`")
-            result = _check_patch_echo(
+                    "nothing to update — pass `name`, `senders`, "
+                    "`sender_user_ids` and/or `settings`")
+            result = (_check_patch_echo(
                 settings, client.update_campaign(campaign_id, settings))
+                if settings else {})
+            if senders is not None:
+                try:
+                    result.update(_set_senders(client, campaign_id, senders, senders_mode))
+                except Exception as e:
+                    if not result:
+                        raise
+                    # The PATCH has applied: a refusal that hid it would let the
+                    # caller believe nothing changed, and retry blind.
+                    error = getattr(e, "error", None)
+                    raise _refus(
+                        "lemlist_senders_failed_after_settings",
+                        f"the settings DID apply (see `settings_applied`), then "
+                        f"the senders step failed: {getattr(error, 'message', None) or e}",
+                        settings_applied=result,
+                        cause=(getattr(error, "data", None) or {}).get("code"))
 
         elif op == "pause":
             if not campaign_id:

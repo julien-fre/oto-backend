@@ -1572,7 +1572,7 @@ PAS_UN_LOT: dict[str, str] = {
     "klaviyo_profiles": "additional_fields include",
     "leexi_calls": "owner_uuid participating_user_uuid customer_email_address customer_phone_number",
     "lemlist_act": "filters",
-    "lemlist_campaign": "campaign_ids sender_user_ids channels",
+    "lemlist_campaign": "campaign_ids sender_user_ids senders channels",
     "lemlist_campaign_auto_review": "conditions",
     "lemlist_company": "ids_or_domains fields",
     "lemlist_contact": "ids_or_emails",

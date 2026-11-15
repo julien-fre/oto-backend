@@ -602,8 +602,8 @@ def _code(exc_info) -> str:
 
 def test_update_refuses_a_key_lemlist_would_drop_silently():
     """`settings.sendUsers` (clé de la RÉPONSE de lemlist) : lemlist l'ignorait et
-    répondait `{}`, lu comme un succès. Refusé avant tout appel, en disant que
-    `sender_user_ids` n'attache que la première boîte."""
+    répondait `{}`, lu comme un succès. Refusé avant tout appel, en nommant
+    `senders`."""
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
@@ -613,7 +613,7 @@ def test_update_refuses_a_key_lemlist_would_drop_silently():
                 {"id": "usr_1", "mailboxes": [{"sendUserMailboxId": "usm_1"}]}]})
         assert _code(e) == "lemlist_unknown_campaign_setting"
         assert e.value.error.data["unknown"] == ["sendUsers"]
-        assert "`sender_user_ids`" in e.value.error.message
+        assert "`senders`" in e.value.error.message
         inst.update_campaign.assert_not_called()
 
 
@@ -853,3 +853,128 @@ def test_schedule_update_uses_the_api_key_names():
 
         with pytest.raises(Exception, match="nothing to update"):
             tool.fn(op="update", schedule_id="skd_1")
+
+
+# --- signal 1279 : plusieurs boîtes d'un même expéditeur, par le pool ----------
+
+SIX = [{"userId": "usr_1", "channels": [
+    {"type": "email", "id": f"usm_{i}"} for i in range(1, 7)]}]
+
+
+def _pool(*channels, user="usr_1"):
+    return {"data": {"senderStrategy": "random", "senders": [
+        {"userId": user, "channels": [{"type": "email", "id": c} for c in channels]}]}}
+
+
+def test_senders_attache_toutes_les_boites_par_le_pool_et_relit_le_resultat():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.replace_campaign_senders.return_value = _pool(*[f"usm_{i}" for i in range(1, 7)])
+
+        out = tool.fn(op="update", campaign_id="cam_1", senders=SIX)
+
+        inst.replace_campaign_senders.assert_called_once_with("cam_1", SIX)
+        inst.update_campaign.assert_not_called()   # rien d'autre à patcher
+        assert len(out["sender_pool"]["senders"][0]["channels"]) == 6
+        assert out["mode"] == "replace" and "not_attached" not in out
+
+
+def test_senders_add_ne_retire_rien_et_relit_le_pool_si_la_reponse_ne_le_porte_pas():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.add_campaign_senders.return_value = {}
+        inst.get_campaign_senders.return_value = _pool("usm_1", "usm_2")
+
+        out = tool.fn(op="update", campaign_id="cam_1", senders_mode="add",
+                      senders=[{"userId": "usr_1", "channels": [{"type": "email", "id": "usm_2"}]}])
+
+        inst.replace_campaign_senders.assert_not_called()
+        inst.get_campaign_senders.assert_called_once_with("cam_1")
+        assert "not_attached" not in out
+
+
+def test_une_boite_que_le_pool_ne_garde_pas_est_nommee():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.replace_campaign_senders.return_value = _pool("usm_1", "usm_2")
+
+        out = tool.fn(op="update", campaign_id="cam_1", senders=SIX)
+
+        assert [m["id"] for m in out["not_attached"]] == ["usm_3", "usm_4", "usm_5", "usm_6"]
+        assert out["senders_warning"]
+
+
+def test_un_pool_qui_ne_garde_rien_de_ce_qui_est_demande_est_un_refus():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.replace_campaign_senders.return_value = _pool("usm_9", user="usr_9")
+        with pytest.raises(Exception) as e:
+            tool.fn(op="update", campaign_id="cam_1", senders=SIX)
+        assert _code(e) == "lemlist_senders_not_attached"
+
+
+@pytest.mark.parametrize("status,code", [
+    (402, "lemlist_sender_pool_needs_email_pro"),
+    (409, "lemlist_sender_pool_dynamic"),
+])
+def test_plan_ou_strategie_dynamique_sont_des_refus_nommes(status, code):
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.replace_campaign_senders.side_effect = UpstreamHTTPError(status, "x", service="lemlist")
+        with pytest.raises(Exception) as e:
+            tool.fn(op="update", campaign_id="cam_1", senders=SIX)
+        assert _code(e) == code
+
+
+def test_senders_et_sender_user_ids_ensemble_ou_un_pool_vide_sont_refuses():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        with pytest.raises(Exception, match="not both"):
+            tool.fn(op="update", campaign_id="cam_1", senders=SIX, sender_user_ids=["usr_1"])
+        with pytest.raises(Exception, match="without a sender"):
+            tool.fn(op="update", campaign_id="cam_1", senders=[])
+        inst.update_campaign.assert_not_called()
+        inst.replace_campaign_senders.assert_not_called()
+
+
+def test_settings_et_senders_dans_le_meme_appel():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.update_campaign.return_value = {"name": "Q4"}
+        inst.replace_campaign_senders.return_value = _pool(*[f"usm_{i}" for i in range(1, 7)])
+        out = tool.fn(op="update", campaign_id="cam_1", name="Q4", senders=SIX)
+        inst.update_campaign.assert_called_once_with("cam_1", {"name": "Q4"})
+        assert out["name"] == "Q4" and "sender_pool" in out
+
+
+def test_un_echec_des_expediteurs_apres_un_patch_applique_le_dit():
+    """`name` a pris, puis le pool refuse (402) : le refus porte ce qui a pris."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+        inst.update_campaign.return_value = {"name": "Q4"}
+        inst.replace_campaign_senders.side_effect = UpstreamHTTPError(402, "x", service="lemlist")
+        with pytest.raises(Exception) as e:
+            tool.fn(op="update", campaign_id="cam_1", name="Q4", senders=SIX)
+        assert _code(e) == "lemlist_senders_failed_after_settings"
+        assert e.value.error.data["settings_applied"]["name"] == "Q4"
+        assert e.value.error.data["cause"] == "lemlist_sender_pool_needs_email_pro"
