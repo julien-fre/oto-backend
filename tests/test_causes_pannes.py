@@ -62,3 +62,38 @@ def test_l_empreinte_est_bornee_et_sa_cle_courte():
 def test_la_copie_au_client_refuse_ce_qu_il_n_a_pas_a_lire(texte, refus):
     r = C.copie_refusee(texte)
     assert (r is None) if refus is None else (refus in r)
+
+
+
+# --- ce que le titulaire peut lire de la panne (15/11/2026) ----------------------------
+
+@pytest.mark.parametrize("motif,attendu", [
+    ("pas de clé `anthropic` déposée pour cette organisation", "Anthropic"),
+    ("l'outil `hubspot_search` a échoué", "HubSpot"),
+    ("tool hubspot_search_contacts failed", "HubSpot"),
+    ("credit balance is too low to access the Anthropic API", "Anthropic"),
+    ("RuntimeError : run_start : `_org` refusé", None),
+    ("fin_anormale (max_tokens)", None),
+    ("Make sure the Linear backoff is set", None),
+    (None, None),
+])
+def test_le_connecteur_que_le_motif_nomme(motif, attendu):
+    assert C.connecteur_du_motif(motif) == attendu
+
+
+@pytest.mark.parametrize("motif,attendu", [
+    ("fin_anormale (authentication_failed, HTTP 401 : Invalid API key · Fix it)",
+     "HTTP 401 : Invalid API key"),
+    ("BadRequestError : HTTP 400 invalid_request_error — Too low. See https://x.test/a",
+     "HTTP 400 : Too low. See <url>"),
+    ("ServiceUnavailableError : Error code: 503", "HTTP 503"),
+    ("RuntimeError : run_start : projet inaccessible", None),
+    ("identité invalide — le compte n'a plus de rôle", None),
+])
+def test_la_reponse_du_fournisseur_et_rien_de_notre_texte(motif, attendu):
+    assert C.erreur_du_fournisseur(motif) == attendu
+
+
+def test_le_libelle_jamais_le_slug_en_minuscules():
+    assert C.libelle_connecteur("hubspot") == "HubSpot"
+    assert C.libelle_connecteur("un_inconnu") == "Un Inconnu"

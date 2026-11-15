@@ -21,6 +21,7 @@ ce qu'un client n'a pas à lire — un nom d'outil, un code, une adresse, un ide
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import re
 from typing import Optional
@@ -86,4 +87,89 @@ def copie_refusee(texte: Optional[str]) -> Optional[str]:
     for motif_re, quoi in _INTERDITS_COPIE:
         if motif_re.search(texte or ""):
             return f"la copie au client porte {quoi}"
+    return None
+
+
+# --- Ce que le titulaire peut lire de la panne (15/11/2026) ---------------------------
+#
+# Le courriel au titulaire nomme l'agent, et — quand le motif le dit — le CONNECTEUR qui
+# tombe et ce que son FOURNISSEUR a répondu (décision de Julien, option 1) : jamais notre
+# texte interne (un `RuntimeError` du runner, une phrase d'opérateur en français), qui
+# déroute plus qu'il n'aide. Ce qu'on ne sait pas lire n'est pas deviné : `None`.
+
+#: Ce que le fournisseur a répondu, dans les formes que prennent nos motifs : une fin
+#: anormale du CLI qui porte le statut HTTP, une erreur du SDK qui le porte avec son type,
+#: un « Error code » nu.
+_REPONSE_FOURNISSEUR: tuple["re.Pattern[str]", ...] = (
+    re.compile(r"^fin_anormale \([a-z_]+, HTTP (?P<code>\d{3}) : (?P<msg>[^·)]+)"),
+    re.compile(r"^\w+Error : HTTP (?P<code>\d{3}) [a-z_]+ — (?P<msg>.+)$"),
+    re.compile(r"^\w+Error : Error code: (?P<code>\d{3})(?P<msg>)\s*$"),
+)
+
+#: Ce qu'on masque d'une réponse de fournisseur avant de la montrer : ce qui désigne un
+#: compte, une requête ou une adresse — pas les nombres (le statut HTTP est la réponse).
+_MASQUER = _EFFACER[:3] + (_EFFACER[5], _EFFACER[6])
+
+ERREUR_MAX = 160
+
+#: Des libellés qui sont aussi des mots courants (« Make sure… », « Linear backoff ») :
+#: ils ne nomment un connecteur qu'entre accents graves ou en préfixe d'outil.
+_MOTS_COMMUNS = frozenset({"Make", "Linear", "Lever", "Teams", "Grain", "Clay", "Tally",
+                           "Origami", "Folk", "Allo", "Infosec", "Luma", "Resend"})
+
+
+@functools.lru_cache(maxsize=1)
+def _connecteurs_decrits() -> dict[str, str]:
+    """`{slug: libellé}` des connecteurs de la plateforme (`providers.REGISTRY` — la même
+    source que l'alerte de clé, fournisseurs de modèle compris). Un connecteur sans
+    libellé prend son slug mis en forme : un nom manquant n'empêche aucun courriel."""
+    from . import providers
+    return {slug: (getattr(con, "label", None) or slug.replace("_", " ").title())
+            for slug, con in providers.REGISTRY.items()}
+
+
+def libelle_connecteur(slug: str) -> str:
+    """Le nom qu'un client reconnaît pour ce connecteur — jamais le slug en minuscules."""
+    s = (slug or "").strip().lower()
+    return _connecteurs_decrits().get(s) or s.replace("_", " ").title()
+
+
+def connecteur_du_motif(motif: Optional[str]) -> Optional[str]:
+    """Le libellé du connecteur que ce motif NOMME, ou None. Trois façons d'être nommé,
+    dans cet ordre : entre accents graves (« pas de clé `x` »), en préfixe d'un nom
+    d'outil (`x_recherche`), ou par son libellé en toutes lettres (« … the Anthropic API »).
+    Un mot commun qui serait aussi un slug ne compte qu'entre accents graves ou en préfixe
+    d'outil, jamais seul."""
+    texte = motif or ""
+    connus = _connecteurs_decrits()
+    for slug in re.findall(r"`([a-z0-9_]+)`", texte):
+        if slug in connus:
+            return connus[slug]
+        tete = slug.split("_", 1)[0]
+        if "_" in slug and tete in connus:
+            return connus[tete]
+    for outil in re.findall(r"\b([a-z0-9]+)_[a-z0-9_]+\b", texte):
+        if outil in connus and outil not in ("fin", "run"):
+            return connus[outil]
+    for slug, libelle in sorted(connus.items(), key=lambda kv: -len(kv[1])):
+        if (len(libelle) >= 4 and libelle not in _MOTS_COMMUNS
+                and re.search(rf"\b{re.escape(libelle)}\b", texte)):
+            return libelle
+    return None
+
+
+def erreur_du_fournisseur(motif: Optional[str]) -> Optional[str]:
+    """Ce que le fournisseur a répondu (« HTTP 401 : Invalid API key »), masqué de ce qui
+    désigne un compte ou une requête, ou None quand le motif n'est pas une réponse de
+    fournisseur — notre texte interne ne sort pas."""
+    texte = (motif or "").strip()
+    for motif_re in _REPONSE_FOURNISSEUR:
+        m = motif_re.match(texte)
+        if not m:
+            continue
+        msg = m.group("msg").strip(" .—-")
+        for masque, remplacement in _MASQUER:
+            msg = masque.sub(remplacement, msg)
+        sortie = f"HTTP {m.group('code')}" + (f" : {msg}" if msg else "")
+        return sortie[:ERREUR_MAX]
     return None

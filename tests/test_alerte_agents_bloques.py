@@ -167,9 +167,12 @@ def test_les_agents_d_un_meme_probleme_forment_un_bloc_sans_le_motif(comme_slack
         _episode(2, cause_copie=_COPIE, cause_cote="proprietaire")]
     M.balayer(_JOUR)
     (to, sujet, html), = comme_slack["lettres"]
-    assert (to, sujet) == ("a@acme.test", "Un agent programmé est bloqué")
+    assert (to, sujet) == ("a@acme.test", "2 agents sont arrêtés")
     assert "Access denied" not in html and "HTTP 403" not in html, "jamais le motif brut"
-    assert html.count("La clé de l'outil") == 1, "un problème = un bloc, le texte une fois"
+    # Le preheader (caché, la ligne d'aperçu) reprend le premier problème : le corps,
+    # lui, ne le dit qu'une fois.
+    corps = html.split("</div>", 1)[1]
+    assert corps.count("La clé de l'outil") == 1, "un problème = un bloc, le texte une fois"
     assert "agent 1" in html and "agent 2" in html
     assert 'href="https://app.acme.test/agent/1"' in html, "chaque agent mène à sa page"
     assert "https://app.acme.test/connectors" in html, "le bouton du geste"
@@ -213,8 +216,9 @@ def test_en_anglais_le_courriel_par_probleme(comme_slack, monkeypatch):
     monkeypatch.setattr(U, "get_user", lambda s: {"locale": "en"})
     M.balayer(_JOUR)
     sujet, html = comme_slack["lettres"][0][1:]
-    assert sujet == "A scheduled agent is blocked"
+    assert sujet == "2 agents stopped"
     assert "It stopped before finishing its work." in html
+    assert "Failing since" in html and "Oct 20, 06:00 UTC" in html
 
 
 def test_une_panne_pas_encore_comprise_ne_dit_pas_que_c_est_au_client(comme_slack):
@@ -230,4 +234,33 @@ def test_une_panne_pas_encore_comprise_ne_dit_pas_que_c_est_au_client(comme_slac
 def test_le_courriel_par_probleme_dit_depuis_quand(comme_slack):
     comme_slack["vivants"][7] = [_episode(1), _episode(2)]
     M.balayer(_JOUR)
-    assert "En échec depuis le 2026-10-20 06:00 UTC" in comme_slack["lettres"][0][2]
+    html = comme_slack["lettres"][0][2]
+    assert "En échec depuis" in html and "20 oct., 06:00 UTC" in html
+
+
+def test_un_seul_agent_est_nomme_dans_le_sujet(comme_slack, bureau):
+    bureau["agents"] = bureau["agents"][:1]
+    comme_slack["vivants"][7] = [_episode(1)]
+    M.balayer(_JOUR)
+    sujet = comme_slack["lettres"][0][1]
+    assert sujet.endswith(" est arrêté") and "1" in sujet
+
+
+def test_le_connecteur_et_la_reponse_du_fournisseur_sont_dits_jamais_notre_texte(
+        comme_slack, bureau):
+    """Option 1 (15/11) : le connecteur que le motif nomme, sous son libellé, et ce que
+    le fournisseur a répondu ; un motif interne ne sort pas."""
+    bureau["agents"][0]["motif"] = ("BadRequestError : HTTP 400 invalid_request_error — "
+                                    "Your credit balance is too low to access the "
+                                    "Anthropic API.")
+    bureau["agents"][1]["motif"] = "RuntimeError : run_start : `x_y` refusé, voir oto_list"
+    comme_slack["vivants"][7] = [
+        _episode(1, cause_copie=_COPIE, cause_cote="proprietaire",
+                 motif="pas de clé `anthropic` déposée"),
+        _episode(2, classe="inconnu", message_client={"headline": "Autre chose.", "todo": None})]
+    M.balayer(_JOUR)
+    html = comme_slack["lettres"][0][2]
+    assert "HTTP 400 : Your credit balance is too low" in html, "la réponse du fournisseur"
+    assert ">Connecteur<" in html and ">Anthropic<" in html, "le connecteur, sous son libellé"
+    assert "RuntimeError" not in html and "oto_list" not in html, "jamais notre texte"
+    assert "passages en échec" in html

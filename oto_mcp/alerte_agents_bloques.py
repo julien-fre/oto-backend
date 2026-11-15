@@ -97,13 +97,14 @@ def _heures_calmes(maintenant: datetime) -> bool:
 def problemes(org_id: int, agents: list[dict], langue_: str, *, marque: str,
               sub: Optional[str]) -> list[dict]:
     """Les agents bloqués d'une org rangés par PROBLÈME, comme Slack (`grouper`) :
-    `[{headline, todo, action, link, since, agents: [{id, label, url}]}]`, dans l'ordre du
+    `[{headline, todo, action, link, since, runs, connectors, error, agents: [{id, label,
+    url}]}]`, dans l'ordre du
     premier agent de chaque problème. Le texte vient de l'épisode vivant de l'agent
     (`message_du_probleme`) ; un agent sans épisode lisible reçoit la phrase par défaut
     — jamais son motif brut. `sub` = le destinataire : les liens sont ceux de SON tableau
     de bord."""
     from . import alertes_slack_agents as A
-    from . import links
+    from . import causes_pannes, links
     from .db import sante_agents
     try:
         vivants = {int(e["trigger_id"]): e for e in sante_agents.episodes_vivants(org_id)}
@@ -123,10 +124,19 @@ def problemes(org_id: int, agents: list[dict], langue_: str, *, marque: str,
         else:
             pb = A.message_du_probleme(org_id, ep, langue_, marque=marque, sub=sub)
         cle = (pb["headline"], pb.get("todo"), pb.get("link"), pb.get("action"))
-        p = out.setdefault(cle, {**pb, "agents": [], "since": None})
+        p = out.setdefault(cle, {**pb, "agents": [], "since": None, "runs": 0,
+                                 "connectors": [], "error": None})
         depuis = str(a.get("depuis") or "")[:16] or None
         if depuis and (p["since"] is None or depuis < p["since"]):
             p["since"] = depuis
+        p["runs"] = max(p["runs"], int(a.get("travaux") or 0))
+        # Le connecteur et la réponse du fournisseur, quand le motif les dit (option 1
+        # de Julien, 15/11) — lus, jamais recopiés : le motif brut ne sort toujours pas.
+        motif = a.get("motif") or ep.get("motif")
+        connecteur = causes_pannes.connecteur_du_motif(motif)
+        if connecteur and connecteur not in p["connectors"]:
+            p["connectors"].append(connecteur)
+        p["error"] = p["error"] or causes_pannes.erreur_du_fournisseur(motif)
         p["agents"].append({"id": tid, "label": a.get("libelle") or f"#{tid}",
                             "url": links.link_for("agent", sub=sub, org=int(org_id),
                                                   id=tid)})
@@ -143,53 +153,109 @@ _PAS_COMPRIS = {
           "do.",
 }
 
-#: Le courriel qui parle comme Slack, par langue (`problemes`).
+#: Le courriel qui parle comme Slack, par langue (`problemes`). Refait le 15/11/2026
+#: (Julien : « less is more », et assez de détails pour comprendre) : un titre qui dit ce
+#: qui s'est arrêté, puis par problème le texte, le geste, et une petite table — quels
+#: agents, quel connecteur, depuis quand et combien de passages, ce que le fournisseur a
+#: répondu.
 _PAR_PROBLEME = {
-    "fr": {"sujet": "Un agent programmé est bloqué",
-           "intro": "Ces agents programmés de votre organisation ne fonctionnent plus :",
-           "faire": "Le faire maintenant",
-           "depuis": "En échec depuis le {depuis} UTC",
-           "fin": "Ils continueront de partir à l'heure et d'échouer de la même façon tant "
-                  "que ce n'est pas fait — ou coupez l'agent. C'est le seul message pour "
-                  "cette panne."},
-    "en": {"sujet": "A scheduled agent is blocked",
-           "intro": "These scheduled agents of your organization have stopped working:",
-           "faire": "Do it now",
-           "depuis": "Failing since {depuis} UTC",
-           "fin": "They will keep starting on schedule and fail the same way until this is "
-                  "done — or turn the agent off. This is the only message for this "
-                  "outage."},
+    "fr": {"un": "{agent} est arrêté", "n": "{n} agents sont arrêtés",
+           "faire": "Le faire maintenant", "agent": "Agent", "agents": "Agents",
+           "connecteur": "Connecteur", "connecteurs": "Connecteurs",
+           "depuis": "En échec depuis", "passages": "{n} passages en échec",
+           "erreur": "Erreur",
+           "fin": "C'est le seul email à ce sujet. Coupez un agent dans Agents si vous n'en "
+                  "avez plus besoin.",
+           "mois": ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août",
+                    "sept.", "oct.", "nov.", "déc.")},
+    "en": {"un": "{agent} stopped", "n": "{n} agents stopped",
+           "faire": "Do it now", "agent": "Agent", "agents": "Agents",
+           "connecteur": "Connector", "connecteurs": "Connectors",
+           "depuis": "Failing since", "passages": "{n} failed runs",
+           "erreur": "Error",
+           "fin": "This is the only email about this. Turn an agent off in Agents if you no "
+                  "longer need it.",
+           "mois": ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
+                    "Nov", "Dec")},
 }
+
+
+def sujet_par_probleme(blocs: list[dict], en: bool) -> str:
+    """Le sujet ET le titre : l'agent arrêté quand il est seul, leur nombre sinon."""
+    p = _PAR_PROBLEME["en" if en else "fr"]
+    agents = [a for b in blocs for a in b["agents"]]
+    if len(agents) == 1:
+        return p["un"].format(agent=agents[0]["label"])
+    return p["n"].format(n=len(agents))
+
+
+def _quand(depuis: str, p: dict, en: bool) -> str:
+    """« Nov 15, 02:00 UTC » / « 15 nov., 02:00 UTC » ; tel quel s'il ne se lit pas."""
+    try:
+        an, mois, jour = depuis[:10].split("-")
+        mot = p["mois"][int(mois) - 1]
+    except (ValueError, IndexError):
+        return depuis
+    date = f"{mot} {int(jour)}" if en else f"{int(jour)} {mot}"
+    return f"{date}, {depuis[11:16]} UTC" if len(depuis) >= 16 else date
 
 
 def _courriel_par_probleme(m, to: str, blocs: list[dict], *, locale: Optional[str],
                            en: bool) -> bool:
-    """Le courriel sous le réglage des alertes : un bloc par problème, qui nomme ses
-    agents (chacun lien vers sa page quand l'instance la déclare), dit le problème, le
-    geste, et son bouton. Tout texte est échappé : il vient du médecin ou d'un
-    opérateur."""
+    """Le courriel sous le réglage des alertes : un titre, puis un bloc par problème — le
+    texte, le geste, la table des détails, le bouton. Tout texte est échappé : il vient
+    du médecin, d'un opérateur, ou d'un fournisseur."""
     from . import email as _email
     from . import email_brand as _charte
     from .email_templates import _envoyer
 
     esc, attr = _email._esc, _email._esc_attr
     p = _PAR_PROBLEME["en" if en else "fr"]
+    discret = _charte.discret(m)
+    mono = ("font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;"
+            f"color:{m.discret}")
 
     def _nom(a: dict) -> str:
-        nom = f"<strong>{esc(a['label'])}</strong>"
-        return f'<a href="{attr(a["url"])}">{nom}</a>' if a.get("url") else nom
-    corps = [f'<p style="{_charte.PARA}">{esc(p["intro"])}</p>']
-    for b in blocs:
-        depuis = (f'<br>{esc(p["depuis"].format(depuis=b["since"]))}'
-                  if b.get("since") else "")
-        corps.append(f'<p style="{_charte.PARA}">{", ".join(_nom(a) for a in b["agents"])}'
-                     f'{depuis}<br>{esc(b["headline"])}'
-                     + (f'<br>{esc(b["todo"])}' if b.get("todo") else "") + "</p>")
-        if b.get("link"):
-            corps.append(_charte.bouton(m, b["link"], p["faire"]))
-    corps.append(f'<p style="{_charte.PARA}">{esc(p["fin"])}</p>')
-    return _envoyer(m, to, p["sujet"], _charte.page(
-        m, "".join(corps), preheader=p["sujet"],
+        nom = esc(a["label"])
+        return (f'<a href="{attr(a["url"])}" style="color:{m.encre};font-weight:600">'
+                f'{nom}</a>') if a.get("url") else f"<strong>{nom}</strong>"
+
+    def _table(lignes: list[tuple[str, Optional[str]]]) -> str:
+        tr = "".join(
+            f'<tr><td style="padding:3px 16px 3px 0;vertical-align:top;white-space:nowrap;'
+            f'{discret}">{esc(k)}</td><td style="padding:3px 0;vertical-align:top;'
+            f'font-size:14px;line-height:1.45">{v}</td></tr>' for k, v in lignes if v)
+        return (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                f'style="margin:12px 0 0">{tr}</table>')
+
+    sujet = sujet_par_probleme(blocs, en)
+    corps = [f'<p style="margin:0 0 8px;font-size:20px;line-height:1.3;font-weight:600">'
+             f'{esc(sujet)}</p>']
+    for i, b in enumerate(blocs):
+        filet = "" if i == 0 else f"border-top:1px solid {m.filet};"
+        depuis = None
+        if b.get("since"):
+            depuis = esc(_quand(b["since"], p, en))
+            if b.get("runs"):
+                depuis += " · " + esc(p["passages"].format(n=b["runs"]))
+        connecteurs = b.get("connectors") or []
+        corps.append(
+            f'<div style="{filet}padding:20px 0 0;margin-top:{0 if i == 0 else 20}px">'
+            f'<p style="margin:0 0 4px;font-weight:600">{esc(b["headline"])}</p>'
+            + (f'<p style="margin:0">{esc(b["todo"])}</p>' if b.get("todo") else "")
+            + _table([
+                (p["agents"] if len(b["agents"]) > 1 else p["agent"],
+                 "<br>".join(_nom(a) for a in b["agents"])),
+                (p["connecteurs"] if len(connecteurs) > 1 else p["connecteur"],
+                 esc(", ".join(connecteurs)) if connecteurs else None),
+                (p["depuis"], depuis),
+                (p["erreur"],
+                 f'<span style="{mono}">{esc(b["error"])}</span>' if b.get("error") else None)])
+            + (_charte.bouton(m, b["link"], p["faire"]) if b.get("link") else "")
+            + "</div>")
+    corps.append(f'<p style="margin:24px 0 0;{discret}">{esc(p["fin"])}</p>')
+    return _envoyer(m, to, sujet, _charte.page(
+        m, "".join(corps), preheader=blocs[0]["headline"] if blocs else sujet,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
