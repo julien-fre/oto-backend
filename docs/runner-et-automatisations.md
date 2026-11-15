@@ -1133,6 +1133,17 @@ admin de l'org). Écartés : `allowed: false` au catalogue (l'écran ne les prop
 refusés à la pose (`model_region_blocked`, 403), et un travail déjà en file sur l'un d'eux
 est arrêté à la réservation, sur la clé de l'org comme sur la nôtre, raison écrite.
 
+Une org peut aussi éteindre un modèle à la fois (`orgs.disabled_models`, vide par défaut ;
+`oto_org_settings domain=models`, REST `GET|PUT /api/orgs/{id}/models` avec
+`{model, enabled}`, admin de l'org ; 15/11/2026). Éteint : `allowed: false, disabled: true`
+au catalogue, jamais par défaut (le défaut se redérive sur le premier modèle proposable
+qui reste), refusé à la pose (`model_disabled`, 403). Un agent déjà posé dessus part sur le
+défaut de l'org à sa prochaine occurrence (horloge, webhook, `run_now`, campagne :
+`_modele.charge_de_l_org`, champ `modele_remplace` sur le travail) ; un travail déjà en
+file sur lui est arrêté à la réservation, raison écrite — la réservation ne change pas de
+famille. Le modèle par défaut ne s'éteint pas (`model_is_default`, 409) ; les abonnements
+personnels (`sub:*`) ne se basculent pas (`unknown_model`).
+
 ### Un agent tourne sur la clé de SON org — ou ne tourne pas (12/09/2026)
 
 La remise de clé (#874, ci-dessus) avait un envers que rien ne gardait : **une org

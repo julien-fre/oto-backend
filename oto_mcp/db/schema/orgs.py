@@ -61,7 +61,11 @@ CREATE TABLE IF NOT EXISTS orgs (
     -- Les agents de l'org peuvent tourner sur un modèle qui tourne en Chine
     -- (`db/regions_de_modeles.py`). TRUE = toutes les orgs d'avant. Base existante :
     -- révision `20261112_1900_allow_cn_models`.
-    allow_cn_models BOOLEAN NOT NULL DEFAULT TRUE
+    allow_cn_models BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Les modèles qu'un admin a éteints pour les agents de l'org (`db/modeles_eteints.py`).
+    -- Vide = toutes les orgs d'avant. Base existante : révision
+    -- `20261115_2100_disabled_models`.
+    disabled_models TEXT[] NOT NULL DEFAULT '{}'
 );
 """
 

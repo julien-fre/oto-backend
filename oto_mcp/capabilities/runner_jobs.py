@@ -680,6 +680,12 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         # que le travail a été posé : il n'est servi sur AUCUNE clé, la sienne comme la
         # nôtre — ses données ne partent pas là où l'org l'a refusé. Arrêté, raison écrite.
         return _refuser_sans_cle(job, appelant, _modele.RAISON_REGION_CN)
+    if _modele.modele_eteint(job["org_id"], (job.get("payload") or {}).get("model")):
+        # Un admin a ÉTEINT ce modèle (`orgs.disabled_models`) depuis que le travail a été
+        # posé. La réservation ne change pas de famille — le worker qui réserve sert
+        # celle-ci —, elle l'arrête, raison écrite ; l'occurrence suivante de l'agent
+        # partira sur le défaut de l'org (`_modele.charge_de_l_org`).
+        return _refuser_sans_cle(job, appelant, _modele.RAISON_MODELE_ETEINT)
     if _abonnement.est_abonnement(famille):
         # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
         # ce travail tournera dans le sandbox de SON DEMANDEUR, sur le programme
@@ -1418,7 +1424,8 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
                      # Le modèle déclaré par le passage, et la famille qui route le
                      # travail. Une flotte sans modèle — ou d'un modèle hors
                      # catalogue — n'envoie rien : n'importe quel worker la sert.
-                     **runner_models.charge(f.get("model")),
+                     # Un modèle éteint par l'org part sur son défaut, et le dit.
+                     **_modele.charge_de_l_org(f["org_id"], f.get("model")),
                      "input": message,
                      "label": f"flotte {f.get('namespace')} — {f['procedure']}"},
             fleet_id=f["id"], sub=f["sub"], seulement_si_servable=True)
@@ -1526,7 +1533,7 @@ def charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
         if model is not None and not isinstance(model, str):
             raise AuthzDenied(400, "invalid_model", "`payload.model` est un nom de modèle")
         _modele.famille_declaree(model)
-        _modele.exige_region_permise(ctx.org_id, model)
+        _modele.exige_modele_permis(ctx.org_id, model)
         charge.update(runner_models.charge(model))
         # Le QUATRIÈME chemin de pose (revue du 23/09/2026) : un travail enfilé à la
         # main sur un modèle d'abonnement passe la même garde qu'un agent posé —

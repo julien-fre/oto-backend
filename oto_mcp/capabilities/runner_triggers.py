@@ -582,9 +582,13 @@ class RunnerModel(BaseModel):
     #: Où tourne le modèle (`runner_models.hebergement`) : ce que l'écran affiche pour
     #: que le client sache dans quel pays partent les données de son agent.
     hosting: Optional["RunnerModelHosting"] = None
-    #: False quand l'org a écarté la région où il tourne (`orgs.allow_cn_models`) :
-    #: l'écran ne le propose pas, et la pose le refuse (`model_region_blocked`).
+    #: False quand l'org a écarté la région où il tourne (`orgs.allow_cn_models`) ou
+    #: éteint le modèle (`orgs.disabled_models`) : l'écran ne le propose pas, et la pose
+    #: le refuse (`model_region_blocked`, `model_disabled`).
     allowed: bool = True
+    #: True quand un admin de l'org a éteint CE modèle (`orgs.disabled_models`) — ce qui
+    #: le distingue d'une région écartée : l'écran l'affiche éteint, interrupteur à côté.
+    disabled: bool = False
 
 
 class RunnerModelHost(BaseModel):
@@ -1711,7 +1715,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Un modèle inconnu se corrige dans l'appel, comme un cron : il se juge
         # avec lui, avant la présence du runner.
         famille = _modele.famille_declaree(inp.model)
-        _modele.exige_region_permise(ctx.org_id, inp.model)
+        _modele.exige_modele_permis(ctx.org_id, inp.model)
         # Le modèle est OBLIGATOIRE (24/09/2026) : il se corrige dans l'appel, comme
         # un modèle inconnu, donc il se juge avec lui.
         _modele.exige_un_modele(famille)
@@ -2127,7 +2131,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     famille = None
     if inp.model is not None:
         famille = _modele.famille_declaree(inp.model)
-        _modele.exige_region_permise(ctx.org_id, inp.model)
+        _modele.exige_modele_permis(ctx.org_id, inp.model)
         # `model=""` RETIRAIT le modèle pour revenir à celui du worker : un agent
         # hébergé déclare désormais le sien (24/09/2026), la retouche ne peut que
         # le changer.

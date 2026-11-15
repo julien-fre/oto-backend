@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import (_prerequis, org_d_inscription, slack_reglage, regions_de_modeles, access_shadow, alertes_agents, copilot as copilot_store, doc_archivage, index_concurrent, index_releve, journal_calls, journal_jour, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions, attribution_cellules, regles_de_comptes,
+from . import (_prerequis, org_d_inscription, slack_reglage, regions_de_modeles, modeles_eteints, access_shadow, alertes_agents, copilot as copilot_store, doc_archivage, index_concurrent, index_releve, journal_calls, journal_jour, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions, attribution_cellules, regles_de_comptes,
                projects, recipes, revision, runner_fleets, runner_jobs, runner_triggers, rowlock, transcription, user_subscriptions, valeurs_servies)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
@@ -1503,6 +1503,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # même que pose la révision `20261112_1900_allow_cn_models` : ordre indifférent.
     if _colonne_absente(conn, "orgs", regions_de_modeles.COLONNE):
         conn.execute(regions_de_modeles.DDL_COLONNE)
+    # Les modèles éteints par un admin de l'org (`db/modeles_eteints.py`) — la même que
+    # pose la révision `20261115_2100_disabled_models` : ordre indifférent.
+    if _colonne_absente(conn, "orgs", modeles_eteints.COLONNE):
+        conn.execute(modeles_eteints.DDL_COLONNE)
     # SUSPENSION d'une org (`org_suspension`) : l'org ne peut plus agir — outils,
     # capacités, travaux de fond — et rien de ce qui lui appartient n'est touché.
     # Même forme que `users.suspended_*`. NULL = active.

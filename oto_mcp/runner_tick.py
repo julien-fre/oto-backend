@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 
 from . import db, org_suspension, procedure_retiree, runner_models
-from .capabilities import _abonnement, _instruction, _limites_du_run, _projet_de_l_agent
+from .capabilities import _abonnement, _instruction, _limites_du_run, _modele, _projet_de_l_agent
 
 log = logging.getLogger(__name__)
 
@@ -187,7 +187,8 @@ def charge_du_declencheur(t: dict, echeance, origine: str = "planifié",
         "trigger_id": t["id"],
         # Le modèle DÉCLARÉ et sa famille — la famille route le travail vers un
         # worker qui la sert (`claim_next_job`). Sans modèle, on n'arrive pas ici.
-        **runner_models.charge(t.get("model")),
+        # Un modèle que l'org a ÉTEINT part sur son défaut, et le dit (`modele_remplace`).
+        **_modele.charge_de_l_org(t.get("org_id"), t.get("model")),
     }
 
 

@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from . import db, org_suspension, procedure_retiree, runner_models
-from .capabilities import _instruction, _limites_du_run, _projet_de_l_agent
+from .capabilities import _instruction, _limites_du_run, _modele, _projet_de_l_agent
 
 logger = logging.getLogger(__name__)
 
@@ -1062,7 +1062,8 @@ def enfiler(t: dict, externe: Optional[str], source: Optional[str], *,
                             t.get("payload_mode") or IGNORE, t.get("payload_fields"),
                             trigger_id=trigger_id,
                             sans_preuve=prereglage(t.get("hook_auth")).schema == NONE)),
-                        **runner_models.charge(t.get("model")),
+                        # Un modèle éteint par l'org part sur son défaut, et le dit.
+                        **_modele.charge_de_l_org(t.get("org_id"), t.get("model")),
                     }
                     job = db.enqueue_job(
                         t["org_id"], "start", sub=sub or t.get("sub"),

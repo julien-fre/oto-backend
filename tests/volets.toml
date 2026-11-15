@@ -499,6 +499,9 @@ sources = [
   "oto_mcp/tours_au_cout.py",
   # Où une org laisse tourner les modèles de ses agents (`orgs.allow_cn_models`).
   "oto_mcp/db/regions_de_modeles.py",
+  # Les modèles qu'un admin a éteints pour les agents de l'org (`orgs.disabled_models`).
+  "oto_mcp/db/modeles_eteints.py",
+  "oto_mcp/capabilities/orgs/models.py",
   "oto_mcp/anthropic_usage.py",
   "oto_mcp/time_saved.py",
   "oto_mcp/capabilities/runner_*.py",
@@ -533,6 +536,8 @@ tests = [
   "tests/**/test_tours_au_cout*.py",
   "tests/**/test_regions_de_modeles*.py",
   "tests/api/test_regions_de_modeles_rest.py",
+  "tests/**/test_modeles_eteints*.py",
+  "tests/api/test_modeles_eteints_rest.py",
   "tests/**/test_modeles_ouverts_openrouter.py",
 ]
 

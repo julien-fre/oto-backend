@@ -90,7 +90,8 @@ def _org(ctx: ResolvedCtx, inp: OrgInput) -> dict:
 class OrgSettingsInput(BaseModel):
     op: Literal["get", "set", "preview"]
     domain: Literal["email", "mfa", "field_filters", "model_subscriptions", "time_saved",
-                    "partage_par_defaut", "apify_charge_cap", "slack", "model_regions"]
+                    "partage_par_defaut", "apify_charge_cap", "slack", "model_regions",
+                    "models"]
     org_id: int
     # email (set) :
     connector: Optional[str] = None          # scaleway | resend
@@ -127,6 +128,9 @@ class OrgSettingsInput(BaseModel):
     # model_regions (set) : les agents de l'org peuvent-ils tourner sur un modèle qui
     # tourne en Chine.
     allow_cn: Optional[bool] = None
+    # models (set) : allumer ou éteindre UN modèle pour les agents de l'org.
+    model: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 def _temps_gagne(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
@@ -222,6 +226,20 @@ def _regions_de_modeles(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
     return {"org_id": inp.org_id, "allow_cn": permise}
 
 
+def _modeles_eteints(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
+    """Les modèles qu'un admin a éteints pour les agents de l'org (`orgs/models.py`) :
+    `disabled`. Même handler que `/api/orgs/{id}/models` — pas une copie."""
+    from .orgs import models as orgs_models
+    if inp.op not in ("get", "set"):
+        raise AuthzDenied(400, "unsupported_op", "preview n'existe que pour field_filters.")
+    if inp.op == "set":
+        model = _need(inp.model, "missing_model", "`model` requis pour set.")
+        if inp.enabled is None:
+            raise AuthzDenied(400, "missing_enabled", "`enabled` (true|false) requis pour set.")
+        return orgs_models.basculer(inp.org_id, model, inp.enabled)
+    return orgs_models.lire(inp.org_id)
+
+
 def _plafond_apify(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
     """Le plafond par lancement Apify de l'org (`connectors/apify_charge_cap.py`)."""
     cc = connectors_apify_charge_cap
@@ -244,6 +262,8 @@ def _org_settings(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
         return _slack(ctx, inp)
     if inp.domain == "model_regions":
         return _regions_de_modeles(ctx, inp)
+    if inp.domain == "models":
+        return _modeles_eteints(ctx, inp)
     if inp.domain == "partage_par_defaut":
         return _partage_par_defaut(ctx, inp)
     if inp.domain == "model_subscriptions":
@@ -477,7 +497,13 @@ CAPABILITIES += [
             "default true; false = models with any host in China — `runner.models[].hosting"
             ".region` = cn — are no longer offered (`allowed: false`), an agent cannot be "
             "set on one (`model_region_blocked`), and a job already queued on one is "
-            "stopped at the claim with the reason written). "
+            "stopped at the claim with the reason written) | models (the models the org "
+            "turned off for its agents: get returns `disabled` = their ids; set takes "
+            "`model` + `enabled` true|false; off = no longer offered (`allowed: false, "
+            "disabled: true`), an agent cannot be set on it (`model_disabled`), an agent "
+            "already on it runs on the org's default model, a job already queued on it is "
+            "stopped at the claim; the default model cannot be turned off "
+            "(`model_is_default`)). "
             "op=get is member, set is org admin."),
         mcp="oto_org_settings",
     ),
