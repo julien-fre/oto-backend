@@ -54,6 +54,8 @@ def socle(monkeypatch):
     monkeypatch.setattr(um.access, "current_org", lambda sub: 35)
     monkeypatch.setattr(um.db, "clear_unipile_account",
                         lambda sub, org, prov: vus.append(("clear", sub, org, prov)))
+    # No platform seat by default: deleting at the provider is tested on its own below.
+    monkeypatch.setattr(um.db, "list_unipile_accounts", lambda sub: [])
     return vus
 
 
@@ -219,3 +221,70 @@ def test_un_champ_inconnu_est_desormais_refuse(monkeypatch, socle):
     code, out = call("me.unipile.connect", body={"chanel": "linkedin"})
     assert code == 400
     assert out["error"] == "unknown_fields" and "chanel" in out["detail"]
+
+
+# --- Délier rend le siège plateforme (le compte cesse d'être facturé) -------
+
+class _Plateforme:
+    def __init__(self, boum=False):
+        self.deleted: list = []
+        self.boum = boum
+
+    def delete_account(self, account_id):
+        if self.boum:
+            raise RuntimeError("unipile 503")
+        self.deleted.append(account_id)
+
+
+def _siege(monkeypatch, socle, *, platform_seat=True, ailleurs=False, cle=True, boum=False):
+    """`a1` = le LinkedIn de u-1 dans l'org 35. `ailleurs` = le même compte reste branché
+    (adopté) dans une autre org après la déconnexion."""
+    from oto_mcp.capabilities import unipile_seats
+    plat = _Plateforme(boum=boum)
+    monkeypatch.setattr(um.db, "list_unipile_accounts", lambda sub: [
+        {"provider": "LINKEDIN", "account_id": "a1", "org_id": 35,
+         "platform_seat": platform_seat}])
+    monkeypatch.setattr(um.db, "unipile_account_owners", lambda include_disconnected=False: (
+        [{"account_id": "a1", "org_id": 12, "sub": "u-1"}] if ailleurs else []))
+    monkeypatch.setattr(unipile_seats, "_platform_client", lambda: plat if cle else None)
+    return plat
+
+
+def test_delier_un_siege_plateforme_le_supprime_chez_unipile(monkeypatch, socle):
+    stub_authz(monkeypatch)
+    plat = _siege(monkeypatch, socle)
+    code, out = call("me.unipile.disconnect")
+    assert (code, out) == (200, {"ok": True})
+    assert plat.deleted == ["a1"]
+    assert socle[0][0] == "clear"          # délier AVANT de supprimer
+
+
+def test_un_compte_encore_branche_dans_une_autre_org_reste(monkeypatch, socle):
+    stub_authz(monkeypatch)
+    plat = _siege(monkeypatch, socle, ailleurs=True)
+    call("me.unipile.disconnect")
+    assert plat.deleted == []
+
+
+def test_un_compte_byo_n_est_jamais_supprime(monkeypatch, socle):
+    """Il vit sur l'abonnement Unipile de l'org : ce n'est pas à nous de le supprimer."""
+    stub_authz(monkeypatch)
+    plat = _siege(monkeypatch, socle, platform_seat=False)
+    call("me.unipile.disconnect")
+    assert plat.deleted == []
+
+
+def test_un_autre_canal_ne_supprime_pas_le_linkedin(monkeypatch, socle):
+    stub_authz(monkeypatch)
+    plat = _siege(monkeypatch, socle)
+    call("me.unipile.disconnect", query=b"channel=whatsapp")
+    assert plat.deleted == []
+
+
+@pytest.mark.parametrize("cle,boum", [(False, False), (True, True)])
+def test_une_panne_amont_ne_fait_pas_echouer_la_deconnexion(monkeypatch, socle, cle, boum):
+    stub_authz(monkeypatch)
+    _siege(monkeypatch, socle, cle=cle, boum=boum)
+    code, out = call("me.unipile.disconnect")
+    assert (code, out) == (200, {"ok": True})
+    assert socle[0][0] == "clear"

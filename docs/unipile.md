@@ -708,3 +708,27 @@ compte sur la propre clé du client (`platform_seat = false`) n'est jamais regar
   `entitlement_lost_at` et `deletion_scheduled_at` ; `release` libère sans `force` un
   siège en service dont aucune org n'a plus le droit, et refuse toujours (409
   `seat_in_use`) celui dont l'org a le droit.
+
+## Délier un canal rend le siège plateforme
+
+Un compte branché sur la **clé plateforme** se paie chez unipile tant qu'il y EXISTE.
+La déconnexion du membre (`DELETE /api/me/unipile`, `capabilities/unipile_me._disconnect`)
+ne faisait que délier : la ligne prenait `disconnected_at` et le compte continuait de
+coûter, jusqu'à une reprise à la main (`oto_admin_unipile_seat release`) ou la fin du droit.
+Désormais :
+
+1. le binding est soft-déconnecté **d'abord** (la ligne survit, preuve de propriété) ;
+2. si c'était un **siège plateforme** (`platform_seat = true`) et qu'**aucun binding vivant**
+   ne nomme plus ce compte (un compte adopté dans une autre org y reste en service), le
+   compte est **supprimé chez unipile** (`client.delete_account`) — même ordre que
+   `unipile_seats.liberer` ;
+3. au mieux : une panne amont, ou l'absence de clé plateforme, ne fait **pas** échouer la
+   déconnexion. Le siège reste alors `disconnected` dans l'inventaire, où un admin le libère.
+
+⚠️ Un compte **BYO** (`platform_seat = false`) vit sur l'abonnement de l'org : jamais supprimé.
+⚠️ Se reconnecter ensuite est une **nouvelle connexion complète** chez le fournisseur, avec un
+**nouvel** `account_id` : la réconciliation le lie par sa date de création (le plancher du
+pending), comme une première connexion. Le rebind déterministe par ligne morte ne joue plus
+pour ce compte-là — il n'existe plus.
+⚠️ `disconnected_at` n'est **jamais réécrit** par une seconde déconnexion
+(`clear_unipile_account` ne touche qu'une ligne vivante) : la facturation lit cette date.

@@ -134,8 +134,10 @@ def clear_unipile_account(sub: str, org_id: Optional[int], provider: str = "LINK
         return
     with _connect() as conn:
         conn.execute(
+            # A row already disconnected keeps its date: billing reads it (the connection
+            # lens, prorated connection-months), and a repeated DELETE must not move it.
             "UPDATE unipile_accounts SET disconnected_at = NOW() "
-            "WHERE sub = %s AND org_id = %s AND provider = %s",
+            "WHERE sub = %s AND org_id = %s AND provider = %s AND disconnected_at IS NULL",
             (sub, org_id, provider))
 
 
