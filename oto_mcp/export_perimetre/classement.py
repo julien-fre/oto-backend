@@ -263,6 +263,9 @@ CLASSEMENT: dict[str, Table] = {
     # PERSONNELS d'un membre (`owner_sub` = son compte, la ligne est celle d'UN compte
     # dans l'org) ; `added_by` = l'auteur du geste, pas un compte. Ils partent avec elle.
     "org_favorites": possedee(ParOrg(), comptes=("owner_sub",)),
+    # les applications de Custom API de l'org (adresse, mode, actions — jamais un secret) :
+    # un réglage de l'org, elles partent avec elle ; `created_by`/`updated_by` = auteurs.
+    "api_apps": possedee(ParOrg()),
     "apify_runs": exclue(ParOrg(), "suivi de la clé PLATEFORME de l'instance d'origine : "
                          "ses runs ne se relèvent qu'avec cette clé, et le coût relevé "
                          "part avec le journal"),

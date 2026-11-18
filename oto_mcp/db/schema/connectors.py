@@ -375,3 +375,39 @@ CREATE INDEX IF NOT EXISTS idx_account_share_events_org
 CREATE INDEX IF NOT EXISTS idx_account_share_events_actor
     ON connector_account_share_events (actor_sub) WHERE actor_sub IS NOT NULL;
 """
+
+# les APPLICATIONS de Custom API d'une org : la définition partagée par toutes leurs clés
+API_APPS = """
+-- Une APPLICATION de Custom API (connecteur `api`, `docs/connector-vault.md` § Les
+-- applications de Custom API) : ce qu'une org configure UNE fois pour un outil — son
+-- adresse et son mode d'authentification (`connection` : base_url, auth_mode,
+-- header_name, query_param, doc_path, token_url, scope, session) et sa définition
+-- (`definition` : label, description, logo_domain, headers, variables, operations) —,
+-- servie à TOUTES les clés de cette application, quel que soit leur palier (membre,
+-- équipe, org). Les clés, elles, restent dans le coffre, sous le même nom de compte, et
+-- n'y portent que leurs secrets ; une clé est LIÉE à une application à sa pose
+-- (`meta.api_app` = l'`id` de cette ligne), jamais par la seule rencontre des noms.
+-- Aucun secret ici, jamais. Une application RETIRÉE est archivée (`archived_at`), pas
+-- supprimée : ses clés liées refusent alors en la nommant, et le nom se réutilise
+-- (unicité sur les seules lignes vivantes). `created_by`/`updated_by` = colonnes
+-- d'AUTEUR, sans FK.
+CREATE TABLE IF NOT EXISTS api_apps (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    account TEXT NOT NULL CHECK (account <> ''),
+    connection JSONB NOT NULL DEFAULT '{}'::jsonb,
+    definition JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    archived_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS api_apps_un_nom_vivant
+    ON api_apps (org_id, account) WHERE archived_at IS NULL;
+-- La fusion de comptes repointe les deux colonnes d'auteur d'un bloc.
+CREATE INDEX IF NOT EXISTS idx_api_apps_created_by
+    ON api_apps (created_by) WHERE created_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_api_apps_updated_by
+    ON api_apps (updated_by) WHERE updated_by IS NOT NULL;
+"""

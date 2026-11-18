@@ -557,6 +557,10 @@ _SUB_COLUMNS = [
     # `org_favorites_une_ligne`, dédoublonné d'abord (`_UNIQUE_INDEX_SUB_TABLES`, étape
     # 2 quinquies, qui garde la date la plus ancienne), puis repointé ici.
     ("org_favorites", "owner_sub"),
+    # `api_apps.created_by` / `updated_by` = qui a créé une application de Custom API, et
+    # qui l'a retouchée en dernier — colonnes d'AUTEUR, hors de l'unicité et sans FK :
+    # UPDATE nu, elles suivent la personne.
+    ("api_apps", "created_by"), ("api_apps", "updated_by"),
     ("tool_calls", "effective_sub"),
     # Le JOURNAL des acceptations légales (#487) — la source de vérité du gate, donc
     # ce qui décide si le compte fusionné se voit redemander ses CGU. Aucune unicité :

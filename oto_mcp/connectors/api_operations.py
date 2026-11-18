@@ -130,13 +130,18 @@ def _summary(account: str, config: dict, meta_label: Optional[str] = None) -> di
 #: Where a custom connector's key lives, as the lists say it: `member` = the CALLER's own
 #: key in this org (personal tier, `byo_user`), `org` = the org's, shared by its members.
 SCOPE_MEMBER, SCOPE_ORG = credentials_store.MEMBER, credentials_store.ORG
+#: A Custom API APP of the org (`connectors/api_apps`): one definition, keys at any tier.
+SCOPE_APP = "app"
 
 
 def _owner_connectors(owner_type: str, owner_id: str, scope: str) -> list[dict]:
     """One owner's custom connectors, one per `api` account. One query when the owner
     has no account, two otherwise; no decryption."""
+    # A key BOUND to a Custom API app is listed under its app (`api_apps`), not as a
+    # connector of its own.
     metas = {r["account"]: (r.get("meta") or {}).get("label") for r in
-             credentials_store.list_accounts(owner_type, owner_id, CONNECTOR)}
+             credentials_store.list_accounts(owner_type, owner_id, CONNECTOR)
+             if (r.get("meta") or {}).get("api_app") is None}
     if not metas:
         return []
     out = []
@@ -164,7 +169,15 @@ def org_connectors(org_id: int, sub: Optional[str]) -> list[dict]:
     mine = (_owner_connectors(credentials_store.MEMBER,
                               credentials_store.member_id(org_id, sub), SCOPE_MEMBER)
             if sub and providers.is_byo_user(CONNECTOR) else [])
-    return mine + _owner_connectors(credentials_store.ORG, str(org_id), SCOPE_ORG)
+    return (_apps_for(org_id, sub) + mine
+            + _owner_connectors(credentials_store.ORG, str(org_id), SCOPE_ORG))
+
+
+def _apps_for(org_id: int, sub: Optional[str]) -> list[dict]:
+    """The org's Custom API APPS (`scope: "app"`), each with the tier of the key that
+    would serve `sub` (`access`: member | group | org, None = no key for them yet)."""
+    from . import api_apps
+    return api_apps.pour_membre(org_id, sub)
 
 
 def for_context(org_id: int, sub: Optional[str], connectors: list[str]) -> list[dict]:
@@ -187,6 +200,8 @@ def context_line(c: dict) -> str:
     says so: it is theirs alone, and the one used before the org's."""
     whose = (" (your personal key, used before the org's)"
              if c.get("scope") == SCOPE_MEMBER else "")
+    if c.get("scope") == SCOPE_APP and c.get("access") is None:
+        whose = " (app of the org — no key of yours, your team's or the org's yet)"
     return (f"- Custom connector{whose}: {c['label']} — "
             f"`api(op=\"list\", _account=\"{c['account']}\")`")
 

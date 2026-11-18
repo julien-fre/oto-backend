@@ -29,6 +29,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, custom_ops, egress, links, roles, session_org
 from ..auth.hooks import current_user_sub_from_token
+from ..connectors import api_apps
 from ..connectors import api_operations as store
 from ..mcp_errors import McpError
 from ..providers.api import AUTH_MODES
@@ -115,10 +116,21 @@ def _resolved(account: Optional[str] = None):
     if rc.entity_type is None:
         raise _bad("`api` connector: no Custom API account of yours, your team's or your "
                    "org's resolves — connect one first (`api(op=\"setup_link\")`).")
-    return rc
+    return servie(rc)
+
+
+def servie(rc) -> api_apps.CleServie:
+    """The key the `api*` tools use: the resolved row, composed with its Custom API app
+    when it is bound to one (`connectors/api_apps.servie`) — refused by name otherwise."""
+    try:
+        return api_apps.servie(rc)
+    except api_apps.AppRefused as e:
+        raise _bad(f"`api` connector: {e.message}")
 
 
 def _definition(rc) -> dict:
+    if rc.app is not None:
+        return api_apps.definition(rc.app)
     try:
         return store.load_definition(rc.entity_type, str(rc.entity_id), rc.account)
     except store.InstanceMissing as e:
@@ -141,6 +153,13 @@ def _require_admin(sub: str, rc) -> None:
     """Same right as setting the credential itself: org admin for an org account,
     team lead for a team account, the person for their own."""
     et, eid = rc.entity_type, str(rc.entity_id)
+    if rc.app is not None:
+        # A Custom API app is the org's, whatever the key's tier: only an org admin
+        # changes it — never the holder of a personal or team key.
+        if not roles.is_org_admin(sub, int(rc.app["org_id"])):
+            raise _bad(f"The Custom API app `{rc.account}` is set up by the org's admins "
+                       "for all its keys — ask one of them to change its actions.")
+        return
     if et == "org":
         ok = roles.is_org_admin(sub, int(eid))
     elif et == "group":
@@ -218,6 +237,12 @@ def register(mcp: FastMCP) -> None:
                             + (" `scope: \"member\"` = your personal key: it is used "
                                "before the org's for the same account."
                                if any(c["scope"] == store.SCOPE_MEMBER for c in conns)
+                               else "")
+                            + (" `scope: \"app\"` = an app of the org, used through "
+                               "YOUR key: `access` = its tier (member, group, org); "
+                               "null = no key of yours yet — set yours on the app's "
+                               "card, or ask an admin."
+                               if any(c["scope"] == store.SCOPE_APP for c in conns)
                                else "")}
         rc = _resolved()
         d = _definition(rc)

@@ -31,7 +31,9 @@ from mcp.types import INVALID_PARAMS, ErrorData
 from .. import custom_ops, custom_ops_output, session_org
 from ..mcp_errors import McpError
 from ..texte_tiers import cloture
+from ..connectors import api_apps
 from ..connectors import api_operations as store
+from ..db import api_apps as api_apps_store
 from . import api as api_tool
 from .api_ops import (_auth_header, _bad, _definition, _org_connectors, _require_admin,
                        _resolved, _sub, refuse_foreign)
@@ -56,6 +58,10 @@ def _account_for(sub: str, operation: str) -> Optional[str]:
     # caller's own key first (`_account` resolves it), so it is not an ambiguity.
     par_compte: dict[str, dict] = {}
     for c in _org_connectors(sub):
+        # An app of the org with no key for the caller is not a candidate: it cannot
+        # serve them, so it can neither be chosen nor make the call ambiguous.
+        if c.get("scope") == store.SCOPE_APP and c.get("access") is None:
+            continue
         if custom_ops.find(c["operations"], operation):
             par_compte.setdefault(c["account"], c)
     porteurs = list(par_compte.values())
@@ -181,6 +187,8 @@ def _import(sub: str, source: Optional[str], url: Optional[str],
 def _set_definition(sub: str, given: dict) -> dict:
     rc = _resolved()
     _require_admin(sub, rc)
+    if rc.app is not None:
+        return _set_app_definition(sub, rc, given)
     try:
         d = store.save_definition(rc.entity_type, str(rc.entity_id), rc.account,
                                   given, auth_header=_auth_header(rc))
@@ -188,6 +196,21 @@ def _set_definition(sub: str, given: dict) -> dict:
         raise _bad("definition refused: " + " | ".join(e.errors[:20]))
     except store.InstanceMissing as e:
         raise _bad(f"`api` connector: {e}.")
+    return {"account": rc.account, "saved": sorted(given),
+            "label": d["label"], "actions": [o["name"] for o in d["operations"]]}
+
+
+def _set_app_definition(sub: str, rc, given: dict) -> dict:
+    """The definition of a Custom API app: saved on the APP, for all its keys (the
+    caller is an org admin — `_require_admin`)."""
+    try:
+        clean = api_apps.valider_definition(given, rc.app["connection"] or {})
+    except api_apps.AppRefused as e:
+        raise _bad("definition refused: " + e.message)
+    app = api_apps_store.modifier(int(rc.app["id"]), definition=clean, by=sub)
+    if app is None:
+        raise _bad(f"`api` connector: the app `{rc.account}` was removed meanwhile.")
+    d = api_apps.definition(app)
     return {"account": rc.account, "saved": sorted(given),
             "label": d["label"], "actions": [o["name"] for o in d["operations"]]}
 

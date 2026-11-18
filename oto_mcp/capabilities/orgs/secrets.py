@@ -12,6 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from ...connectors import api_apps
 from ... import providers, credentials_store, org_store
 from .._authz import ORG_ADMIN_OF
 from .._refus_de_pose import REFUS_DE_VERIFICATION, refus_de_pose
@@ -84,9 +85,16 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
     # absents sont complétés par le coffre, côté serveur ; un champ vide efface.
     # Mono-champ (api_key) ou multi-champs (fields packés), et les champs rangés dans
     # `meta` (`in_meta`) — source unique, `credentials_store.preparer_pose`.
+    # La clé d'une APPLICATION de Custom API : la connexion est celle de l'application,
+    # et la clé lui est liée (`connectors/api_apps.completer_la_pose`).
+    try:
+        api_key, champs, lien_app = api_apps.completer_la_pose(
+            "org", str(inp.org_id), inp.provider, account, inp.api_key, inp.fields)
+    except api_apps.AppRefused as e:
+        raise AuthzDenied(e.status, e.code, e.message)
     try:
         secret, meta_champs = credentials_store.preparer_pose(
-            "org", str(inp.org_id), inp.provider, account, inp.api_key, inp.fields)
+            "org", str(inp.org_id), inp.provider, account, api_key, champs)
     except ValueError as e:
         # Saisie refusée (400) ou non vérifiable chez le fournisseur (503).
         raise refus_de_pose(e)
@@ -100,7 +108,7 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
     except credentials_store.SingleAccountConnector as e:
         raise AuthzDenied(400, "single_account_connector", str(e))
     org_store.set_org_secret(inp.org_id, inp.provider, secret, set_by=ctx.sub,
-                             meta={**(meta or {}), **meta_champs} or None, account=account)
+                             meta={**(meta or {}), **meta_champs, **lien_app} or None, account=account)
     return {"ok": True, "org_id": inp.org_id, "provider": inp.provider}
 
 
@@ -121,7 +129,11 @@ CAPABILITIES += [
                      "with the key under its declared field name. "
                      "Multi-field connectors (zoho/silae…): pass `fields` "
                      "(all declared credential fields). base_url for remote bridges."),
-        errors=(DeclaredError(400, "single_account_connector",
+        errors=(DeclaredError(400, "api_app_field_fixed",
+                              "la clé d'une application de Custom API ne porte que ses "
+                              "secrets : un champ de connexion qui diffère de "
+                              "l'application est refusé"),
+                DeclaredError(400, "single_account_connector",
                               "un `account` nommé sur un connecteur qui n'en gère "
                               "qu'un — la clé écraserait l'unique"),
                 DeclaredError(409, "account_required",

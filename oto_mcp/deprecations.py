@@ -330,18 +330,22 @@ def _alias_datastore() -> tuple:
 #: Le préfixe REST du connecteur Custom API, avant et après son renommage.
 _API_ANCIEN = "/api/orgs/{id}/connectors/http/"
 _API_NOUVEAU = "/api/orgs/{id}/connectors/api/"
+# Les routes NÉES après le renommage n'ont jamais eu d'ancien chemin : les applications de
+# Custom API (`capabilities/connectors/api_apps.py`, 18/11/2026).
+_API_NEES_APRES = (_API_NOUVEAU + "apps",)
 
 
 def _alias_connecteur_api() -> tuple:
     """Un alias par route du connecteur `api` réellement montée — même dérivation que
-    `_alias_datastore` : une route ajoutée demain hérite de son ancien chemin, une route
-    retirée perd le sien. Le placeholder ne change pas de nom."""
+    `_alias_datastore` : une route retirée perd son ancien chemin. Une route NÉE après le
+    renommage (`_API_NEES_APRES`) n'en a jamais eu, et n'en reçoit pas. Le placeholder ne
+    change pas de nom."""
     from .capabilities.registry import CAPABILITIES  # tardif : évite un cycle
 
     out = []
     for cap in CAPABILITIES:
         for rest in cap.rest_bindings():
-            if rest.path.startswith(_API_NOUVEAU):
+            if rest.path.startswith(_API_NOUVEAU) and not rest.path.startswith(_API_NEES_APRES):
                 ancien = _API_ANCIEN + rest.path[len(_API_NOUVEAU):]
                 out.append(AliasRest(rest.verb, ancien, rest.path, {}, "",
                                      RETRAIT_CONNECTEUR_API))

@@ -483,7 +483,9 @@ def test_toute_colonne_jsonb_est_triee_pour_la_fusion():
         # Un transfert de solde entre deux comptes fusionnés nomme les deux payeurs.
         ("credit_movements", "meta"),
     }
-    allow = sans_personne | journaux
+    # L'application de Custom API : son adresse, son mode, ses actions — aucune personne.
+    applications = {("api_apps", "connection"), ("api_apps", "definition")}
+    allow = sans_personne | journaux | applications
 
     manquantes = jsonb - set(_JSONB_SUB_COLUMNS) - allow
     assert not manquantes, (

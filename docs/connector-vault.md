@@ -622,6 +622,65 @@ l'intérieur du coffre, un relevé AST par FONCTION qui n'admet que les cinq pri
 d'écriture. Un lecteur de credential qui se mettrait à lire les instances ferait dépendre
 la désignation d'une clé d'autre chose que du quadruplet ; c'est le lot L7, avec sa revue.
 
+### Les applications de Custom API (18/11/2026)
+
+**Le besoin.** Un connecteur personnalisé ÉTAIT une ligne du coffre : son adresse, son
+mode d'authentification (champs chiffrés) et ses actions (`config` de son instance)
+vivaient sur la clé. Une org qui veut que chacun se serve de l'outil avec SES droits chez
+le fournisseur — une API interne qui applique elle-même les rôles de ses utilisateurs, un
+jeton par personne ou par équipe — se retrouvait avec autant de connecteurs que de clés,
+sans actions hors de la carte d'org, et ne pouvait pas faire exister un outil sans clé
+d'org (une clé d'org donne la même identité à tout le monde : c'est précisément ce que
+l'org ne veut pas).
+
+**Le modèle.** Deux objets, comme pour un connecteur natif où la définition est le code :
+
+- l'**application** (`api_apps`, `db/schema/connectors.API_APPS`) : par org et par nom de
+  compte, sa `connection` (`base_url`, `auth_mode`, `header_name`, `query_param`,
+  `doc_path`, `token_url`, `scope`, `session`) et sa `definition` (même format que celle
+  d'une instance, `custom_ops_definition`). Jamais un secret. Créée, changée, retirée par
+  un admin de l'org seul (`capabilities/connectors/api_apps.py`) ; archivée, jamais
+  supprimée ; le nom se réutilise après retrait ;
+- ses **clés** : des lignes ORDINAIRES du coffre (membre, équipe, org), sous le compte de
+  l'application, posées par les trois surfaces de toujours. La cascade ne change pas :
+  perso > équipe ACTIVE > org.
+
+**La liaison se fait à la POSE, et seulement là** (`connectors/api_apps.completer_la_pose`,
+appelée par `me.credential.set`, `group.secret.set`, `org.secret.set`) : une clé posée sous
+le nom d'une application VIVANTE de son org reçoit la connexion de l'application (un champ
+de connexion envoyé qui diffère : `api_app_field_fixed`, jamais écrasé en silence) et
+`meta.api_app = <id>`. ⚠️ **Jamais par la seule rencontre des noms** : une clé posée AVANT
+l'application, du même nom, reste une carte ordinaire (et la cascade la sert d'abord à son
+titulaire, comme avant) ; l'`id`, pas le nom, désigne l'application — recréer une
+application du même nom après un retrait n'adopte pas les clés de l'ancienne.
+
+**À l'appel** (`servie`, branchée à `tools/api_ops._resolved` et `tools/api._resolve`) :
+la ligne résolue garde ses secrets ; la connexion et la définition sont celles de
+l'application. ⚠️ **Le secret ne suit jamais un changement d'hôte** : la clé garde dans le
+coffre l'adresse et le mode de sa pose ; si l'application a changé d'hôte (ou de mode)
+depuis, la clé REFUSE (`api_app_key_stale`) au lieu de partir vers un hôte pour lequel
+personne ne l'a posée, jusqu'à ce que son titulaire la repose. Application retirée :
+`api_app_removed`. La définition d'une application ne s'écrit que par un admin de l'org,
+quel que soit le palier de la clé qui la résout (`api_act op=set_definition`,
+`_require_admin`) ; les routes de définition d'une CARTE refusent une clé liée
+(`api_app_owns_definition`).
+
+**Compatibilité avec la base partagée.** Une clé liée porte TOUS ses champs dans le coffre
+(adresse et mode compris, recopiés à la pose) : un code qui ignore les applications la sert
+comme une carte ordinaire, sans ses actions. Aucune donnée n'est reprise d'office : une
+carte d'org existante devient une application par un geste d'admin (`adopt_org_key`),
+qui reprend sa connexion et sa définition et lie sa clé. La définition laissée sur son
+instance n'est plus lue pour elle.
+
+**Ce que le modèle ne fait pas.** Pas de liste d'accès propre à l'application : qui y
+accède est qui détient une clé qui se résout pour lui (les règles de comptes, #1499, la
+porteront). ⚠️ La clé d'ÉQUIPE ne sert que les membres dont c'est l'équipe ACTIVE
+(`current_group`) : quelqu'un dans plusieurs équipes pose `_group=` ou change d'équipe
+active, ou prend une clé personnelle. ⚠️ Un agent hébergé appelle avec la clé de SON
+propriétaire : un agent monté sur une application à droits étendus, partagé à d'autres,
+leur rend ce que son propriétaire voit. Pas d'import GraphQL (l'import lit OpenAPI ; une
+API GraphQL se décrit par une action `POST /graphql`).
+
 ### Le renommage `http` → `api` (12/11/2026)
 
 Décision du propriétaire du produit : le connecteur s'appelle `api`, ses outils `api`, `api_act`, `api_get`,

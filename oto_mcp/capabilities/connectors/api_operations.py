@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ... import credentials_store, custom_ops, providers
 from ...connectors import api_operations as store
+from ...db import api_apps as api_apps_store
 from .._authz import BY_OP, ORG_ADMIN_OF, ORG_MEMBER_OF
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -107,6 +108,13 @@ def _row(ctx: ResolvedCtx, inp) -> Row:
             f"{whose} `{account}`"
             + (f" (accounts: {', '.join(repr(a) for a in sorted(accounts))})."
                if accounts else " — connect the API first.")))
+    if api_apps_store.lien(*owner, account) is not None:
+        # A key bound to a Custom API app carries only its secrets: the definition is
+        # the APP's (`custom_api.apps.*`), shared by every key — never this row's.
+        raise AuthzDenied(409, "api_app_owns_definition", (
+            f"`{account}` is a key of the Custom API app `{account}`: its actions are "
+            f"the app's — GET/PATCH /api/orgs/{inp.org_id}/connectors/api/apps/"
+            f"{account}."))
     return (*owner, account)
 
 
@@ -241,13 +249,16 @@ def _set_definition(ctx: ResolvedCtx, inp: DefinitionSetInput) -> dict:
 _NOT_FOUND = DeclaredError(404, "http_credential_not_found",
                            "no Custom API (`api`) credential for this account at this "
                            "scope (the org's, or the caller's own)")
+_APP_OWNS = DeclaredError(409, "api_app_owns_definition",
+                          "the key is bound to a Custom API app: its definition is the "
+                          "app's (`/api/orgs/{id}/connectors/api/apps/{account}`)")
 
 CAPABILITIES += [
     Capability(
         key="custom_api.operations.get", handler=_get, Input=GetInput,
         authz=_READ, Output=HttpOperations,
         description="Read the described operations of an org's Custom API account.",
-        errors=(_NOT_FOUND,),
+        errors=(_NOT_FOUND, _APP_OWNS,),
         rest=RestBinding("GET", _PATH, _ID),
     ),
     Capability(
@@ -256,7 +267,7 @@ CAPABILITIES += [
         description=("Replace the described operations of an org's Custom API account "
                      "(validated whole; org admin for the org's key, the caller for "
                      "their own)."),
-        errors=(_NOT_FOUND,
+        errors=(_NOT_FOUND, _APP_OWNS,
                 DeclaredError(400, "invalid_operations",
                               "the list breaks the format — `details.errors` names each problem"),
                 DeclaredError(409, "http_instance_missing",
@@ -269,7 +280,7 @@ CAPABILITIES += [
         description=("Convert an OpenAPI/Swagger JSON document into candidate operations "
                      "for an org's Custom API account, without saving (org admin, or "
                      "the caller for their own key)."),
-        errors=(_NOT_FOUND,
+        errors=(_NOT_FOUND, _APP_OWNS,
                 DeclaredError(400, "import_failed",
                               "the source cannot be read as an OpenAPI/Swagger JSON "
                               "document (unreachable, refused address, too large, not JSON)")),
@@ -280,7 +291,7 @@ CAPABILITIES += [
         authz=_READ, Output=HttpDefinition,
         description=("Export the definition of an org's Custom API connector — the "
                      "card's non-secret fields and the saved definition, never a secret."),
-        errors=(_NOT_FOUND,),
+        errors=(_NOT_FOUND, _APP_OWNS,),
         rest=RestBinding("GET", _DEF_PATH, _ID),
     ),
     Capability(
@@ -289,7 +300,7 @@ CAPABILITIES += [
         description=("Save the definition of an org's Custom API connector (label, "
                      "description, logo domain, constant headers, variables, actions; "
                      "only the parts given; org admin, or the caller for their own key)."),
-        errors=(_NOT_FOUND,
+        errors=(_NOT_FOUND, _APP_OWNS,
                 DeclaredError(400, "invalid_definition",
                               "the definition breaks the format — `details.errors` names "
                               "each problem"),

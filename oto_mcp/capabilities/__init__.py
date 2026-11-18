@@ -137,6 +137,7 @@ import oto_mcp.capabilities.connectors.force  # noqa: F401 — connectors.force.
 # Projection lecture du coffre en instances possédées nommées (ADR 0038 B4).
 import oto_mcp.capabilities.connectors.instances  # noqa: F401 — connectors.instances.list (ADR 0038 B4)
 import oto_mcp.capabilities.connectors.api_operations  # noqa: F401 — custom_api.operations.{get,set,import} (connecteur `api`)
+import oto_mcp.capabilities.connectors.api_apps  # noqa: F401 — custom_api.apps.{list,get,create,update,import,remove} (applications du connecteur `api`)
 # Console admin consolidée par concept (ADR 0009, fusion *_op) — réutilise les handlers
 # de domaine. À importer APRÈS eux (orgs_admin/reads/members, users_admin).
 from . import admin_console  # noqa: F401 — admin.{org,org_member,user,key_grant,guide,signal}

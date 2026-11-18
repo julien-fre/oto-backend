@@ -32,6 +32,7 @@ from typing import Literal, NamedTuple, Optional
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
+from ..connectors import api_apps
 from .. import access, providers, credentials_store, db, journal_secrets, roles
 from ._authz import SUB_ONLY, _refus_chef_d_equipe, _refus_org_admin
 from ._retrait_hubspot import REFUS_DE_DESINSTALLATION, desinstaller_avant_retrait
@@ -375,6 +376,8 @@ class _PoseCredentielle(NamedTuple):
     fields: dict
     st: object
     pending: bool
+    # Le lien à une application de Custom API (`meta.api_app`), vide sinon.
+    meta_app: dict = {}
 
 
 def _set_preparer(ctx: ResolvedCtx, inp: CredentialSetInput) -> _PoseCredentielle:
@@ -399,6 +402,13 @@ def _set_preparer(ctx: ResolvedCtx, inp: CredentialSetInput) -> _PoseCredentiell
         raise AuthzDenied(403, "personal_key_forbidden", cle_perso.texte_refus(
             org_id, inp.provider, cle_perso.A_LA_CONNEXION))
     eid = credentials_store.member_id(org_id, ctx.sub)
+    # La clé d'une APPLICATION de Custom API : la connexion est celle de l'application,
+    # et la clé lui est liée (`connectors/api_apps.completer_la_pose`).
+    try:
+        _, body, lien_app = api_apps.completer_la_pose(
+            credentials_store.MEMBER, eid, inp.provider, account, None, body)
+    except api_apps.AppRefused as e:
+        raise AuthzDenied(e.status, e.code, e.message)
     # Écriture PARTIELLE (#448) : les champs absents du corps sont complétés par le
     # coffre, côté serveur. Un champ envoyé vide reste vide — c'est un effacement
     # explicite, et le formulaire du dashboard, qui poste tous ses champs, ne change
@@ -447,7 +457,7 @@ def _set_preparer(ctx: ResolvedCtx, inp: CredentialSetInput) -> _PoseCredentiell
     st = status_hints.credential_state(inp.provider, fields)
     pending = st is not None and not st.complete
     return _PoseCredentielle(account=account, org_id=org_id, eid=eid, fields=fields,
-                             st=st, pending=pending)
+                             st=st, pending=pending, meta_app=lien_app)
 
 
 async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
@@ -482,7 +492,8 @@ def _set_ecrire(ctx: ResolvedCtx, inp: CredentialSetInput, pose: _PoseCredentiel
         from datetime import datetime, timezone
         meta = {"verified_at": datetime.now(timezone.utc).isoformat()}
     # Les champs rangés dans `meta` (`in_meta`) : `pack_secret` les a laissés hors du chiffré.
-    meta = {**(meta or {}), **credentials_store.meta_fields(inp.provider, fields)} or None
+    meta = {**(meta or {}), **credentials_store.meta_fields(inp.provider, fields),
+            **pose.meta_app} or None
     # Pose faite par un opérateur en « voir en tant que » (écriture acceptée) : la clé
     # est celle de la cible (`set_by` = elle), mais on garde QUI l'a saisie.
     from .. import session_org
@@ -654,7 +665,11 @@ CAPABILITIES += [
         # la clé membre est posée DANS l'org de contexte, que le handler résout. Je
         # l'avais retiré le 01/09 sur la déduction « pas de scope ⟹ pas de contexte
         # d'org » ; le graphe d'appel dit l'inverse, et il a raison.
-        errors=(*_REFUS_DE_CONNECTEUR, _REFUS_DE_PALIER[0],
+        errors=(DeclaredError(400, "api_app_field_fixed",
+                              "la clé d'une application de Custom API ne porte que ses "
+                              "secrets : un champ de connexion qui diffère de "
+                              "l'application est refusé"),
+                *_REFUS_DE_CONNECTEUR, _REFUS_DE_PALIER[0],
                 DeclaredError(400, "single_account_connector",
                               "un `account` nommé sur un connecteur qui n'en gère "
                               "qu'un — la clé écraserait l'unique"),

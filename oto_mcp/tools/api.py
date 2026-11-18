@@ -164,7 +164,8 @@ def _resolve():
             code=INVALID_PARAMS,
             message="`api` connector unavailable in local stdio (org credential required).",
         ))
-    return access.resolve_credential("api", want="byo")
+    from .api_ops import servie
+    return servie(access.resolve_credential("api", want="byo"))
 
 
 def _require_doc_path(fields: dict) -> str:

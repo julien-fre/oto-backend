@@ -585,6 +585,40 @@ page ou un tableau retire ses favoris dans la même transaction ; quitter l'org 
 (`org_store.remove_org_member`), la disparition du compte aussi (FK) ; une fusion de
 comptes garde un seul favori personnel par objet, à la date la plus ancienne.
 
+## Applications de Custom API — `/api/orgs/{id}/connectors/api/apps`
+
+Un outil qu'une org configure UNE fois pour toutes ses clés — adresse, mode
+d'authentification, actions —, quel que soit leur palier (`capabilities/connectors/
+api_apps.py`, `custom_api.apps.{list,get,create,update,import,remove}`, REST seule ; le
+concept : `docs/connector-vault.md` § Les applications de Custom API).
+
+- `GET …/apps` (membre) : les applications de l'org, chacune avec `access` = le palier
+  de la clé qui sert l'APPELANT (`member`, `group` — son équipe ACTIVE —, `org`), `null`
+  s'il n'en a aucune ;
+- `GET …/apps/{account}` (membre) : une application — `connection` (base_url,
+  auth_mode et les autres champs NON secrets), `definition`, `access` ; pour un admin de
+  l'org, aussi `keys` (`{level, owner, set_at, set_by}` par clé liée, jamais un secret) ;
+- `POST …/apps` (admin d'org) : `{account, connection, label?, description?,
+  logo_domain?, headers?, variables?, operations?}`. Aucune clé n'est exigée. Une carte
+  d'org `api` du même compte existe : 409 `api_app_org_key_exists`, sauf
+  `adopt_org_key: true`, qui reprend sa connexion et sa définition et en fait la clé
+  d'org de l'application ;
+- `PATCH …/apps/{account}` (admin d'org) : les parties données ; `connection` se
+  complète par l'existant puis REMPLACE (un champ que le nouveau mode écarte part).
+  `stale_keys` compte les clés à reposer quand l'hôte ou le mode change ;
+- `POST …/apps/{account}/import` (admin d'org) : `{source: url|inline, url?,
+  document?}` → actions CANDIDATES, rien d'enregistré ;
+- `DELETE …/apps/{account}` (admin d'org) : archivée ; `keys_left` = clés encore liées,
+  qui refusent `api_app_removed` jusqu'à leur retrait.
+
+**Poser une clé de l'application** : les routes de toujours, sous le `account` de
+l'application, avec ses SEULS champs de clé (`token`, ou `username`/`password`, ou
+`client_id`/`client_secret`) — `POST /api/settings/api-keys/api` (la sienne), `PUT
+/api/groups/{id}/secrets/api` (chef d'équipe), `PUT /api/orgs/{id}/secrets/api` (admin
+d'org). Un champ de connexion envoyé qui diffère de l'application : 400
+`api_app_field_fixed`. Les routes de définition d'une carte (`…/connectors/api/
+{operations,definition}`) refusent une clé liée : 409 `api_app_owns_definition`.
+
 ## Surface nœuds (PROVISOIRE) — `/api/me/shell`, `/api/me/nodes/{id}`, `/api/me/nodes/{id}/rows`
 
 Trois lectures précoces du modèle de nœuds (`capabilities/shell.py`, `node_view.py`,

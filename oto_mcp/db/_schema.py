@@ -105,6 +105,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.usage.USAGE_ORG,          # compteur du jour d'une org sur une clé plateforme à quota par org
     schema.credits.SPEND_BLOCKS,     # blocages du jour poussés par le commerce (limites de dépense)
     schema.runs.AGENT_CAUSES,        # le catalogue des causes de panne d'agent, une par empreinte
+    schema.connectors.API_APPS,      # applications de Custom API : définition partagée par leurs clés
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

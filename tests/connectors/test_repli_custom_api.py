@@ -14,6 +14,15 @@ from oto_mcp import links, providers
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.capabilities.connectors import selection as CS
 
+
+@pytest.fixture(autouse=True)
+def _sans_application(monkeypatch):
+    """Ces épreuves décrivent une CARTE Custom API, sans base : aucune de leurs clés
+    n'est liée à une application (`connectors/api_apps`), et l'org n'en a aucune."""
+    from oto_mcp.db import api_apps
+    monkeypatch.setattr(api_apps, "lien", lambda *a, **k: None)
+    monkeypatch.setattr(api_apps, "lister", lambda *a, **k: [])
+
 _CTX = ResolvedCtx(sub="u-repli", org_id=7)
 
 
