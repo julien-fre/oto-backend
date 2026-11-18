@@ -30,8 +30,8 @@ from typing import Any, Optional
 ALIAS = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 MAX_HEIGHT = 4000
 DEFAULT_HEIGHT = 480
-MAX_TABLES = 20
-MAX_AGENTS = 20
+MAX_TABLES = 100
+MAX_AGENTS = 100
 # Le manifeste sérialisé, en caractères : il est relu à CHAQUE appel d'une app ouverte.
 MAX_MANIFEST = 32_000
 # Ce qu'une app trie et filtre toujours, déclaré ou non.
