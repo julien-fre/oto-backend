@@ -45,7 +45,9 @@ class ApiApp(BaseModel):
     """A Custom API app of the org, NEVER a secret: `account` (its id, the name its keys
     are set under), `label`, `description`, `logo_domain`, `actions_count`, `access`
     (`member` | `group` | `org` = the tier of the key that serves the caller, `null` =
-    no key for them yet), `connection` (base_url, auth_mode and the other non-secret
+    no key for them yet), `access_team` (when `access` is `group`: the id of the team
+    whose key serves the caller — their active team, even on a page that views the org
+    without one), `connection` (base_url, auth_mode and the other non-secret
     fields every key uses), `definition` (headers, variables, operations) — and, for an
     org admin, `keys`: one `{level, owner, set_at, set_by}` per key bound to it."""
     model_config = ConfigDict(extra="allow")
@@ -55,6 +57,7 @@ class ApiApp(BaseModel):
     logo_domain: Optional[str] = None
     actions_count: int
     access: Optional[str] = None
+    access_team: Optional[int] = None
 
 
 class ApiApps(BaseModel):
@@ -149,7 +152,9 @@ def _app(org_id: int, account: str) -> dict:
 def _vue(ctx: ResolvedCtx, app: dict) -> dict:
     org = int(app["org_id"])
     out = apps.apercu(app, avec_cles=roles.is_org_admin(ctx.sub, org))
-    out["access"] = apps.acces(app, org, ctx.sub, apps.equipe_active(ctx.sub, org))
+    team = apps.equipe_active(ctx.sub, org)
+    out["access"] = apps.acces(app, org, ctx.sub, team)
+    out["access_team"] = team if out["access"] == "group" else None
     for k in ("operations", "scope", "id"):
         out.pop(k, None)
     return out

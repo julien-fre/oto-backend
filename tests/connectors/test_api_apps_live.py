@@ -195,7 +195,12 @@ def test_chacun_est_servi_par_sa_cle_avec_la_definition_de_l_application(rest, m
     vues = {a["account"]: a["access"] for a in rest.get(
         _apps(monde), headers=_h(LEAD, monde["org"])).json()["apps"]}
     assert vues == {"crm_admin": "group", "crm_user": None}
+    # La page dit au responsable QUELLE équipe le sert : la sienne, pour qu'elle
+    # s'affiche posée, même quand la page consulte l'org sans désigner d'équipe.
+    a = rest.get(_apps(monde) + "/crm_admin", headers=_h(LEAD, monde["org"])).json()
+    assert (a["access"], a["access_team"]) == ("group", monde["squad"])
     a = rest.get(_apps(monde) + "/crm_admin", headers=_h(VENTE, monde["org"])).json()
+    assert a["access_team"] is None
     assert "keys" not in a and a["definition"]["operations"][0]["name"] == "graphql"
     a = rest.get(_apps(monde) + "/crm_admin", headers=_h(ADMIN, monde["org"])).json()
     assert [(k["level"], k["owner"]) for k in a["keys"]] == \
