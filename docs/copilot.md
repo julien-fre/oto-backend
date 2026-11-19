@@ -340,7 +340,13 @@ zéro, ou limite de dépense du jour atteinte. Elle doit marcher quand même.
     (`oto_trigger` en lecture) ; `oto_call` n'y mène nulle part. Un outil hors liste est
     refusé, nommé, au modèle ;
   - un plafond : `OTO_POST_STUDIO_MAX_MODEL_CALLS` appels au modèle par conversation
-    (40), refus nommé `post_studio_ceiling`.
+    (40), refus nommé `post_studio_ceiling` ;
+  - ce qu'UNE conversation achète aux fournisseurs payants (`parrainage.QUOTAS`, compté
+    sur la conversation, `copilot_threads.sponsor_uses`, d'une seule instruction) :
+    4 lectures LinkedIn (profil, posts), 2 sociétés, UNE image — un modèle d'image (pas
+    un clip, une voix, un objet 3D), `max_usd` ≤ `OTO_POST_STUDIO_IMAGE_MAX_USD` (1 $).
+    Au-delà, refus donné au modèle, rien n'est envoyé ; un appel en échec rend son
+    compte.
 - **Ce que le commerce voit** : rien à facturer. Il ne compte que les appels tracés
   `platform` ou `tenant` et les mouvements d'un payeur `org:<id>` — le solde, le grand
   livre et la dépense du jour de l'org ne bougent pas. L'opérateur lit son coût sur le

@@ -110,16 +110,25 @@ async def _lancer_outil(fil: dict, b: Boite, bloc: dict) -> AsyncIterator[dict]:
             logger.warning("copilot : préparation de l'annulation impossible — l'appel "
                            "part sans annulation, et l'étape le dit", exc_info=True)
             sans_annulation = annulation.annulable(target)
-    try:
-        issue = await executer(b, fil["sub"], name, args, org=fil["org_id"],
-                               projet=fil["project_id"], run_id=fil["run_id"], geste_id=gid)
-    except Exception:
-        logger.exception("copilot : outil %s en échec inattendu", target)
-        issue = None
-    if issue is None:
-        texte, ok = f"Tool error: `{target}` failed unexpectedly.", False
+    fam = parrainage.famille(target, targs) if fil.get("sponsor") else None
+    refus = await run_in_threadpool(_quota_parraine, fil, fam, targs) if fam else None
+    if refus:
+        texte, ok = refus, False
     else:
-        texte, ok = issue.texte, issue.ok
+        try:
+            issue = await executer(b, fil["sub"], name, args, org=fil["org_id"],
+                                   projet=fil["project_id"], run_id=fil["run_id"],
+                                   geste_id=gid)
+        except Exception:
+            logger.exception("copilot : outil %s en échec inattendu", target)
+            issue = None
+        if issue is None:
+            texte, ok = f"Tool error: `{target}` failed unexpectedly.", False
+        else:
+            texte, ok = issue.texte, issue.ok
+        if fam and not ok:
+            with anyio.CancelScope(shield=True):
+                await run_in_threadpool(store.rendre_parraine, fil["id"], fam)
     revert_id = None
     if ok and prep is not None:
         try:
@@ -157,6 +166,18 @@ async def _lancer_outil(fil: dict, b: Boite, bloc: dict) -> AsyncIterator[dict]:
         resume = f"{resume} · no undo for this change"
     yield ev("tool_result", id=bloc["id"], ok=ok, summary=resume,
              changed=change, revert_id=revert_id)
+
+
+def _quota_parraine(fil: dict, fam: str, targs: dict) -> Optional[str]:
+    """In a sponsored conversation, a call to a paid provider (`parrainage.QUOTAS`):
+    the refusal to give the model, or None once the call is counted. Sync."""
+    if fam == "image":
+        refus = parrainage.refus_d_image(targs)
+        if refus:
+            return refus
+    if not store.compter_parraine(fil["id"], fam, parrainage.QUOTAS[fam]):
+        return parrainage.refus_de_quota(fam)
+    return None
 
 
 async def drainer(fil: dict, b: Boite, etat: dict) -> AsyncIterator[dict]:

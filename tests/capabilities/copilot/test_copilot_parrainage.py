@@ -355,3 +355,64 @@ def test_eteint_aucune_conversation_neuve_n_est_parrainee(monde, modele, monkeyp
     evs = _evs(_tour(monde, B, "hello"))
     thread = next(e["thread_id"] for e in evs if e["type"] == "thread")
     assert store.lire(thread, B)["sponsor"] is None
+
+
+# ── what one sponsored conversation may buy (`parrainage.QUOTAS`) ────────────────────
+
+
+def test_les_familles_payantes():
+    assert parrainage.famille("higgsfield_act", {"op": "create_generation"}) == "image"
+    assert parrainage.famille("higgsfield_act", {"op": "cancel"}) is None
+    assert parrainage.famille("apify_linkedin_posts", {}) == "linkedin"
+    assert parrainage.famille("waterfall_company", {}) == "company"
+    assert parrainage.famille("oto_trigger", {"op": "list"}) is None
+
+
+@pytest.mark.parametrize("args,refuse", [
+    ({"model": "higgsfield-ai/soul/v2/standard", "max_usd": 1}, False),
+    ({"model": "higgsfield-ai/soul/v2/standard", "max_usd": 0.4}, False),
+    ({"model": "higgsfield-ai/soul/v2/standard", "max_usd": 1.01}, True),
+    ({"model": "higgsfield-ai/soul/v2/standard", "max_usd": 0}, True),
+    ({"model": "higgsfield-ai/soul/v2/standard"}, True),
+    ({"model": "higgsfield-ai/soul/v2/standard", "max_usd": "nan"}, True),
+    ({"model": "kling-video/v3.0/pro/image-to-video", "max_usd": 0.5}, True),
+    ({"model": "bytedance/seedance-2.5/video-edit", "max_usd": 0.5}, True),
+])
+def test_l_image_parrainee_est_une_image_d_au_plus_un_dollar(monkeypatch, args, refuse):
+    monkeypatch.delenv("OTO_POST_STUDIO_IMAGE_MAX_USD", raising=False)
+    assert (parrainage.refus_d_image(args) is not None) is refuse
+
+
+def test_le_plafond_de_l_image_est_strict(monkeypatch):
+    monkeypatch.setenv("OTO_POST_STUDIO_IMAGE_MAX_USD", "0.5")
+    assert parrainage.refus_d_image({"model": "soul", "max_usd": 0.6}) is not None
+    for brut in ("abc", "0", "-1", "inf"):
+        monkeypatch.setenv("OTO_POST_STUDIO_IMAGE_MAX_USD", brut)
+        with pytest.raises(ValueError):
+            parrainage.image_max_usd()
+
+
+def test_le_quota_d_une_conversation_se_compte_et_se_rend(monde):
+    from oto_mcp.capabilities.copilot import boucle
+    from oto_mcp.db import copilot as store
+    thread = "th_" + uuid.uuid4().hex
+    store.creer(thread, A, monde["org"], None, "sys", None, parrainage.POST_STUDIO)
+    fil = {"id": thread}
+    image = {"model": "higgsfield-ai/soul/v2/standard", "max_usd": 1}
+    assert boucle._quota_parraine(fil, "image", image) is None
+    # one image per conversation
+    assert boucle._quota_parraine(fil, "image", image) == parrainage.refus_de_quota("image")
+    # a failed call gives its count back
+    store.rendre_parraine(thread, "image")
+    assert boucle._quota_parraine(fil, "image", image) is None
+    # a clip is refused before it is counted
+    assert "Nothing was sent" in boucle._quota_parraine(
+        fil, "image", {"model": "kling-video/v3.0/pro/image-to-video", "max_usd": 1})
+    for _ in range(parrainage.QUOTAS["linkedin"]):
+        assert boucle._quota_parraine(fil, "linkedin", {}) is None
+    assert boucle._quota_parraine(fil, "linkedin", {}) is not None
+    assert store.lire(thread, A)["sponsor_uses"] == {
+        "image": 1, "linkedin": parrainage.QUOTAS["linkedin"]}
+    # giving back what was never counted does nothing
+    store.rendre_parraine(thread, "company")
+    assert "company" not in store.lire(thread, A)["sponsor_uses"]

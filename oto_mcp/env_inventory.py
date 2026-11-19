@@ -419,17 +419,24 @@ _REGLAGES: tuple[Variable, ...] = (
              "`sponsor:post_studio`, ni limite du jour ni solde de l'org, outils bornés. "
              "Vide (défaut) = aucune ; éteindre n'arrête pas une conversation déjà "
              "parrainée. Lu à chaque tour.",
-             ("oto_mcp/access/parrainage.py:97",)),
+             ("oto_mcp/access/parrainage.py:116",)),
     Variable("OTO_POST_STUDIO_THREADS_PER_MONTH", Classe.REGLAGE, "3",
              "Conversations parrainées (`OTO_POST_STUDIO_SPONSOR`) qu'une PERSONNE peut "
              "ouvrir par mois civil UTC ; au-delà, 429 `post_studio_quota`. Lu à chaque "
              "tour ; une valeur qui n'est pas un entier ≥ 0 lève.",
-             ("oto_mcp/access/parrainage.py:117",)),
+             ("oto_mcp/access/parrainage.py:136",)),
     Variable("OTO_POST_STUDIO_MAX_MODEL_CALLS", Classe.REGLAGE, "40",
              "Appels au modèle d'UNE conversation parrainée ; au-delà, refus nommé "
              "`post_studio_ceiling` dans le flux. Lu à chaque appel ; une valeur qui "
              "n'est pas un entier ≥ 1 lève.",
-             ("oto_mcp/access/parrainage.py:122",)),
+             ("oto_mcp/access/parrainage.py:141",)),
+    Variable("OTO_POST_STUDIO_IMAGE_MAX_USD", Classe.REGLAGE, "1",
+             "Le plus que l'opérateur paie pour l'image IA d'UNE conversation parrainée "
+             "(`higgsfield_act` op=create_generation : `max_usd` au plus ce montant, un "
+             "modèle d'image, une seule image) ; au-delà, refus donné au modèle, rien "
+             "n'est envoyé. Lu à chaque appel ; une valeur qui n'est pas un montant "
+             "positif lève.",
+             ("oto_mcp/access/parrainage.py:148",)),
     Variable("OTO_SLACK_COPILOT_MAX_SIMULTANES", Classe.REGLAGE, "8",
              "L'agent intégré à l'application, dans Slack : tours SIMULTANÉS dans le "
              "processus (`slack_copilot_places.py`), en plus d'un seul par compte. Un "

@@ -754,6 +754,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # `20261119_1700_copilot_sponsor` : même DDL, ordre indifférent.
     if _colonne_absente(conn, "copilot_threads", copilot_store.COLONNE_SPONSOR):
         conn.execute(copilot_store.DDL_COLONNE_SPONSOR)
+    if _colonne_absente(conn, "copilot_threads", copilot_store.COLONNE_USAGES_PARRAINES):
+        conn.execute(copilot_store.DDL_COLONNE_USAGES_PARRAINES)
     # Lot 3 Ship 3 : propositions de CRÉATION (doc_id nullable + project_id +
     # emplacement proposé + CHECK). Le CHECK valide sur l'existant (toutes les
     # lignes ont doc_id). Idempotent.

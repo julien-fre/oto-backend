@@ -40,6 +40,38 @@ COLONNE_SPONSOR = "sponsor"
 DDL_COLONNE_SPONSOR = (f"ALTER TABLE copilot_threads ADD COLUMN IF NOT EXISTS "
                        f"{COLONNE_SPONSOR} TEXT")
 
+#: What a sponsored conversation has bought from the paid providers, per family
+#: (`access/parrainage.QUOTAS`): `{"linkedin": 2, "image": 1}`. Written ONLY by
+#: `compter_parraine` / `rendre_parraine`, atomically (outside `CHAMPS_JSON`: the loop
+#: never rewrites it). NULL = nothing yet. Same DDL at boot and for the revision
+#: `20261119_1700_copilot_sponsor`; nullable without default: catalog write only.
+COLONNE_USAGES_PARRAINES = "sponsor_uses"
+DDL_COLONNE_USAGES_PARRAINES = (f"ALTER TABLE copilot_threads ADD COLUMN IF NOT EXISTS "
+                                f"{COLONNE_USAGES_PARRAINES} JSONB")
+
+
+def compter_parraine(thread_id: str, famille: str, plafond: int) -> bool:
+    """Counts one call of `famille` on the conversation if it has fewer than `plafond`;
+    False = the quota is used. One statement: two calls at once cannot both pass."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE copilot_threads SET sponsor_uses = jsonb_set("
+            "COALESCE(sponsor_uses, '{}'::jsonb), ARRAY[%s], "
+            "to_jsonb(COALESCE((sponsor_uses ->> %s)::int, 0) + 1)) "
+            "WHERE id = %s AND COALESCE((sponsor_uses ->> %s)::int, 0) < %s RETURNING id",
+            (famille, famille, thread_id, famille, plafond)).fetchone()
+    return row is not None
+
+
+def rendre_parraine(thread_id: str, famille: str) -> None:
+    """Gives one call of `famille` back (the call failed: the agent got nothing)."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE copilot_threads SET sponsor_uses = jsonb_set(sponsor_uses, ARRAY[%s], "
+            "to_jsonb(GREATEST(COALESCE((sponsor_uses ->> %s)::int, 0) - 1, 0))) "
+            "WHERE id = %s AND sponsor_uses ? %s",
+            (famille, famille, thread_id, famille))
+
 
 def creer(thread_id: str, sub: str, org_id: Optional[int], project_id: Optional[int],
           system: str, model: Optional[str] = None, sponsor: Optional[str] = None) -> None:

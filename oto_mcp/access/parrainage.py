@@ -35,7 +35,9 @@ Doc: `docs/copilot.md` §Conversations parrainées."""
 from __future__ import annotations
 
 import os
+import re
 from contextvars import ContextVar
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 #: The one sponsor there is today.
@@ -82,9 +84,26 @@ OUTILS: dict[str, Optional[frozenset]] = {
 FOURNISSEURS = frozenset({"anthropic", "apify", "higgsfield", "aiark", "apollo",
                           "theirstack"})
 
+#: What ONE sponsored conversation may buy from the paid providers, counted on the thread
+#: (`db/copilot.compter_parraine`, atomic): a family → how many calls. Enough for the
+#: studio — read the profile and its posts, once more after a correction; the company
+#: twice; one AI image —, never a free scraper or image generator. A call that fails
+#: gives its count back (`boucle._lancer_outil`): the agent got nothing from it.
+QUOTAS: dict[str, int] = {"linkedin": 4, "company": 2, "image": 1}
+_FAMILLES = {"apify_linkedin_profiles": "linkedin", "apify_linkedin_posts": "linkedin",
+             "waterfall_company": "company"}
+#: An image model, not a clip, a voice or a 3D object: refused on its slug's words.
+_PAS_UNE_IMAGE = re.compile(r"video|audio|speech|voice|music|sound|lipsync|3d|talking",
+                            re.I)
+
 REFUS_OUTIL = ("This tool is not available in the Post studio, which the operator pays "
                "for: it only reads the person's LinkedIn and their workspace, and makes "
                "the post's image.")
+REFUS_QUOTA = ("The Post studio has already used its {quota} call(s) of this kind for this "
+               "session, which the operator pays for. Carry on with what you have.")
+REFUS_IMAGE = ("In the Post studio, the operator pays for ONE still image of at most "
+               "${plafond} (`max_usd` ≤ {plafond}), from an image model — not a video, a "
+               "voice or a 3D model. Nothing was sent.")
 CODE_QUOTA = "post_studio_quota"
 CODE_PLAFOND = "post_studio_ceiling"
 
@@ -120,6 +139,50 @@ def threads_par_mois() -> int:
 def appels_max() -> int:
     """Model calls one sponsored thread may make."""
     return _entier("OTO_POST_STUDIO_MAX_MODEL_CALLS", 40, 1)
+
+
+def image_max_usd() -> Decimal:
+    """The most the operator pays for the studio's AI image, in dollars
+    (`OTO_POST_STUDIO_IMAGE_MAX_USD`, 1 by default). Set but not a positive amount
+    RAISES — never the default in silence."""
+    brut = os.environ.get("OTO_POST_STUDIO_IMAGE_MAX_USD", "").strip()
+    if not brut:
+        return Decimal("1")
+    try:
+        valeur = Decimal(brut)
+    except InvalidOperation:
+        raise ValueError(f"OTO_POST_STUDIO_IMAGE_MAX_USD={brut!r} is not an amount") \
+            from None
+    if not valeur.is_finite() or valeur <= 0:
+        raise ValueError(f"OTO_POST_STUDIO_IMAGE_MAX_USD={brut!r} must be positive")
+    return valeur
+
+
+def famille(target: str, targs: dict) -> Optional[str]:
+    """The paid family `target` belongs to (`QUOTAS`), or None: not counted."""
+    if target == "higgsfield_act" and (targs or {}).get("op") == "create_generation":
+        return "image"
+    return _FAMILLES.get(target)
+
+
+def refus_d_image(targs: dict) -> Optional[str]:
+    """Why this generation is not the studio's image (a clip's model, no `max_usd` or
+    one above the ceiling), or None."""
+    plafond = image_max_usd()
+    refus = REFUS_IMAGE.format(plafond=plafond)
+    if _PAS_UNE_IMAGE.search(str((targs or {}).get("model") or "")):
+        return refus
+    try:
+        prix = Decimal(str((targs or {}).get("max_usd")))
+    except InvalidOperation:
+        return refus
+    if not prix.is_finite() or prix <= 0 or prix > plafond:
+        return refus
+    return None
+
+
+def refus_de_quota(fam: str) -> str:
+    return REFUS_QUOTA.format(quota=QUOTAS[fam])
 
 
 def activer(sponsor: Optional[str]) -> None:
