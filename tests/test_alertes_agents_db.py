@@ -99,3 +99,29 @@ def test_la_marque_ne_date_pas_l_agent(agent):
     from oto_mcp.db import runner_triggers as rt
     alertes_agents.marquer_annonces([agent])
     assert rt.get_trigger(agent, ORG)["updated_at"] is None
+
+
+def test_destinataires_sur_une_vraie_base_ecarte_l_operateur_et_le_suspendu(live):
+    """Sur les VRAIES lignes `users` (`role`, `suspended_at`) : la doublure sans base ne
+    prouve pas que la fiche lue porte ces colonnes."""
+    from oto_mcp import alerte_agents_bloques as M
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("INSERT INTO orgs (id, name) VALUES (%s, 'o') ON CONFLICT (id) "
+                     "DO NOTHING", (ORG,))
+        for i, (sub, role, suspendu) in enumerate((
+                ("op", "super_admin", False), ("adm", "member", False),
+                ("susp", "member", True), ("prop", "member", False))):
+            conn.execute(
+                "INSERT INTO users (sub, email, role, suspended_at, suspended_by, "
+                "suspended_reason) VALUES (%s, %s, %s, "
+                "CASE WHEN %s THEN NOW() END, CASE WHEN %s THEN 'op' END, "
+                "CASE WHEN %s THEN 'test' END)",
+                (sub, f"{sub}@acme.test", role, suspendu, suspendu, suspendu))
+            conn.execute(
+                "INSERT INTO org_members (org_id, sub, org_role, joined_at) VALUES "
+                "(%s, %s, %s, NOW() - make_interval(days => %s))",
+                (ORG, sub, "org_member" if sub == "prop" else "org_admin", 10 - i))
+    assert M.destinataires(ORG, proprietaires=["prop"]) == [
+        ("prop", "prop@acme.test"), ("adm", "adm@acme.test")]
+    assert M.destinataire_admin(ORG) == ("adm", "adm@acme.test")
