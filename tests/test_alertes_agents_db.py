@@ -232,3 +232,11 @@ def test_un_travail_que_le_pool_de_l_org_sert_n_attend_pas_le_titulaire(agent_fo
         conn.execute("INSERT INTO org_model_subscription_modes (org_id, famille, mode) "
                      "VALUES (%s, 'claude_subscription', 'pool')", (ORG,))
     assert agent_forfait not in _en_attente_de_forfait()
+
+
+
+def test_le_run_now_d_un_autre_membre_n_est_pas_la_panne_du_titulaire(agent_forfait):
+    _forfait("needs_login", sub="bob")
+    _forfait("connected")
+    _en_attente(agent_forfait, 45, sub="bob")
+    assert agent_forfait not in _en_attente_de_forfait()

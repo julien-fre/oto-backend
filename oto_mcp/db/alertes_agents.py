@@ -140,6 +140,9 @@ def agents_sans_forfait(attente_min: int = ATTENTE_FORFAIT_MIN) -> list[dict[str
                       JOIN user_model_subscriptions ab
                         ON ab.sub = rj.sub AND ab.famille = rj.payload->>'model_family'
                      WHERE rj.org_id = t.org_id
+                       -- Le travail porte l'identité du TITULAIRE : un `run_now` lancé
+                       -- par un autre membre attend SON forfait, pas celui de l'agent.
+                       AND rj.sub = t.sub
                        AND rj.payload->>'trigger_id' ~ '^[0-9]+$'
                        AND rj.payload->>'trigger_id' = t.id::text
                        AND rj.status IN ('pending', 'expired')
