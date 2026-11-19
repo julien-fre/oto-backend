@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterable, Optional
 
 log = logging.getLogger("oto_mcp.alerte_agents_bloques")
 
@@ -50,19 +50,52 @@ INTERVALLE_S = 900
 _ECARTEES_DITES: set[int] = set()
 
 
-def destinataire_admin(org_id: int) -> Optional[tuple[str, str]]:
-    """`(sub, adresse)` du premier admin de l'org qui a une adresse, ou None.
+def destinataires(org_id: int, *, proprietaires: Iterable[str] = ()
+                  ) -> list[tuple[str, str]]:
+    """`[(sub, adresse)]` de qui prévenir dans une org, dans l'ordre : les
+    `proprietaires` (ceux dont les agents sont touchés) encore membres de l'org, puis
+    TOUS ses admins — chacun une fois.
 
-    La même règle que l'alerte de clé (`maintenance.alertes_credential`), qui l'appelle :
-    une seule source pour « qui prévient-on dans une org »."""
-    from . import org_store
+    ⚠️ **Le personnel de la plateforme est écarté** (`access.is_operator_role`), comme un
+    compte suspendu : un opérateur est admin de nombreuses orgs clientes pour les aider,
+    et c'est le CLIENT qui peut réparer. Jusqu'au 19/11/2026 l'alerte partait au premier
+    admin (par date d'arrivée) qui avait une adresse — souvent l'opérateur qui avait créé
+    l'org : des orgs clientes ont eu leurs agents à l'arrêt des jours durant sans
+    qu'aucun de leurs admins ne l'apprenne. Une org où ne restent que des opérateurs (une org de
+    démonstration, une org interne) garde l'ancienne règle : son premier admin joignable,
+    pour que le message parte quelque part plutôt que nulle part.
+
+    Une seule source pour « qui prévient-on dans une org » : l'alerte d'agents bloqués,
+    l'alerte de clé (`maintenance.alertes_credential`) et la langue de l'espace
+    (`alertes_slack_agents.langue`, par `destinataire_admin`)."""
+    from . import access, org_store
     from .db import users as db_users
 
-    admins = [m["sub"] for m in org_store.list_org_members(org_id)
-              if m.get("org_role") == "org_admin"]
-    adresses = db_users.emails_by_subs(admins)
-    sub = next((s for s in admins if adresses.get(s)), None)
-    return (sub, adresses[sub]) if sub else None
+    membres = org_store.list_org_members(org_id)
+    admins = [m["sub"] for m in membres if m.get("org_role") == "org_admin"]
+    du_lieu = {m["sub"] for m in membres}
+    ordre = list(dict.fromkeys(
+        [s for s in proprietaires or () if s and s in du_lieu] + admins))
+    adresses = db_users.emails_by_subs(ordre)
+    clients: list[tuple[str, str]] = []
+    for sub in ordre:
+        if not adresses.get(sub):
+            continue
+        fiche = db_users.get_user(sub) or {}
+        if fiche.get("suspended_at") or access.is_operator_role(sub, fiche.get("role")):
+            continue
+        clients.append((sub, adresses[sub]))
+    if clients:
+        return clients
+    repli = next((s for s in admins if adresses.get(s)), None)
+    return [(repli, adresses[repli])] if repli else []
+
+
+def destinataire_admin(org_id: int) -> Optional[tuple[str, str]]:
+    """`(sub, adresse)` du premier destinataire de l'org (`destinataires`), ou None —
+    un admin CLIENT d'abord, un opérateur seulement s'il n'y a personne d'autre."""
+    tous = destinataires(org_id)
+    return tous[0] if tous else None
 
 
 def org_a_nous(org_id: int, *, qui: str) -> bool:
@@ -182,7 +215,7 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
         if int(a["trigger_id"]) in soignes:
             continue
         par_org.setdefault(int(a["org_id"]), []).append(a)
-    envoyes, marques, ecartees, sans_destinataire = 0, 0, 0, 0
+    envoyes, lettres, marques, ecartees, sans_destinataire = 0, 0, 0, 0, 0
     for org_id, agents in sorted(par_org.items()):
         if not org_a_nous(org_id, qui="alerte agents bloqués"):
             ecartees += 1
@@ -191,21 +224,28 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
                 log.info("alerte agents bloqués : org %s d'un tenant tiers écartée "
                          "(%d agent(s) bloqué(s), aucun courriel)", org_id, len(agents))
             continue
-        dest = destinataire_admin(org_id)
-        if dest is None:
+        dest = destinataires(org_id, proprietaires=[a.get("proprietaire") for a in agents])
+        if not dest:
             # On ne marque PAS : le jour où l'org gagne un admin joignable, l'épisode part.
             sans_destinataire += 1
             continue
-        sub, adresse = dest
         _base, marque = org_store.org_front(org_id)
-        fiche = db_users.get_user(sub) or {}
-        if _courriel(adresse, agents, brand=marque, locale=fiche.get("locale")):
+        partis = 0
+        for sub, adresse in dest:
+            fiche = db_users.get_user(sub) or {}
+            partis += bool(_courriel(adresse, agents, brand=marque,
+                                     locale=fiche.get("locale")))
+        if partis:
+            # Marqué dès qu'UN destinataire l'a reçu : rejouer pour celui qu'un envoi a
+            # raté renverrait le même message à tous les autres.
             envoyes += 1
+            lettres += partis
             marques += alertes_agents.marquer_annonces([a["trigger_id"] for a in agents])
         else:
             log.warning("alerte agents bloqués : envoi refusé pour l'org %s — rejoué au "
                         "passage suivant", org_id)
-    return {"orgs": len(par_org), "envoyes": envoyes, "marques": marques,
+    return {"orgs": len(par_org), "envoyes": envoyes, "lettres": lettres,
+            "marques": marques,
             "tenant_tiers_ecartes": ecartees, "sans_destinataire": sans_destinataire}
 
 

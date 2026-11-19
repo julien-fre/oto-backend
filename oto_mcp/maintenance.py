@@ -469,7 +469,8 @@ def _cles_ko_par_org() -> dict[int, list[dict]]:
 def _agents_nommes(triggers: list[dict]) -> list[dict]:
     """`[{id, label}]` des déclencheurs : l'alerte NOMME chaque agent et le relie à sa
     page — un nombre seul laisse le destinataire chercher lesquels."""
-    return [{"id": t.get("id"), "label": t.get("label") or t.get("procedure")}
+    return [{"id": t.get("id"), "label": t.get("label") or t.get("procedure"),
+             "proprietaire": t.get("sub")}
             for t in triggers]
 
 
@@ -520,7 +521,7 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
     # le nom et la langue de l'INSTANCE, et oubliait l'expéditeur du tenant de l'org.
     from . import email_templates as _gabarits
     from .db import alertes_credential as db_alertes
-    from .alerte_agents_bloques import destinataire_admin
+    from .alerte_agents_bloques import destinataires
     from .db import users as db_users
     from . import org_store
 
@@ -530,8 +531,16 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
     envoyes, marques, sans_destinataire = 0, 0, 0
     for org_id in sorted(set(retraits) | set(cles_ko)):
         g, ko = retraits.get(org_id), cles_ko.get(org_id, [])
-        dest = destinataire_admin(org_id)
-        if dest is None:
+        if g:
+            g = {**dict(g), "agents": _agents_du_retrait(org_id, list(g.get("connectors") or []))}
+        # Les titulaires des agents touchés, puis tous les admins CLIENTS de l'org
+        # (`alerte_agents_bloques.destinataires`) — plus le seul premier admin, qui était
+        # souvent un opérateur de la plateforme.
+        touches = [a for l in ko for a in l.get("agents") or []]
+        for agents in ((g or {}).get("agents") or {}).values():
+            touches += agents
+        dest = destinataires(org_id, proprietaires=[a.get("proprietaire") for a in touches])
+        if not dest:
             # On ne marque PAS : sans destinataire, la ligne reste à notifier. Le jour
             # où l'org gagne un admin, elle partira — la perdre ici serait la perdre
             # exactement quand elle devient délivrable.
@@ -544,13 +553,15 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
         # (`users.locale`) prime sur la langue de la marque. Le gabarit vit dans
         # `email_templates` et part par `_envoyer`, comme tous les autres.
         _base, marque = org_store.org_front(org_id)
-        destinataire, adresse = dest
-        fiche = db_users.get_user(destinataire) or {}
-        if g:
-            g = {**dict(g), "agents": _agents_du_retrait(org_id, list(g.get("connectors") or []))}
-        if _gabarits.send_credential_alert_email(
+        partis = 0
+        for destinataire, adresse in dest:
+            fiche = db_users.get_user(destinataire) or {}
+            partis += bool(_gabarits.send_credential_alert_email(
                 adresse, retrait=g, cles_ko=ko, brand=marque,
-                locale=fiche.get("locale"), org_id=org_id, sub=destinataire):
+                locale=fiche.get("locale"), org_id=org_id, sub=destinataire))
+        # Marqué dès qu'UN destinataire l'a reçu : rejouer pour celui qu'un envoi a raté
+        # renverrait le même message à tous les autres.
+        if partis:
             envoyes += 1
             if g:
                 marques += db_alertes.marquer_notifie(list(g["ids"] or []))

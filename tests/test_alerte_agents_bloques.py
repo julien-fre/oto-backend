@@ -66,8 +66,8 @@ def test_un_courriel_par_org_a_son_admin_puis_la_marque(bureau):
     assert "agent 1" in html and "agent 2" in html
     assert "&lt;Access denied&gt;" in html, "le motif est échappé"
     assert bureau["marques"] == [1, 2]
-    assert bilan == {"orgs": 3, "envoyes": 1, "marques": 2, "tenant_tiers_ecartes": 1,
-                     "sans_destinataire": 1}
+    assert bilan == {"orgs": 3, "envoyes": 1, "lettres": 1, "marques": 2,
+                     "tenant_tiers_ecartes": 1, "sans_destinataire": 1}
 
 
 def test_un_envoi_rate_ne_marque_rien(bureau):
@@ -125,3 +125,86 @@ def test_des_episodes_illisibles_laissent_partir_le_courriel(bureau, monkeypatch
     monkeypatch.setattr(episodes_agents, "agents_soignes_par_nous", _casse)
     M.balayer(_JOUR)
     assert "agent 2" in bureau["lettres"][0][2]
+
+
+# ── Qui est prévenu : le CLIENT, pas l'opérateur qui a créé l'org ─────────────────────
+# L'alerte partait au premier admin joignable par date d'arrivée — souvent l'opérateur
+# de la plateforme qui avait monté l'org : les admins clients n'apprenaient rien.
+
+def _org_avec_operateur(monkeypatch, *, roles, membres=None, suspendus=()):
+    from oto_mcp import org_store
+    from oto_mcp.db import users as U
+    membres = membres or [
+        {"sub": "op", "org_role": "org_admin"},     # arrivé le premier : l'opérateur
+        {"sub": "a1", "org_role": "org_admin"},
+        {"sub": "m1", "org_role": "org_member"},
+        {"sub": "a2", "org_role": "org_admin"},
+    ]
+    monkeypatch.setattr(org_store, "list_org_members", lambda o: list(membres))
+    monkeypatch.setattr(U, "get_user", lambda s: {
+        "locale": "en" if s == "a2" else "fr", "role": roles.get(s, "member"),
+        "suspended_at": "2026-11-01" if s in suspendus else None})
+
+
+def test_tous_les_admins_clients_et_jamais_l_operateur(monkeypatch):
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "emails_by_subs", lambda subs: {s: f"{s}@acme.test" for s in subs})
+    _org_avec_operateur(monkeypatch, roles={"op": "super_admin"})
+    assert M.destinataires(7) == [("a1", "a1@acme.test"), ("a2", "a2@acme.test")]
+    assert M.destinataire_admin(7) == ("a1", "a1@acme.test"), (
+        "le premier destinataire est un admin CLIENT, plus l'opérateur arrivé avant lui")
+
+
+def test_le_titulaire_de_l_agent_d_abord_meme_simple_membre(monkeypatch):
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "emails_by_subs", lambda subs: {s: f"{s}@acme.test" for s in subs})
+    _org_avec_operateur(monkeypatch, roles={"op": "admin"})
+    assert M.destinataires(7, proprietaires=["m1", "a2", "parti", None]) == [
+        ("m1", "m1@acme.test"), ("a2", "a2@acme.test"), ("a1", "a1@acme.test")], (
+        "le titulaire est celui qui peut reconnecter ; un ancien membre n'est pas écrit")
+
+
+def test_un_compte_suspendu_ou_sans_adresse_est_saute(monkeypatch):
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "emails_by_subs",
+                        lambda subs: {s: f"{s}@acme.test" for s in subs if s != "a2"})
+    _org_avec_operateur(monkeypatch, roles={"op": "admin"})
+    assert M.destinataires(7) == [("a1", "a1@acme.test")]
+    _org_avec_operateur(monkeypatch, roles={"op": "admin"}, suspendus={"a1"})
+    assert M.destinataires(7) == [("op", "op@acme.test")], (
+        "aucun client joignable : l'opérateur, plutôt que personne")
+
+
+def test_une_org_d_operateurs_seulement_garde_son_premier_admin(monkeypatch):
+    # Une org interne ou de démonstration : le message part quelque part.
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "emails_by_subs", lambda subs: {s: f"{s}@acme.test" for s in subs})
+    _org_avec_operateur(monkeypatch, roles={"op": "super_admin", "op2": "admin"},
+                        membres=[{"sub": "op", "org_role": "org_admin"},
+                                 {"sub": "op2", "org_role": "org_admin"}])
+    assert M.destinataires(7) == [("op", "op@acme.test")]
+
+
+def test_le_balayage_ecrit_a_chaque_client_dans_sa_langue(bureau, monkeypatch):
+    _org_avec_operateur(monkeypatch, roles={"op": "super_admin"})
+    bureau["agents"] = [{**_agent(1, 7), "proprietaire": "m1"}]
+    bilan = M.balayer(_JOUR)
+    assert [(to, s) for to, s, _ in bureau["lettres"]] == [
+        ("m1@acme.test", "Un agent programmé est bloqué"),
+        ("a1@acme.test", "Un agent programmé est bloqué"),
+        ("a2@acme.test", "A scheduled agent is blocked")]
+    assert bilan["envoyes"] == 1 and bilan["lettres"] == 3 and bureau["marques"] == [1]
+
+
+def test_un_seul_envoi_reussi_suffit_a_marquer(bureau, monkeypatch):
+    from oto_mcp import email_templates
+    _org_avec_operateur(monkeypatch, roles={"op": "super_admin"})
+
+    def _envoyer(m, to, subject, html):
+        bureau["lettres"].append((to, subject, html))
+        return to.startswith("a2")
+    monkeypatch.setattr(email_templates, "_envoyer", _envoyer)
+    bureau["agents"] = [_agent(1, 7)]
+    bilan = M.balayer(_JOUR)
+    assert bilan["lettres"] == 1 and bureau["marques"] == [1], (
+        "rejouer pour celui qu'un envoi a raté renverrait le message à tous les autres")

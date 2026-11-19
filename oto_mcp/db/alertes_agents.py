@@ -50,7 +50,7 @@ def agents_bloques(seuil: int) -> list[dict[str, Any]]:
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             f"""
-            SELECT t.id AS trigger_id, t.org_id,
+            SELECT t.id AS trigger_id, t.org_id, t.sub AS proprietaire,
                    COALESCE(NULLIF(t.label, ''), t.procedure) AS libelle,
                    f.travaux, f.depuis, f.dernier, f.motif
               FROM runner_triggers t

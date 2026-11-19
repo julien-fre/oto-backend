@@ -3075,8 +3075,15 @@ escalade.* La lentille `agents_en_echec` rendait la panne lisible ; rien ne l'an
   `runner_triggers.echec_annonce_at` est posé après l'envoi, et l'épisode suivant ne
   s'ouvre qu'après un succès. Aucune remise à zéro à écrire. La marque ne date pas
   l'agent (`updated_at`).
-- **Le courriel** : un par org, à son premier admin joignable (la même règle que
-  `alertes-credential`, `destinataire_admin`), par le courrier de plateforme sous la
+- **Le courriel** : un par org, écrit à CHAQUE destinataire dans sa langue
+  (`alerte_agents_bloques.destinataires`, la même règle que `alertes-credential`) : le
+  titulaire de chaque agent bloqué encore membre de l'org, puis tous ses admins. ⚠️ **Le
+  personnel de la plateforme est écarté** (`access.is_operator_role`), comme un compte
+  suspendu : un opérateur est admin de nombreuses orgs clientes, et c'est le client qui
+  répare — l'ancienne règle, « le premier admin joignable » par date d'arrivée, écrivait
+  le plus souvent à l'opérateur qui avait monté l'org. Une org sans client joignable
+  garde ce premier admin, opérateur compris. L'épisode est marqué dès qu'un envoi est
+  parti. Par le courrier de plateforme sous la
   marque de l'org (`org_store.org_front` → `email_templates._envoyer`), hors des heures
   calmes par défaut (`scheduler.DEFAULT_QUIET_HOURS`, 20 h–8 h à Paris : un épisode vu
   la nuit part au premier passage du matin). Un envoi raté ne marque rien.

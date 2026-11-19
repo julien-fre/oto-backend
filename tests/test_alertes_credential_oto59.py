@@ -355,3 +355,28 @@ def test_un_retrait_nomme_les_agents_qui_en_dependent_encore(bureau, monkeypatch
     html = envois[0]["html"]
     assert "Clé Slack retirée" in html and "digest hebdo" in html
     assert "3 agent(s)" not in html, "des agents nommés remplacent leur nombre"
+
+
+def test_chaque_admin_client_est_prevenu_jamais_l_operateur(bureau, monkeypatch):
+    """L'alerte de clé partait au premier admin par date d'arrivée — souvent l'opérateur
+    qui avait monté l'org. Elle part désormais à chaque admin client, et au titulaire
+    d'un agent touché (`alerte_agents_bloques.destinataires`)."""
+    envois, marques = bureau
+    from oto_mcp import org_store as O
+    from oto_mcp.db import runner_triggers as T
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(O, "list_org_members", lambda org: [
+        {"sub": "u-op", "org_role": "org_admin"},
+        {"sub": "u-admin", "org_role": "org_admin"},
+        {"sub": "u-membre", "org_role": "org_member"}])
+    monkeypatch.setattr(U, "emails_by_subs",
+                        lambda subs: {s: f"{s}@exemple.invalid" for s in subs})
+    monkeypatch.setattr(U, "get_user", lambda sub: {
+        "sub": sub, "locale": None, "role": "super_admin" if sub == "u-op" else "member"})
+    monkeypatch.setattr(T, "triggers_actifs_utilisant", lambda org, c: [
+        {"id": 5, "label": "veille", "sub": "u-membre", "enabled": True}])
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    out = M.alertes_credential()
+    assert [e["to"] for e in envois] == ["u-membre@exemple.invalid",
+                                         "u-admin@exemple.invalid"]
+    assert out["envoyes"] == 1 and marques == [1, 2]
