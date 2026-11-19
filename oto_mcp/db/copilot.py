@@ -32,14 +32,38 @@ _CHAMPS_SIMPLES = ("project_id", "run_id", "model_calls", "mode", "model")
 COLONNE_MODELE = "model"
 DDL_COLONNE_MODELE = f"ALTER TABLE copilot_threads ADD COLUMN IF NOT EXISTS {COLONNE_MODELE} TEXT"
 
+#: Who pays a conversation the operator sponsors (`access/parrainage`), set ONCE when it
+#: is created and never written again (outside `_CHAMPS_SIMPLES`); NULL = the org, as
+#: always. Same DDL at boot (`_init`, under catalog guard) and for the revision
+#: `20261119_1700_copilot_sponsor`. Nullable without default: catalog write only.
+COLONNE_SPONSOR = "sponsor"
+DDL_COLONNE_SPONSOR = (f"ALTER TABLE copilot_threads ADD COLUMN IF NOT EXISTS "
+                       f"{COLONNE_SPONSOR} TEXT")
+
 
 def creer(thread_id: str, sub: str, org_id: Optional[int], project_id: Optional[int],
-          system: str, model: Optional[str] = None) -> None:
+          system: str, model: Optional[str] = None, sponsor: Optional[str] = None) -> None:
     with _connect() as conn:
-        conn.execute(
-            "INSERT INTO copilot_threads (id, sub, org_id, project_id, system, model) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (thread_id, sub, org_id, project_id, system, model))
+        if sponsor is None:
+            conn.execute(
+                "INSERT INTO copilot_threads (id, sub, org_id, project_id, system, model) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (thread_id, sub, org_id, project_id, system, model))
+        else:
+            conn.execute(
+                "INSERT INTO copilot_threads (id, sub, org_id, project_id, system, model, "
+                "sponsor) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (thread_id, sub, org_id, project_id, system, model, sponsor))
+
+
+def parrainees_depuis(sub: str, sponsor: str, depuis) -> int:
+    """How many conversations `sub` opened under `sponsor` since `depuis` (the quota of
+    `access/parrainage`)."""
+    with _connect() as conn:
+        r = conn.execute(
+            "SELECT COUNT(*) AS n FROM copilot_threads WHERE sub = %s AND sponsor = %s "
+            "AND created_at >= %s", (sub, sponsor, depuis)).fetchone()
+    return int(r["n"])
 
 
 def lire(thread_id: str, sub: str) -> Optional[dict]:

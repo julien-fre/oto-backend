@@ -93,3 +93,10 @@ délégation de clé). Tout autre connecteur sur une clé refacturée est refus�
   n'essaie pas de le rattraper : il n'a pas les prix.
 - **Pas de limite sans admin** : le cœur n'a ni défaut ni plafond de plateforme. Sans
   blocage poussé, rien ne change.
+
+## Exception : une conversation parrainée
+
+Une conversation de l'agent intégré que l'OPÉRATEUR paie (`access/parrainage.py`, le Post
+studio) n'est pas soumise à la limite du jour : elle n'est pas facturée à l'org (payeur
+`sponsor:post_studio`, appels tracés `key_mode = 'sponsor'`), donc rien qu'un admin d'org
+ait borné ne bouge. Détail : `docs/copilot.md` §Conversations parrainées.

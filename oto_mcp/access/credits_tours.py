@@ -27,6 +27,7 @@ from .. import limite_refus_top
 from ..db import credits as db_credits
 from . import credits as budget
 from . import credits_modes as modes
+from . import parrainage
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ def sous_le_plancher(sub: Optional[str], org: Optional[int],
     if plancher <= 0 or m == "off":
         return None
     try:
-        qui = budget.payeur(sub, org, budget._relire()["personnes"])
+        qui = _payeur(sub, org, budget._relire()["personnes"])
         s = db_credits.solde(qui)
         disponible = int(s["balance"]) - int(s["holds_open"])
     except Exception:
@@ -169,6 +170,15 @@ def _lignes_du_modele(lignes: dict, fonction: Optional[str]) -> Optional[dict]:
     return None if any(v is None for v in out.values()) else out
 
 
+def _payeur(sub: str, org: Optional[int], personnes: frozenset) -> str:
+    """Who a model call is booked to: the operator's sponsor account during a sponsored
+    copilot leg (`access/parrainage`) — no balance of the org or the person moves —,
+    otherwise the ledger's payer (`credits.payeur`)."""
+    if parrainage.courant() is not None:
+        return parrainage.PAYEUR
+    return budget.payeur(sub, org, personnes)
+
+
 def reserver_tour(uid: str, sub: str, org: Optional[int], max_tokens: int,
                   model: Optional[str]) -> dict:
     """Reserves one model call to `model` before it is sent: `max_tokens` of output, at
@@ -188,7 +198,7 @@ def reserver_tour(uid: str, sub: str, org: Optional[int], max_tokens: int,
             nom = fonction or f"{PREFIXE_DES_MODELES}(no model)"
             limite_refus_top.noter_credits(
                 f"unpriced:{MODELE_CONNECTOR}.{nom}",
-                budget.payeur(sub, org, lu["personnes"]), m, time.time())
+                _payeur(sub, org, lu["personnes"]), m, time.time())
             logger.warning("crédits (%s) : %s.%s sans ses quatre lignes au barème v%s "
                            "— %s", m, MODELE_CONNECTOR, nom, lu["version"],
                            "refusé" if m == "enforce" else "servi sans réservation")
@@ -198,12 +208,14 @@ def reserver_tour(uid: str, sub: str, org: Optional[int], max_tokens: int,
                                  "shared key cannot be used for it.", False, model=model)
             return {"held": False, "reserved": 0}
         reserve = budget._paquets(max_tokens, *lignes[_UNITE_RESERVEE])
-        qui = budget.payeur(sub, org, lu["personnes"])
+        qui = _payeur(sub, org, lu["personnes"])
+        # The operator's sponsor account holds no deposit: its call is recorded,
+        # never refused for balance (`access/parrainage`).
         r = db_credits.reserver(
             call_uid=uid, payer=qui, connector=MODELE_CONNECTOR, function=fonction,
             unit=_UNITE_RESERVEE, scale_version=lu["version"], quantity=max_tokens,
-            reserved=reserve, deadline_s=budget.hold_max_s(), forcer=(m == "report"),
-            acting_sub=sub)
+            reserved=reserve, deadline_s=budget.hold_max_s(),
+            forcer=(m == "report" or qui.startswith("sponsor:")), acting_sub=sub)
     except TourRefuse:
         raise
     except Exception:
@@ -255,7 +267,7 @@ def regler_tour(uid: str, sub: str, org: Optional[int], tokens: dict,
         sortie = int(tokens[_UNITE_RESERVEE])
         hold = {"reserved": budget._paquets(sortie, *hold_lignes[_UNITE_RESERVEE])}
         db_credits.reserver(
-            call_uid=uid, payer=budget.payeur(sub, org, lu["personnes"]),
+            call_uid=uid, payer=_payeur(sub, org, lu["personnes"]),
             connector=MODELE_CONNECTOR, function=fonction, unit=_UNITE_RESERVEE,
             scale_version=version, quantity=sortie, reserved=hold["reserved"],
             deadline_s=budget.hold_max_s(), forcer=True, acting_sub=sub)

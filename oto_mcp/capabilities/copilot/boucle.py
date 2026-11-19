@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import geste
 from ...db import copilot as store
+from ...access import parrainage
 from . import annulation, carte, classement, cle as cles, depense, modele, palier, pieces
 from .outils import Boite, a_la_demande, executer
 from .texte import FiltreSuite, alleger, couper, plafond_de
@@ -175,7 +176,8 @@ async def drainer(fil: dict, b: Boite, etat: dict) -> AsyncIterator[dict]:
         target, targs = classement.cible(name, args)
         refus = None
         if name not in offerts:
-            refus = f"{name} is not one of your tools; reach it through oto_call."
+            refus = (parrainage.REFUS_OUTIL if fil.get("sponsor") else
+                     f"{name} is not one of your tools; reach it through oto_call.")
         elif classement.interdit(target):
             refus = (f"{target} is not available to the in-app agent: the person does this "
                      "from their own screens.")
@@ -222,6 +224,12 @@ async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIt
     if await run_in_threadpool(depense.atteint, fil["sub"]):
         raise cles.SansCle(depense.CODE, depense.message_de_refus(), 429)
     rang = int(fil.get("model_calls") or 0) + 1
+    if fil.get("sponsor") and rang > parrainage.appels_max():
+        # A sponsored conversation (`access/parrainage`) has its own ceiling: the
+        # operator pays a post, not an open-ended agent.
+        raise cles.SansCle(parrainage.CODE_PLAFOND, "This Post studio session has done "
+                           "all the work it can: start the studio again, or write the "
+                           "post yourself.", 429)
     uid = cles.uid_du_tour(fil["id"], rang)
     nom = palier.modele_du_fil(fil)
     await run_in_threadpool(cles.reserver, cle, uid, fil["sub"], fil["org_id"],

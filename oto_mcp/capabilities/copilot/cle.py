@@ -26,7 +26,7 @@ from typing import Optional
 
 from ...access import credits as budget
 from ...access import credits_tours as tours
-from ...access import limite_du_jour
+from ...access import limite_du_jour, parrainage
 from .. import _cle_exigee
 from ..runner_jobs import _cle_de_modele, _depot_pose
 
@@ -60,6 +60,8 @@ def resoudre(org_id: Optional[int], sub: str) -> Cle:
     secret, workspace = _cle_de_modele(int(org_id), DEPOT)
     if secret:
         return Cle(secret, workspace, None)
+    if parrainage.courant() is not None:
+        return _cle_parrainee(int(org_id), sub)
     depose = _depot_pose(int(org_id), DEPOT)
     if depose is None or depose:
         raise SansCle("model_key_unreadable", "The organization's model key could not be "
@@ -90,6 +92,25 @@ def resoudre(org_id: Optional[int], sub: str) -> Cle:
                budget.rang_refacture(partagee.mode, partagee.entity_id))
 
 
+def _cle_parrainee(org_id: int, sub: str) -> Cle:
+    """The model key of a SPONSORED leg (`access/parrainage`): the platform key, the
+    org's grants aside, booked like a re-billed key so the ledger records it — to
+    `parrainage.PAYEUR`, never the org (`credits.payeur`)."""
+    from ...access.resolve_parraine import resolu_traces
+    rc = resolu_traces(DEPOT, sub)
+    if rc is None:
+        raise SansCle("no_model_key", "The model key could not be found for the Post "
+                      "studio right now. Try again in a moment.", 503)
+    try:
+        workspace = (rc.config or {}).get("workspace_id") or None
+    except Exception:
+        logger.exception("copilot : config de la clé parrainée illisible (org %s) — "
+                         "appel refusé", org_id)
+        raise SansCle("model_key_unreadable", "The model key could not be read right "
+                      "now. Try again in a moment.", 503) from None
+    return Cle(rc.key, workspace, "platform")
+
+
 def uid_du_tour(thread_id: str, rang: int) -> str:
     """The hold key of one model call. Zero-padded: the uid of one call is never the
     prefix of another's (`clore` closes by prefix)."""
@@ -102,7 +123,8 @@ def reserver(cle: Cle, uid: str, sub: str, org_id: Optional[int], modele: str,
     ledger refuses or cannot hold it (see the module's rule)."""
     if cle.payeur is None:
         return
-    if (bloc := limite_du_jour.refus(sub, org_id)) is not None:
+    # A sponsored leg is the operator's to pay: no limit of the org applies to it.
+    if parrainage.courant() is None and (bloc := limite_du_jour.refus(sub, org_id)) is not None:
         raise SansCle(limite_du_jour.CODE, limite_du_jour.message(bloc), 429)
     try:
         r = tours.reserver_tour(uid, sub, org_id, max_tokens, modele)

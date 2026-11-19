@@ -310,6 +310,46 @@ prix) — : c'est ce qu'un appel COÛTE à l'instance. Vérifié avant que le fl
 (429 `copilot_daily_cap`) et avant chaque appel au modèle (refus nommé dans le flux) ; un
 appel peut franchir le plafond, le suivant est refusé. Table `copilot_spend`.
 
+## Conversations parrainées (`access/parrainage.py`)
+
+**L'opérateur paie une conversation, pas l'org.** Le cas : le **Post studio**, une page du
+front du partenaire qui aide un membre à écrire un post LinkedIn sur ce que son espace a
+construit — post qui rend des crédits à l'espace une fois publié. On y arrive précisément
+quand l'espace n'a PLUS de crédits : grants de plateforme retirés par le commerce, solde à
+zéro, ou limite de dépense du jour atteinte. Elle doit marcher quand même.
+
+- **Le serveur décide, une fois** : un tour envoyé avec `surface="post_studio"` sur une
+  conversation NEUVE la parraine tant que `OTO_POST_STUDIO_SPONSOR=1`, dans le quota de la
+  personne (`OTO_POST_STUDIO_THREADS_PER_MONTH` conversations par mois civil UTC, 3 par
+  défaut ; au-delà, 429 `post_studio_quota`). La décision est ÉCRITE sur la conversation
+  (`copilot_threads.sponsor`, révision `20261119_1700_copilot_sponsor`) et chaque étape la
+  relit de là (`_etape` → `parrainage.activer`) : la page demande, elle ne décide jamais,
+  et une conversation ordinaire ne devient pas parrainée en cours de route.
+- **Pendant une étape parrainée** (variable de contexte, héritée par les fils lancés) :
+  - le modèle : la clé de plateforme servie sans les grants de l'org
+    (`resolve_parraine.resolu_traces`), réservée au payeur **`sponsor:post_studio`**
+    (`credits_tours._payeur`), jamais refusée pour solde (ce compte n'a pas de dépôt), sans
+    limite du jour (`cle.reserver`) ;
+  - les outils : sur un fournisseur de `parrainage.FOURNISSEURS` (le modèle, LinkedIn,
+    l'image, les étapes partagées de la cascade société), la clé de plateforme servie
+    directement — grants, limite du jour, quota de plateforme et budget d'unités de côté —,
+    tracée **`key_mode = "sponsor"`** (`resolve_parraine.resolu`). Une clé PROPRE de la
+    personne qui gagne la cascade sert comme toujours, jamais mesurée ;
+  - la boîte : les seuls `parrainage.OUTILS` (lectures de LinkedIn et de l'espace,
+    `oto_profile` lu et écrit, l'image), certaines opérations seulement
+    (`oto_trigger` en lecture) ; `oto_call` n'y mène nulle part. Un outil hors liste est
+    refusé, nommé, au modèle ;
+  - un plafond : `OTO_POST_STUDIO_MAX_MODEL_CALLS` appels au modèle par conversation
+    (40), refus nommé `post_studio_ceiling`.
+- **Ce que le commerce voit** : rien à facturer. Il ne compte que les appels tracés
+  `platform` ou `tenant` et les mouvements d'un payeur `org:<id>` — le solde, le grand
+  livre et la dépense du jour de l'org ne bougent pas. L'opérateur lit son coût sur le
+  payeur `sponsor:post_studio` (réservations et règlements des appels au modèle) et les
+  appels `key_mode = 'sponsor'` de `tool_calls`.
+- **Ce qui ne change pas** : l'org suspendue (essai fini) reste refusée, le plafond en
+  dollars par compte (`depense.py`, la garde de l'opérateur) s'applique, comme les limites
+  de débit de la plateforme.
+
 ## Ouvrir à quelqu'un
 
 L'allowlist reste VIDE au tag. **Toutes les orgs** se servent de l'agent sans code propre à

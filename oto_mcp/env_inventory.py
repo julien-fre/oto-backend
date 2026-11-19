@@ -411,6 +411,25 @@ _REGLAGES: tuple[Variable, ...] = (
              "nommé dans le flux avant l'appel suivant. Lu à chaque appel ; une valeur "
              "qui n'est pas un montant positif lève (jamais le défaut en silence).",
              ("oto_mcp/capabilities/copilot/depense.py:65",)),
+    Variable("OTO_POST_STUDIO_SPONSOR", Classe.REGLAGE, "",
+             "Conversations PARRAINÉES de l'agent intégré (`access/parrainage.py`, "
+             "docs/copilot.md §Conversations parrainées) : `1` = une conversation NEUVE "
+             "envoyée avec `surface=post_studio` est payée par l'opérateur — clé de "
+             "plateforme servie sans les grants de l'org, réservation au payeur "
+             "`sponsor:post_studio`, ni limite du jour ni solde de l'org, outils bornés. "
+             "Vide (défaut) = aucune ; éteindre n'arrête pas une conversation déjà "
+             "parrainée. Lu à chaque tour.",
+             ("oto_mcp/access/parrainage.py:97",)),
+    Variable("OTO_POST_STUDIO_THREADS_PER_MONTH", Classe.REGLAGE, "3",
+             "Conversations parrainées (`OTO_POST_STUDIO_SPONSOR`) qu'une PERSONNE peut "
+             "ouvrir par mois civil UTC ; au-delà, 429 `post_studio_quota`. Lu à chaque "
+             "tour ; une valeur qui n'est pas un entier ≥ 0 lève.",
+             ("oto_mcp/access/parrainage.py:117",)),
+    Variable("OTO_POST_STUDIO_MAX_MODEL_CALLS", Classe.REGLAGE, "40",
+             "Appels au modèle d'UNE conversation parrainée ; au-delà, refus nommé "
+             "`post_studio_ceiling` dans le flux. Lu à chaque appel ; une valeur qui "
+             "n'est pas un entier ≥ 1 lève.",
+             ("oto_mcp/access/parrainage.py:122",)),
     Variable("OTO_SLACK_COPILOT_MAX_SIMULTANES", Classe.REGLAGE, "8",
              "L'agent intégré à l'application, dans Slack : tours SIMULTANÉS dans le "
              "processus (`slack_copilot_places.py`), en plus d'un seul par compte. Un "

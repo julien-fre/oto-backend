@@ -32,6 +32,8 @@ from .. import (providers, credentials_store, db, group_store, instance_refs, or
 from ..connectors import cle_perso
 from . import (cascade, chain_shadow, credits, heritage, indices, limite_du_jour,
                platform_rate, prets, quotas, rbac, resolve_anon, scope, tenant_budget)
+from .resolve_echec import _emit_connector_failure
+from .resolve_parraine import servi as _servi_parraine
 from .resolved_credential import ResolvedCredential
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,8 @@ def resolve_credential(provider: str, want: str = "auto",
             return _note_resolved_instance(
                 resolve_anon._resolve_credential_anon(provider, want, anon.org_id, check_usage))
     sub = sub or scope.current_user_sub_or_raise()
+    if (parraine := _servi_parraine(provider, want, sub, account)) is not None:
+        return _note_resolved_instance(parraine)     # the operator pays (`parrainage`)
     try:
         resolved = _resolve_credential_impl(provider, want, sub, account=account,
                                             check_usage=check_usage, units=units)
@@ -130,24 +134,6 @@ def _note_resolved_instance(rc: ResolvedCredential) -> ResolvedCredential:
                                 credential_row=(rc.entity_type, rc.entity_id,
                                                 rc.provider, rc.account or ""))
     return rc
-
-
-def _emit_connector_failure(provider: str, sub: str) -> None:
-    """Best-effort: a `tool_calls(kind='connector', ok=False)` row = "credential
-    resolution failed for this provider/sub". Never blocking, never an
-    exception that would mask the original McpError (monitoring does not break the service)."""
-    try:
-        org = scope.current_org(sub)
-    # noqa: SILENT — the usage signal never breaks the resolution it observes
-    except Exception:
-        org = None
-    try:
-        db.insert_tool_call({
-            "kind": "connector", "tool": provider, "sub": sub, "org_id": org,
-            "ok": False, "error": "credential_resolution_failed",
-        })
-    except Exception:  # noqa: BLE001
-        logger.debug("connector failure emit failed", exc_info=True)
 
 
 def _resolve_credential_impl(provider: str, want: str, sub: str,

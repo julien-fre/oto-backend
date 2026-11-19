@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ... import geste, session_org
-from ...access import limite_du_jour
+from ...access import limite_du_jour, parrainage
 from ...db import copilot as store
 from .._authz import ORG_MEMBER
 from .._types import (AuthzDenied, Capability, DeclaredError, EventStream, ResolvedCtx,
@@ -109,6 +109,11 @@ class TurnInput(BaseModel):
     #: the caller's own in this org — else 400 `unknown_attachment` (`pieces.py`).
     attachments: list[Annotated[str, Field(max_length=80)]] = Field(
         default_factory=list, max_length=pieces.MAX_PAR_TOUR)
+    #: A page that runs the loop without the panel: `post_studio`. It ASKS; the server
+    #: decides, once, when the conversation is created (`_parrainage_neuf`): a sponsored
+    #: conversation the operator pays (`access/parrainage`). Ignored on a conversation
+    #: that already exists — its own stored sponsor decides.
+    surface: Optional[Literal["post_studio"]] = None
 
 
 class ClientResultInput(BaseModel):
@@ -266,6 +271,11 @@ async def _etape(fil: dict, b, avant) -> Any:
         frais = await run_in_threadpool(store.lire, fil["id"], fil["sub"])
         fil.update(_fil(frais or {}))
         relu = frais is not None
+        # Who pays this leg: the thread's STORED sponsor only (`access/parrainage`) —
+        # inherited by the threads the leg starts (model key, tools).
+        parrainage.activer(fil.get("sponsor"))
+        if fil.get("sponsor"):
+            b = outils.restreindre(b, parrainage.OUTILS)
         erreur = avant(fil)
         if erreur:
             yield ev("error", message=erreur)
@@ -295,7 +305,8 @@ async def _etape(fil: dict, b, avant) -> Any:
             await run_in_threadpool(store.rendre, fil["id"], jeton)
 
 
-async def _tour(ctx: ResolvedCtx, inp: TurnInput, marques: list[dict], canal: str = "app"):
+async def _tour(ctx: ResolvedCtx, inp: TurnInput, marques: list[dict], canal: str = "app",
+                parraine: Optional[str] = None):
     """A turn of the person's message. `canal` names where the conversation lives — `app`
     (the panel) or `slack` (`slack_copilot.py`, which drives this same function): it only
     changes the prompt a NEW conversation is born with."""
@@ -322,7 +333,8 @@ async def _tour(ctx: ResolvedCtx, inp: TurnInput, marques: list[dict], canal: st
             contexte = issue.texte if issue.ok else ""
         thread_id = f"thr_{uuid.uuid4().hex}"
         await run_in_threadpool(store.creer, thread_id, sub, org, projet,
-                                consigne.consigne(contexte, canal), palier.defaut())
+                                consigne.consigne(contexte, canal), palier.defaut(),
+                                parraine)
         fil = _fil(await run_in_threadpool(store.lire, thread_id, sub))
         await run_in_threadpool(_ouvrir_run, fil, inp.text)
         await run_in_threadpool(store.enregistrer, thread_id, {"run_id": fil["run_id"]})
@@ -403,10 +415,40 @@ def _limite_du_jour(ctx: ResolvedCtx) -> None:
         raise AuthzDenied(429, "daily_spend_limit", limite_du_jour.message(bloc))
 
 
+def _parrainage_neuf(ctx: ResolvedCtx, inp: TurnInput) -> Optional[str]:
+    """Whether the conversation this turn opens is SPONSORED (`access/parrainage`): only
+    a NEW one, asked by the page (`surface`), while the operator opens them, within the
+    person's quota for the month — the quota refused by name (429 `post_studio_quota`).
+    A turn on an existing conversation of the caller keeps that conversation's sponsor."""
+    if inp.thread_id:
+        ligne = store.lire(inp.thread_id, ctx.sub)
+        if ligne is not None and ligne.get("org_id") == ctx.org_id:
+            return ligne.get("sponsor")
+    if inp.surface != parrainage.POST_STUDIO or not parrainage.ouvert():
+        return None
+    from datetime import datetime, timezone
+    debut = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0,
+                                               microsecond=0)
+    if store.parrainees_depuis(ctx.sub, parrainage.POST_STUDIO, debut) \
+            >= parrainage.threads_par_mois():
+        raise AuthzDenied(429, parrainage.CODE_QUOTA,
+                          "This month's free Post studio sessions are used up. You can "
+                          "still write the post yourself: posting and claiming cost "
+                          "nothing.")
+    return parrainage.POST_STUDIO
+
+
+def _parraine(ctx: ResolvedCtx, thread_id: str) -> bool:
+    ligne = store.lire(thread_id, ctx.sub)
+    return bool(ligne and ligne.get("org_id") == ctx.org_id and ligne.get("sponsor"))
+
+
 async def _turn(ctx: ResolvedCtx, inp: TurnInput) -> EventStream:
     _garde(ctx)
     await _plafond(ctx)
-    await run_in_threadpool(_limite_du_jour, ctx)
+    parraine = await run_in_threadpool(_parrainage_neuf, ctx, inp)
+    if parraine is None:
+        await run_in_threadpool(_limite_du_jour, ctx)
     marques: list[dict] = []
     if inp.attachments:
         marques = await run_in_threadpool(pieces.marques, inp.attachments, ctx.sub,
@@ -414,7 +456,7 @@ async def _turn(ctx: ResolvedCtx, inp: TurnInput) -> EventStream:
         if marques is None:
             raise AuthzDenied(400, "unknown_attachment",
                               "An attached file was not found: attach it again.")
-    return EventStream(_sse(_tour(ctx, inp, marques)))
+    return EventStream(_sse(_tour(ctx, inp, marques, parraine=parraine)))
 
 
 def _attachment_types(ctx: ResolvedCtx, inp: BaseModel) -> dict:
@@ -429,7 +471,8 @@ class _Rien(BaseModel):
 async def _client_result(ctx: ResolvedCtx, inp: ClientResultInput) -> EventStream:
     _garde(ctx)
     await _plafond(ctx)
-    await run_in_threadpool(_limite_du_jour, ctx)
+    if not await run_in_threadpool(_parraine, ctx, inp.thread_id):
+        await run_in_threadpool(_limite_du_jour, ctx)
     outils_client = ([t.model_dump() for t in inp.client_tools]
                      if inp.client_tools is not None else None)
     return EventStream(_sse(_reprise(ctx, inp.thread_id, lambda f: _parler(
@@ -440,7 +483,8 @@ async def _client_result(ctx: ResolvedCtx, inp: ClientResultInput) -> EventStrea
 async def _approval(ctx: ResolvedCtx, inp: ApprovalInput) -> EventStream:
     _garde(ctx)
     await _plafond(ctx)
-    await run_in_threadpool(_limite_du_jour, ctx)
+    if not await run_in_threadpool(_parraine, ctx, inp.thread_id):
+        await run_in_threadpool(_limite_du_jour, ctx)
     return EventStream(_sse(_reprise(ctx, inp.thread_id, lambda f: _parler(
         f, inp.speak, boucle.repondre_carte(f, inp.approval_id, inp.decision == "approve",
                                             inp.edits, bool(inp.remember))))))
@@ -503,12 +547,15 @@ _LIMITE_DU_JOUR = DeclaredError(429, "daily_spend_limit",
                                "on a key the operator re-bills, the person, one of their "
                                "teams or the org reached a daily spend limit an org admin "
                                "set (`access/limite_du_jour`)")
+_QUOTA_PARRAINE = DeclaredError(429, parrainage.CODE_QUOTA,
+                                "`surface=post_studio`: the person opened this month's "
+                                "sponsored conversations already (`access/parrainage`)")
 
 CAPABILITIES += [
     Capability(
         key="copilot.turn", handler=_turn, Input=TurnInput, Output=CopilotEvent,
         authz=ORG_MEMBER, mcp=None,
-        errors=(*_PORTE, _PLAFOND, _LIMITE_DU_JOUR,
+        errors=(*_PORTE, _PLAFOND, _LIMITE_DU_JOUR, _QUOTA_PARRAINE,
                 DeclaredError(400, "unknown_attachment",
                               "an id of `attachments` is not the caller's in this org, or "
                               "does not exist")),

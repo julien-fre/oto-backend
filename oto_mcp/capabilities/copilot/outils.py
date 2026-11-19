@@ -23,6 +23,7 @@ from typing import Optional
 from fastmcp.server.context import Context
 
 from ... import geste, session_visibility, tool_registry
+from ...access import parrainage
 from ...auth import hooks as auth_hooks
 from ...mcp_errors import McpError
 from ...tools import meta
@@ -89,6 +90,18 @@ async def boite(sub: str, org_id: Optional[int]) -> Boite:
     return Boite(frozenset(outils), outils, offerts)
 
 
+def restreindre(b: Boite, permis: dict) -> Boite:
+    """The toolbox of a SPONSORED conversation (`access/parrainage`): only the tools of
+    `permis`, so the operator pays for the studio's work and nothing else. COPIES (the
+    box may be shared); the cache breakpoint moves to the last tool kept."""
+    outils = {n: t for n, t in b.outils.items() if n in permis}
+    offerts = [{k: v for k, v in o.items() if k != "cache_control"}
+               for o in b.offerts if o["name"] in permis]
+    if offerts:
+        offerts[-1]["cache_control"] = {"type": "ephemeral"}
+    return Boite(frozenset(outils), outils, offerts)
+
+
 def a_la_demande(offerts: list[dict]) -> list[dict]:
     """The core tools for a conversation that loads tools on demand (`palier`): the
     `classement.CORE_INLINE` ones first, the cache breakpoint on the last of them, then
@@ -148,6 +161,11 @@ async def executer(b: Boite, sub: str, name: str, args: dict, *, org: Optional[i
     target, targs = classement.cible(name, args)
     if name == "oto_tool_schema":
         return _schema_d_outil(b, str(args.get("name") or ""))
+    if parrainage.courant() is not None and (
+            name == "oto_call" or not parrainage.outil_permis(target, targs)):
+        # A sponsored conversation (`access/parrainage`): its own tools only, and for
+        # some only some operations — `oto_call` never reaches another tool here.
+        return Issue(False, parrainage.REFUS_OUTIL)
     tool = b.outils.get(target)
     if tool is None or classement.interdit(target):
         return Issue(False, f"Unknown tool `{target}`: it is not in your toolbox here.")
