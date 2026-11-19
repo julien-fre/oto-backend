@@ -39,6 +39,8 @@ def bureau(monkeypatch):
         return {i for i in ids if i in etat["soignes"]}
     monkeypatch.setattr(episodes_agents, "agents_soignes_par_nous", _soignes)
     monkeypatch.setattr(alertes_agents, "agents_bloques", lambda seuil: list(etat["agents"]))
+    etat["attente"] = []
+    monkeypatch.setattr(alertes_agents, "agents_sans_forfait", lambda: list(etat["attente"]))
     monkeypatch.setattr(alertes_agents, "marquer_annonces",
                         lambda ids: etat["marques"].extend(ids) or len(ids))
     # L'org 9 est celle d'un tenant tiers.
@@ -208,3 +210,53 @@ def test_un_seul_envoi_reussi_suffit_a_marquer(bureau, monkeypatch):
     bilan = M.balayer(_JOUR)
     assert bilan["lettres"] == 1 and bureau["marques"] == [1], (
         "rejouer pour celui qu'un envoi a raté renverrait le message à tous les autres")
+
+
+
+# ── Les agents qui ATTENDENT un abonnement à reconnecter ──────────────────────────────
+
+def _attente(tid, org, statut="needs_login"):
+    return {"trigger_id": tid, "org_id": org, "proprietaire": "a", "libelle": f"agent {tid}",
+            "famille": "claude_subscription", "forfait": statut, "travaux": 4,
+            "depuis": "2026-11-08 18:31:00"}
+
+
+def test_un_agent_qui_attend_son_forfait_s_annonce_et_se_marque(bureau):
+    bureau["agents"] = []
+    bureau["attente"] = [_attente(5, 7)]
+    bilan = M.balayer(_JOUR)
+    (to, subject, html), = bureau["lettres"]
+    assert to == "a@acme.test" and subject == "Un agent programmé est bloqué"
+    assert "agent 5" in html and "ne tourne plus" in html and "4 passage(s)" in html
+    assert "Connecteurs › Anthropic" in html
+    assert "échouent passage après passage" not in html, "il n'échoue pas : il attend"
+    assert bureau["marques"] == [5] and bilan["envoyes"] == 1
+
+
+def test_en_anglais_le_geste_est_nomme(bureau, monkeypatch):
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "get_user", lambda s: {"locale": "en"})
+    bureau["agents"], bureau["attente"] = [], [_attente(5, 7)]
+    M.balayer(_JOUR)
+    html = bureau["lettres"][0][2]
+    assert "has not run since" in html and "Connectors › Anthropic" in html
+
+
+def test_un_message_par_org_les_deux_pannes_ensemble_chaque_agent_une_fois(bureau):
+    # L'agent 1 meurt ET attend (deux lignes du relevé) : nommé une fois.
+    bureau["attente"] = [_attente(1, 7), _attente(5, 7), _attente(5, 7)]
+    M.balayer(_JOUR)
+    assert len(bureau["lettres"]) == 1
+    html = bureau["lettres"][0][2]
+    assert html.count("agent 1") == 1 and html.count("agent 5") == 1
+    assert "passages de suite en échec" in html and "ne tourne plus" in html
+    assert sorted(bureau["marques"]) == [1, 2, 5]
+
+
+def test_une_lecture_ratee_des_attentes_laisse_partir_les_echecs(bureau, monkeypatch):
+    from oto_mcp.db import alertes_agents
+
+    def _casse():
+        raise RuntimeError("base indisponible")
+    monkeypatch.setattr(alertes_agents, "agents_sans_forfait", _casse)
+    assert M.balayer(_JOUR)["envoyes"] == 1

@@ -3101,8 +3101,19 @@ escalade.* La lentille `agents_en_echec` rendait la panne lisible ; rien ne l'an
   signal — une clé refusée en 401/403 — est aussi lu par l'autre canal, la clé marquée
   rouge à l'appel (`alertes-credential`, `maintenance.py`), fermé par
   `OTO_ALERTE_CREDENTIAL`.
+- **Un agent qui ATTEND un abonnement à reconnecter** (`alertes_agents.agents_sans_forfait`) :
+  sous un forfait personnel `needs_login` ou `disconnected`, la réservation SAUTE ses
+  travaux — ils attendent puis expirent, aucun ne meurt, l'épisode ci-dessus ne s'ouvre
+  jamais. Il est annoncé dans le même courriel (sa ligne dit « ne tourne plus », le geste
+  est de reconnecter l'abonnement) quand un de ses travaux d'après son dernier succès
+  attend depuis `ATTENTE_FORFAIT_MIN` (30 min) et que le forfait est à reconnecter depuis
+  aussi longtemps, que l'agent déclare toujours un modèle de cette famille, et que le
+  travail ne passe PAS par le pool de l'org (`runner_jobs._par_le_pool`, l'expression de
+  la réservation). `paused_limit` n'en est pas : il repart seul. Même marque
+  (`echec_annonce_at`), réarmée par un succès de l'agent OU par la preuve que le forfait
+  tenait (`last_ok_at`).
 - Bancs : `tests/test_alerte_agents_bloques.py` (sans base), `tests/test_alertes_agents_db.py`
-  (l'épisode en SQL), `tests/test_migration_20261023_echec_annonce.py`.
+  (l'épisode et l'attente en SQL), `tests/test_migration_20261023_echec_annonce.py`.
 
 ### Soigner un agent avant qu'on le remarque (27/10/2026)
 

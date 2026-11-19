@@ -121,7 +121,11 @@ def _heures_calmes(maintenant: datetime) -> bool:
 def _courriel(to: str, agents: list[dict], *, brand: Optional[str],
               locale: Optional[str]) -> bool:
     """UN message pour les agents bloqués d'une org : lequel, depuis quand, combien de
-    passages perdus, ce que dit le dernier refus — et les deux gestes possibles."""
+    passages perdus, ce que dit le dernier refus — et les deux gestes possibles.
+
+    Un agent qui ATTEND un abonnement à reconnecter (`forfait`, `agents_sans_forfait`)
+    n'échoue pas : il ne part plus. Sa ligne le dit, et le geste est nommé — reconnecter
+    l'abonnement, ce que seule la personne qui le paie peut faire."""
     from . import email as _email
     from . import email_brand as _charte
     from .email_templates import _envoyer
@@ -133,6 +137,17 @@ def _courriel(to: str, agents: list[dict], *, brand: Optional[str],
     items = []
     for a in agents:
         depuis = str(a.get("depuis") or "")[:16]
+        if a.get("forfait"):
+            if en:
+                items.append(f"<li><strong>{esc(a['libelle'])}</strong>: has not run since "
+                             f"{esc(depuis)} UTC ({a['travaux']} run(s) missed) — the Claude "
+                             "plan it runs on is disconnected</li>")
+            else:
+                items.append(f"<li><strong>{esc(a['libelle'])}</strong> : ne tourne plus "
+                             f"depuis le {esc(depuis)} UTC ({a['travaux']} passage(s) "
+                             "manqué(s)) — l'abonnement Claude qui le fait tourner est "
+                             "déconnecté</li>")
+            continue
         motif = f" — « {esc(a['motif'])} »" if a.get("motif") else ""
         if en:
             items.append(f"<li><strong>{esc(a['libelle'])}</strong>: {a['travaux']} runs "
@@ -141,22 +156,39 @@ def _courriel(to: str, agents: list[dict], *, brand: Optional[str],
             items.append(f"<li><strong>{esc(a['libelle'])}</strong> : {a['travaux']} "
                          f"passages de suite en échec depuis le {esc(depuis)} UTC{motif}</li>")
     liste = f'<ul style="{_charte.PARA}">{"".join(items)}</ul>'
+    en_echec = any(not a.get("forfait") for a in agents)
+    en_attente = any(a.get("forfait") for a in agents)
     if en:
         subject = "A scheduled agent is blocked"
-        corps = (f'<p style="{_charte.PARA}">These scheduled agents of your organization '
-                 "keep failing, run after run:</p>" + liste +
-                 f'<p style="{_charte.PARA}">They will keep starting on schedule and fail '
-                 "the same way until the cause is fixed (often a key refused by its "
-                 "provider): fix it, or turn the agent off. This is the only message "
-                 "for this outage.</p>")
+        tete = ("keep failing, run after run:" if not en_attente else "are not running:")
+        corps = f'<p style="{_charte.PARA}">These scheduled agents of your organization {tete}</p>' + liste
+        if en_echec:
+            corps += (f'<p style="{_charte.PARA}">They will keep starting on schedule and fail '
+                      "the same way until the cause is fixed (often a key refused by its "
+                      "provider): fix it, or turn the agent off.</p>")
+        if en_attente:
+            corps += (f'<p style="{_charte.PARA}">An agent that runs on a Claude plan waits '
+                      "until that plan is reconnected: its owner reconnects it in "
+                      "Connectors › Anthropic (Claude plan), or switches the agent to "
+                      "another model.</p>")
+        corps += f'<p style="{_charte.PARA}">This is the only message for this outage.</p>'
     else:
         subject = "Un agent programmé est bloqué"
+        tete = ("échouent passage après passage :" if not en_attente
+                else "ne fonctionnent plus :")
         corps = (f'<p style="{_charte.PARA}">Ces agents programmés de votre organisation '
-                 "échouent passage après passage :</p>" + liste +
-                 f'<p style="{_charte.PARA}">Ils continueront de partir à l\'heure et '
-                 "d'échouer de la même façon tant que la cause n'est pas réparée (souvent "
-                 "une clé refusée par son fournisseur) : réparez-la, ou coupez l'agent. "
-                 "C'est le seul message pour cette panne.</p>")
+                 f"{tete}</p>" + liste)
+        if en_echec:
+            corps += (f'<p style="{_charte.PARA}">Ils continueront de partir à l\'heure et '
+                      "d'échouer de la même façon tant que la cause n'est pas réparée "
+                      "(souvent une clé refusée par son fournisseur) : réparez-la, ou "
+                      "coupez l'agent.</p>")
+        if en_attente:
+            corps += (f'<p style="{_charte.PARA}">Un agent qui tourne sur un abonnement '
+                      "Claude attend que cet abonnement soit reconnecté : la personne à "
+                      "qui il appartient le reconnecte dans Connecteurs › Anthropic "
+                      "(abonnement Claude), ou passe l'agent sur un autre modèle.</p>")
+        corps += f'<p style="{_charte.PARA}">C\'est le seul message pour cette panne.</p>'
     return _envoyer(m, to, subject, _charte.page(
         m, corps, preheader=subject,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
@@ -195,6 +227,18 @@ def _annonces_sur_slack(trigger_ids: list) -> set[int]:
     return {int(r["trigger_id"]) for r in rows}
 
 
+def _sans_forfait() -> list[dict]:
+    """`alertes_agents.agents_sans_forfait`, sans faire tomber le passage : une lecture
+    ratée laisse partir l'alerte des agents en échec, et le dit."""
+    from .db import alertes_agents
+    try:
+        return alertes_agents.agents_sans_forfait()
+    except Exception:  # noqa: BLE001
+        log.warning("alerte agents bloqués : agents en attente d'abonnement illisibles",
+                    exc_info=True)
+        return []
+
+
 def balayer(maintenant: Optional[datetime] = None) -> dict:
     """Un passage : relève les épisodes à annoncer, écrit un courriel par org, marque ce
     qui est parti. Synchrone (la boucle le pousse hors de l'event loop)."""
@@ -211,9 +255,18 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
     if alertes_slack_agents.actives():
         soignes |= _annonces_sur_slack([a["trigger_id"] for a in bloques])
     par_org: dict[int, list[dict]] = {}
+    vus: set[int] = set()
     for a in bloques:
         if int(a["trigger_id"]) in soignes:
             continue
+        vus.add(int(a["trigger_id"]))
+        par_org.setdefault(int(a["org_id"]), []).append(a)
+    # Les agents qui ATTENDENT un abonnement à reconnecter : leurs travaux ne meurent
+    # pas, l'épisode ci-dessus ne les voit jamais. Un agent déjà nommé l'est une fois.
+    for a in _sans_forfait():
+        if int(a["trigger_id"]) in vus:
+            continue
+        vus.add(int(a["trigger_id"]))
         par_org.setdefault(int(a["org_id"]), []).append(a)
     envoyes, lettres, marques, ecartees, sans_destinataire = 0, 0, 0, 0, 0
     for org_id, agents in sorted(par_org.items()):
