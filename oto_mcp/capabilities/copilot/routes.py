@@ -431,7 +431,7 @@ def _parrainage_neuf(ctx: ResolvedCtx, inp: TurnInput) -> Optional[str]:
                                                microsecond=0)
     if store.parrainees_depuis(ctx.sub, parrainage.POST_STUDIO, debut) \
             >= parrainage.threads_par_mois():
-        raise AuthzDenied(429, parrainage.CODE_QUOTA,
+        raise AuthzDenied(429, "post_studio_quota",       # = parrainage.CODE_QUOTA
                           "This month's free Post studio sessions are used up. You can "
                           "still write the post yourself: posting and claiming cost "
                           "nothing.")
@@ -547,7 +547,7 @@ _LIMITE_DU_JOUR = DeclaredError(429, "daily_spend_limit",
                                "on a key the operator re-bills, the person, one of their "
                                "teams or the org reached a daily spend limit an org admin "
                                "set (`access/limite_du_jour`)")
-_QUOTA_PARRAINE = DeclaredError(429, parrainage.CODE_QUOTA,
+_QUOTA_PARRAINE = DeclaredError(429, "post_studio_quota",
                                 "`surface=post_studio`: the person opened this month's "
                                 "sponsored conversations already (`access/parrainage`)")
 

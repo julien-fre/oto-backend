@@ -94,9 +94,9 @@ def _impl(mode):
     (None, "sponsor"),                  # no key at all: the grant was withdrawn
 ])
 def test_cle_parrainee(monkeypatch, mode, attendu):
-    from oto_mcp import credentials_store
-    from oto_mcp.access import resolve, resolve_parraine
-    monkeypatch.setattr(resolve, "_resolve_credential_impl", _impl(mode))
+    from oto_mcp import access, credentials_store
+    from oto_mcp.access import resolve_parraine
+    monkeypatch.setattr(access, "_resolve_credential_impl", _impl(mode))
     monkeypatch.setattr(credentials_store, "list_platform_instances",
                         lambda p: [{"label": "plat-1"}])
     monkeypatch.setattr(credentials_store, "get_credential",
@@ -110,27 +110,28 @@ def test_cle_parrainee(monkeypatch, mode, attendu):
 
 
 def test_sans_cle_de_plateforme_le_chemin_ordinaire_dit_pourquoi(monkeypatch):
-    from oto_mcp import credentials_store
-    from oto_mcp.access import resolve, resolve_parraine
-    monkeypatch.setattr(resolve, "_resolve_credential_impl", _impl(None))
+    from oto_mcp import access, credentials_store
+    from oto_mcp.access import resolve_parraine
+    monkeypatch.setattr(access, "_resolve_credential_impl", _impl(None))
     monkeypatch.setattr(credentials_store, "list_platform_instances", lambda p: [])
     assert resolve_parraine.resolu("apify", "auto", "usr_x") is None
 
 
 def test_le_resolveur_sert_la_cle_parrainee_dans_une_etape_parrainee(monkeypatch):
-    from oto_mcp.access import resolve, resolve_parraine
+    from oto_mcp import access
+    from oto_mcp.access import resolve_parraine
     from oto_mcp.access.resolved_credential import ResolvedCredential
     servie = ResolvedCredential("apify", "sk-platform", False, "sponsor", "platform", "p")
     monkeypatch.setattr(resolve_parraine, "resolu", lambda p, w, s: servie)
-    monkeypatch.setattr(resolve, "_note_resolved_instance", lambda rc: rc)
-    monkeypatch.setattr(resolve, "_resolve_credential_impl",
+    monkeypatch.setattr(access, "_note_resolved_instance", lambda rc: rc)
+    monkeypatch.setattr(access, "_resolve_credential_impl",
                         lambda *a, **k: pytest.fail("the ordinary path must not run"))
     parrainage.activer(parrainage.POST_STUDIO)
-    assert resolve.resolve_credential("apify", sub="usr_x") is servie
-    # a provider the studio does not need keeps the ordinary path
+    assert access.resolve_credential("apify", sub="usr_x") is servie
+    # outside a sponsored leg, the ordinary path runs
     parrainage.activer(None)
     with pytest.raises(BaseException):
-        resolve.resolve_credential("apify", sub="usr_x")
+        access.resolve_credential("apify", sub="usr_x")
 
 
 # ── the model call ───────────────────────────────────────────────────────────
