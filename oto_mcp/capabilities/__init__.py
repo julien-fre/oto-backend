@@ -102,6 +102,7 @@ from . import platform_connectors  # noqa: F401 — platform.connector.{activati
 # délier. Ex-routes écrites à la main ; le WEBHOOK reste écrit à la main (non
 # authentifié par nature, gardé par un nonce).
 from . import unipile_me  # noqa: F401 — me.unipile.{connect,reconcile,status,disconnect}
+from . import unipile_limits  # noqa: F401 — me.unipile.{limits,limits_set} (limites d'envoi LinkedIn)
 # VERBES du consentement OAuth per-user (#121) — démarrer / lire / déconnecter, pour les
 # Google (multi-compte). ⚠️ Ce module a porté deux fédérations MCP (atlassian,
 # folkmcp) jusqu'au 2026-09-09 — d'où son nom, gardé avec les clés servies

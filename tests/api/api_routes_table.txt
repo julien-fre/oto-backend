@@ -542,6 +542,10 @@ GET,HEAD /api/me/unipile -> _handler
 OPTIONS /api/me/unipile -> options_handler
 DELETE /api/me/unipile -> _handler
 OPTIONS /api/me/unipile -> options_handler
+GET,HEAD /api/me/unipile/limits -> _handler
+OPTIONS /api/me/unipile/limits -> options_handler
+PUT /api/me/unipile/limits -> _handler
+OPTIONS /api/me/unipile/limits -> options_handler
 GET,HEAD /api/google/oauth/start -> _handler
 OPTIONS /api/google/oauth/start -> options_handler
 GET,HEAD /api/google/oauth/status -> _handler

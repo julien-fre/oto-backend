@@ -20,6 +20,7 @@ nodes.NODES
 procedures.PROCEDURES
 orgs.GROUPS
 unipile.UNIPILE_GROUP_GRANTS
+unipile.SENDING_LIMITS
 connectors.CREDENTIALS
 connectors.INSTANCES
 billing.OPTION_COMPS

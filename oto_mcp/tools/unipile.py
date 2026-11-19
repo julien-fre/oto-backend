@@ -125,6 +125,47 @@ def _rate_limited(wait_secs: float, detail: str) -> McpError:
               "retry_after_seconds": secs}))
 
 
+def _limit_reached(e) -> McpError:
+    """The named refusal `linkedin_sending_limit_reached`: the account's OWNER set a
+    sending limit (`unipile_limites`) and its window is full — nothing was sent.
+    `retryable: true` with the wait until a slot frees up (rolling window)."""
+    secs = e.secondes_restantes()
+    return McpError(ErrorData(code=INVALID_PARAMS, message=(
+        f"Refused `linkedin_sending_limit_reached`: {e.phrase()} Do NOT retry before "
+        f"{_fmt_wait(secs)}: move on to other work, or leave the remaining rows for the "
+        "next run. The limit is the account owner's setting (LinkedIn card, Sending "
+        "limits), never yours to work around with another account."),
+        data={"code": "linkedin_sending_limit_reached", "retryable": True,
+              "retry_after_seconds": secs, "limit": e.lim, "max": e.maxi,
+              "used": e.used}))
+
+
+def _within_limits(client, action: str, fn):
+    """Run `fn` (one LinkedIn action through `client`) under the owner's sending limits:
+    the slot is reserved first, released if `fn` fails (`unipile_limites.garde`)."""
+    from .. import unipile_limites
+    try:
+        with unipile_limites.garde(client, action):
+            return fn()
+    except unipile_limites.LimiteAtteinte as e:
+        raise _limit_reached(e)
+
+
+def _invitation_refused(err) -> Optional[McpError]:
+    """LinkedIn's own invitation cap (Unipile 422 `cannot_resend_yet`, raised only at the
+    last step) as a named refusal, rather than an opaque 422."""
+    if getattr(err, "status_code", None) == 422 and "cannot_resend_yet" in str(err):
+        return McpError(ErrorData(code=INVALID_PARAMS, message=(
+            "Refused `linkedin_invitation_limit`: LinkedIn refuses more invitations from "
+            "this account for now (`cannot_resend_yet`) — its weekly invitation cap is "
+            "reached, or this person was invited recently. Stop inviting from this "
+            "account for today; lowering its invitations limit (LinkedIn card, Sending "
+            "limits) keeps it from happening again."),
+            data={"code": "linkedin_invitation_limit", "retryable": True,
+                  "retry_after_seconds": 24 * 3600}))
+    return None
+
+
 def _rate_limit_guard(sub: str) -> None:
     """Refuse a scrape during the ongoing 429 cooldown (without hitting Unipile) — the duration
     is THE ONE Unipile asked for. Avoids hammering during the backoff."""
@@ -1556,8 +1597,12 @@ def register(mcp: FastMCP) -> None:
 
         if op == "person":
             ident = _canonical_li_identifier(_need(identifier, "identifier", op))
-            return _scrape(sub, lambda: _read_li_slug(
-                ident, lambda i: unipile_client().get_profile(i, sections=sections)))
+            from .. import unipile_limites
+            client = unipile_client()
+            # ONE visit, even when the slug is read twice (accent fallback).
+            return _scrape(sub, lambda: _within_limits(
+                client, unipile_limites.VISITE, lambda: _read_li_slug(
+                    ident, lambda i: client.get_profile(i, sections=sections))))
 
         if op == "company":
             ident = _canonical_li_identifier(_need(identifier, "identifier", op),
@@ -1786,8 +1831,10 @@ def register(mcp: FastMCP) -> None:
                 raise _bad("op='send' requires chat_id (reply) or recipient_id "
                            "(new thread)")
             txt = _need(text, "text", op)
-            return unipile_client().send_message(txt, chat_id=chat_id,
-                                                 attendee_id=recipient_id)
+            from .. import unipile_limites
+            client = unipile_client()
+            return _within_limits(client, unipile_limites.MESSAGE, lambda: client.send_message(
+                txt, chat_id=chat_id, attendee_id=recipient_id))
 
         if op == "update":
             cid, act = _need(chat_id, "chat_id", op), _need(action, "action", op)
@@ -1819,7 +1866,17 @@ def register(mcp: FastMCP) -> None:
 
         if op == "invite":
             pid = _need(provider_id, "provider_id", op)
-            return unipile_client().send_invitation(pid, message=message)
+            from oto.tools.unipile.client import UnipileError
+            from .. import unipile_limites
+            client = unipile_client()
+            try:
+                return _within_limits(client, unipile_limites.INVITATION,
+                                      lambda: client.send_invitation(pid, message=message))
+            except UnipileError as e:
+                refus = _invitation_refused(e)
+                if refus is not None:
+                    raise refus from e
+                raise
 
         if op in ("accept_invitation", "decline_invitation"):
             iid = _need(invitation_id, "invitation_id", op)
@@ -2071,7 +2128,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_unipile_account(
-        op: Literal["status", "contracts", "select", "inmail_balance"] = "contracts",
+        op: Literal["status", "contracts", "select", "inmail_balance",
+                    "limits"] = "contracts",
         contract_id: Optional[str] = None,
         account_id: Optional[str] = None,
     ) -> dict:
@@ -2093,6 +2151,11 @@ def register(mcp: FastMCP) -> None:
           pass to op="select".
         - **"select"**: activates a contract for the premium calls that follow.
         - **"inmail_balance"**: InMail credit balance (premium messages).
+        - **"limits"**: the sending limits the account's OWNER set (invitations per
+          day and per week, messages per day, profile visits per day): for each, `max`
+          (null = none), `used` on its rolling window and `resets_at`. Read it before a
+          batch of invitations or messages and pace the batch under it: past a limit
+          every action is refused (`linkedin_sending_limit_reached`), nothing is sent.
 
         The three premium ops require the matching subscription ON the connected
         account and the premium seat activated at connect
@@ -2100,7 +2163,7 @@ def register(mcp: FastMCP) -> None:
         403 "out of your scope". `op="status"`, for its part, requires nothing.
 
         Args:
-            op: status | contracts (default) | select | inmail_balance.
+            op: status | contracts (default) | select | inmail_balance | limits.
             contract_id: op="select" — id returned by op="contracts".
             account_id: op="status" — the `account_id` read from the address of the
                 connection flow's return page (proof of the account to link).
@@ -2122,8 +2185,14 @@ def register(mcp: FastMCP) -> None:
             return client.select_contract(_need(contract_id, "contract_id", op))
         if op == "inmail_balance":
             return client.inmail_balance()
+        if op == "limits":
+            from .. import unipile_limites
+            acct = unipile_limites.compte_du_client(client)
+            if acct is None:
+                raise _bad("no LinkedIn account resolved for this call")
+            return {"account_id": acct, "limits": unipile_limites.vue(acct)}
 
-        raise _bad("op must be 'status', 'contracts', 'select' or 'inmail_balance'")
+        raise _bad("op must be 'status', 'contracts', 'select', 'inmail_balance' or 'limits'")
 
     # ---- Recruiter: job postings & candidates (reads) ---------------------
 

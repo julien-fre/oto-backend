@@ -469,7 +469,7 @@ linkedin_aiark_credits	-	99334726611ccf58
 linkedin_aiark_person	export mobile reverse	9adfa3fdba15ff01
 linkedin_aiark_search	companies people	c74775d2b65b1130
 linkedin_unipile	attendees contacts list read	c8bc5859a80c9c16
-linkedin_unipile_account	contracts inmail_balance select status	a901cd3463191413
+linkedin_unipile_account	contracts inmail_balance limits select status	709d30bcaab7a0a1
 linkedin_unipile_act	accept_invitation cancel_invitation comment_post decline_invitation endorse invite publish_post react_message react_post send update update_member	be16f1f2a0971556
 linkedin_unipile_facets	-	388aab50d10d9796
 linkedin_unipile_job	applicant applicants posting postings projects	919926efcfcfd869

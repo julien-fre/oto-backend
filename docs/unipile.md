@@ -806,3 +806,36 @@ arbitre, `unipile_pending.add_account` et le `slot` des prêts. La PK reste
 naître, l'ajout refuse `multi_account_unavailable` (`db.slots_ouverts`). La révision
 `20261118_1500_unipile_slots`, jouée **après le tag de prod**, passe la PK à
 `(sub, org_id, provider, slot)` et ouvre l'ajout sans redémarrage.
+
+## Limites d'envoi LinkedIn (posées par le titulaire du compte)
+
+LinkedIn plafonne chaque compte (invitations, messages, visites de profil) et Unipile ne
+limite rien de son côté : sans borne ici, un agent ou une recette envoie jusqu'au refus de
+LinkedIn — ou jusqu'à la restriction du compte. Le **titulaire** du compte pose donc ses
+propres limites, sur sa carte LinkedIn (`GET|PUT /api/me/unipile/limits`, capacités
+`me.unipile.limits` / `me.unipile.limits_set`, `capabilities/unipile_limits.py`).
+
+- **Quatre limites**, chacune sur une fenêtre **glissante** : invitations par 24 h et par
+  7 jours, messages par 24 h, visites de profil par 24 h (`unipile_limites.LIMITES`).
+  `0` met l'action en pause.
+- **Aucune limite par défaut** : sans ligne, rien ne change (des séquences tournent déjà).
+  La carte propose des valeurs (`suggested`) et avertit au-delà du maximum recommandé par
+  le fournisseur (`provider_max`) ; elle ne refuse aucun nombre (borne de saisie 1 000).
+- **Par compte, jamais par ligne `unipile_accounts`** : clé = l'`account_id` Unipile. Le
+  même compte relié dans deux orgs, ou opéré par un bénéficiaire de prêt, a UNE limite et
+  UN compte d'actions. Seul le titulaire la pose (404 `account_not_connected` sinon).
+- **La garde** (`unipile_limites.garde`) est dans les gestes eux-mêmes —
+  `linkedin_unipile_act` `op=send` et `op=invite`, `linkedin_unipile_profile`
+  `op=person` (une visite, même quand le slug est lu deux fois) — donc sur tous les
+  chemins : appel MCP direct, `oto_call`, recettes, agents hébergés. Elle réserve la place
+  **avant** l'appel, atomiquement (verrou consultatif par compte), et la **rend** si
+  l'appel échoue : seule une action faite compte.
+- **Le refus** : `linkedin_sending_limit_reached` (rejouable, `retry_after_seconds` = quand
+  la plus ancienne action sort de la fenêtre), rien n'est envoyé. Le 422
+  `cannot_resend_yet` de LinkedIn sur une invitation devient `linkedin_invitation_limit`.
+- **Fail-open** : une base qui ne répond pas ne bloque pas un envoi, elle se journalise.
+- L'agent lit les limites du compte avec lequel il agit : `linkedin_unipile_account(op="limits")`.
+- Tables `unipile_sending_limits` (une ligne par limite posée, rangée sous le titulaire,
+  exportée avec lui) et `unipile_sending_log` (une ligne par action réussie, purgée
+  au-delà de 8 jours, non exportée) — révision `20261119_1200_sending_limits`, ordre avec
+  le code indifférent.

@@ -244,6 +244,11 @@ CLASSEMENT: dict[str, Table] = {
     # ── messagerie hébergée ────────────────────────────────────────────────────
     "unipile_accounts": possedee(ParOrg(), comptes=("sub",)),
     "unipile_operated_accounts": possedee(ParSub()),
+    # limites d'envoi posées par le titulaire du compte : un réglage à lui, il part avec lui.
+    "unipile_sending_limits": possedee(ParSub()),
+    "unipile_sending_log": exclue(ParSub(), "compte glissant des envois des 7 derniers "
+                                  "jours : il ne sert que la fenêtre en cours, purgé "
+                                  "au-delà de 8 jours"),
     "unipile_pending": exclue(ParSub(), "connexion en cours : un état éphémère, qui ne "
                               "survit pas à une bascule"),
     # ── runner, abonnements de modèle, transcription ───────────────────────────

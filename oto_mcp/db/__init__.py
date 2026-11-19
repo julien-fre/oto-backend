@@ -107,6 +107,8 @@ from . import (
     regions_de_modeles,
     # NON aplati : les modèles qu'une org a éteints — `db.modeles_eteints.<fn>`.
     modeles_eteints,
+    # NON aplati : `poser`/`reserver` sont trop communs — `db.unipile_limites.<fn>`.
+    unipile_limites,
     # NON aplati : `noter`/`lire`/`marquer` sont trop communs — `db.apify_runs.<fn>`.
     apify_runs,
     # NON aplati, même raison — `db.higgsfield_jobs.<fn>`.

@@ -621,7 +621,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "linear_user": {"lire": "list get viewer"},
     # registers a webhook: data then leaves to its URL (decided: a send)
     "linear_webhook": {"lire": "list", "envoyer": "create update", "detruire": "delete"},
-    "linkedin_unipile_account": {"lire": "status contracts inmail_balance", "ecrire": "select"},
+    "linkedin_unipile_account": {"lire": "status contracts inmail_balance limits", "ecrire": "select"},
     # update can archive a thread; update_member can reject an applicant
     "linkedin_unipile_act": {"envoyer": "send react_message publish_post comment_post react_post invite accept_invitation endorse", "detruire": "update update_member decline_invitation cancel_invitation"},
     "linkedin_unipile_facets": "lire",

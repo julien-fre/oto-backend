@@ -139,3 +139,38 @@ CREATE TABLE IF NOT EXISTS connector_account_group_grants (
 CREATE INDEX IF NOT EXISTS idx_account_group_grants_group
     ON connector_account_group_grants(grantee_group_id, provider);
 """
+
+# Limites d'envoi d'un compte LinkedIn, posées par la personne qui le possède (et le
+# compte de ce qu'il a fait, sur une fenêtre glissante). LinkedIn plafonne PAR COMPTE et
+# Unipile ne limite rien (`docs/unipile.md` §Limites d'envoi) : la seule borne qu'un
+# agent, une recette ou un prêt rencontre avant LinkedIn est celle-ci.
+#
+# ⚠️ Clé = l'`account_id` Unipile, JAMAIS la ligne `unipile_accounts` : un même compte est
+# relié dans N orgs et opéré par des bénéficiaires de prêt — clé par ligne, il aurait N
+# fois sa limite. `sub` = le PROPRIÉTAIRE du compte (rangement, export), pas l'appelant.
+#
+# `unipile_sending_limits` : une ligne par (compte, limite) posée ; aucune ligne = aucune
+# limite (rien ne change pour qui n'a rien réglé). `unipile_sending_log` : une ligne par
+# action RÉUSSIE (réservée avant l'appel, retirée s'il échoue), purgée au-delà de 8 jours
+# (la plus longue fenêtre est la semaine glissante).
+SENDING_LIMITS = """
+CREATE TABLE IF NOT EXISTS unipile_sending_limits (
+    account_id TEXT NOT NULL,
+    lim TEXT NOT NULL,
+    max_count INTEGER NOT NULL CHECK (max_count >= 0),
+    sub TEXT NOT NULL REFERENCES users(sub) ON DELETE CASCADE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (account_id, lim)
+);
+CREATE TABLE IF NOT EXISTS unipile_sending_log (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    sub TEXT REFERENCES users(sub) ON DELETE CASCADE,
+    at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_unipile_sending_log_acct
+    ON unipile_sending_log(account_id, action, at);
+CREATE INDEX IF NOT EXISTS idx_unipile_sending_limits_sub ON unipile_sending_limits(sub);
+CREATE INDEX IF NOT EXISTS idx_unipile_sending_log_sub ON unipile_sending_log(sub);
+"""

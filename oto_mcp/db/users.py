@@ -480,6 +480,9 @@ _SUB_COLUMNS = [
     # Le PROPRIÉTAIRE d'un canal opéré : hors PK `(sub, provider)`, donc UPDATE nu
     # (le TITULAIRE, lui, est en PK → `_PK_SUB_TABLES`).
     ("unipile_operated_accounts", "owner_sub"),
+    # Le TITULAIRE d'un compte LinkedIn sous ses limites d'envoi et son compte glissant :
+    # hors PK (clé = le compte Unipile), UPDATE nu — ses limites le suivent.
+    ("unipile_sending_limits", "sub"), ("unipile_sending_log", "sub"),
     # ressources possédées + grants (ère ownership 0030/0042/0048 — ajoutées Phase H B1 :
     # l'inventaire n'avait jamais suivi, une bascule de tenant orphelinait les ressources
     # user-owned et les grants nominatifs). `owner_id`/`principal_id` mélangent sub et

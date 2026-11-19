@@ -239,6 +239,18 @@ def _org_active_sans_base(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _aucune_limite_d_envoi_sans_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sans base, aucun compte LinkedIn n'a de limite d'envoi et rien ne se compte
+    (`unipile_limites.garde`, lue à chaque invitation, message et visite de profil). Un
+    banc sur base réelle lit les vraies tables ; un banc qui teste la garde la double
+    lui-même."""
+    if os.environ.get("DATABASE_URL"):
+        return
+    from oto_mcp import unipile_limites
+    monkeypatch.setattr(unipile_limites, "compte_du_client", lambda client: None)
+
+
+@pytest.fixture(autouse=True)
 def _aucun_modele_eteint_sans_base(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sans base, aucune org n'a éteint de modèle (`orgs.disabled_models`). La lecture a
     lieu à chaque occurrence d'un agent (horloge, webhook, lancement, campagne), à chaque
