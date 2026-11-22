@@ -1,12 +1,27 @@
-"""Google OAuth — web flow, per-user, tokens persisted in SQLite.
+"""Google OAuth — web flow, per-user, tokens persisted in the encrypted vault.
 
 Flow:
-1. Authenticated user (Logto JWT) calls `GET /api/google/oauth/start` →
-   we return a Google URL with an HMAC-signed `state` containing their `sub`.
-2. User redirected to Google, consents, redirected to
-   `/api/google/oauth/callback?code=…&state=…`.
-3. We verify the state, exchange the code for a refresh+access token,
-   persist it in the encrypted vault (`connector_credentials`, connector='google').
+1. Authenticated user (Logto JWT) starts the flow (`GET /api/google/oauth/start`, or
+   the generic connect of the account / a service card) → we return a Google URL
+   with a signed, single-use `state` (`make_state`: audience `google`, `jti`, 10 min)
+   carrying their `sub`.
+2. User redirected to Google, consents, redirected to OUR fixed callback
+   `/api/google/oauth/callback?code=…&state=…` (the redirect URI is a server
+   constant, never taken from the request).
+3. The callback checks the state and exchanges NOTHING: it sends the browser back to
+   the front that asked (`?connector=<card>&connect=confirm`), the code and the state
+   in the URL FRAGMENT (never sent to a server, never in a Referer).
+4. The front completes with ITS bearer token (`POST /api/google/oauth/complete`):
+   the state's `sub` must be the bearer's, the state is consumed (a replay is
+   refused), THEN the code is exchanged and the token persisted
+   (`connector_credentials`, connector='google').
+
+Why step 3-4 (Google CASA, ADA 3.2.2 — state validation against CSRF): the callback
+is unauthenticated, so the browser that lands there proves nothing about WHO it is.
+Trusting the state's `sub` there let a consent URL minted by A, opened by B, store
+B's Google tokens under A's account. A cookie set at start could not bind the
+browser either: the start is a cross-origin bearer call (or an MCP agent, with no
+browser at all), and the callback may run on a tenant's host.
 
 To use the credentials (tools side): `credentials_for(sub, account, service)`
 chooses the account by the common resolution (`access.resolve_credential`:
@@ -37,7 +52,8 @@ Setup ops:
 - Env `OTO_MCP_PUBLIC_URL` (already used for Logto) — base for the
   redirect URI; locally it can be overridden to point to localhost.
 - Env `OTO_MCP_OAUTH_STATE_SECRET` — HMAC secret to sign the anti-CSRF
-  state (generate with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`).
+  state, shared with every OAuth flow (`auth/flow.py`; generate with
+  `python -c 'import secrets; print(secrets.token_urlsafe(32))'`).
 
 **A TENANT's app** (23/09/2026) — a partner who wants THEIR OWN consent screen
 (their brand, their Google Cloud project, their scopes verified under their name) sets their client
@@ -64,10 +80,7 @@ secret. Testing a tenant's app means doing it where its host lands.
 """
 from __future__ import annotations
 
-import hmac
 import hashlib
-import base64
-import json
 import logging
 import os
 import threading
@@ -225,13 +238,6 @@ def _client_secret() -> str:
     return v
 
 
-def _state_secret() -> bytes:
-    v = os.environ.get("OTO_MCP_OAUTH_STATE_SECRET")
-    if not v:
-        raise RuntimeError("OTO_MCP_OAUTH_STATE_SECRET env var missing")
-    return v.encode()
-
-
 _CALLBACK_PATH = "/api/google/oauth/callback"
 
 
@@ -298,15 +304,6 @@ def app_for(sub: str) -> OAuthApp:
                     redirect_uri=_redirect_uri(), origin="env")
 
 
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _b64url_decode(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode(s + pad)
-
-
 def _ctx_org(sub: str) -> int:
     """Context org (`current_org` seam, ADR 0023) — the MEMBER scope of Google
     accounts (ADR 0033 B3). Raises an actionable error rather than a silent scope."""
@@ -319,76 +316,77 @@ def _ctx_org(sub: str) -> int:
     return org
 
 
+# The audience of the state (`oauth_flow.sign_state`): a state issued for a Google
+# consent is worthless on any other flow's callback, and theirs on ours. ONE audience
+# for the account and its services: they share one callback, and the card that asked
+# (`c`) is itself inside the signed payload, checked against the closed list of
+# services on read — a state cannot be re-aimed at another card.
+_AUD = "google"
+
+
 def make_state(sub: str, org_id: int, return_app: str = "",
                connector: str = "google", scope: str = "member",
                group_id: Optional[int] = None) -> str:
-    """HMAC-signed state : `<b64(payload)>.<b64(sig)>` — payload = {sub, org, ts, app, c}.
+    """Signed state (`oauth_flow.sign_state`, audience `google`) — payload
+    {sub, org, app, c, s, g, jti} plus the `aud` and `ts` the helper adds.
+
+    **Single-use** (`jti`, `oauth_flow.consume_state`) and **bound to the person who
+    started the flow**: the callback no longer trusts the `sub` it carries. It hands
+    the code and the state to the front, which completes the link with ITS bearer
+    token; the completion refuses a state whose `sub` is not the bearer's
+    (`capabilities/federated_oauth.py::me.federation.google.complete`). Without that, a
+    consent URL minted by A and completed by B stored B's Google tokens under A's
+    account (account-linking CSRF).
 
     `connector` (`c`): WHICH card requested the consent — the account, or one of
-    its six services (split of 2026-09-26). The callback returns there; without it, a
-    person authorizing Drive landed on the account card.
+    its services (split of 2026-09-26). The front returns there.
 
-    The org at START travels to the callback (which comes from Google, without the
-    consultation headers): the account is scoped to the org where the user clicked
-    "connect" (ADR 0033 B3).
+    The org at START travels with the state (the completion acts for the org where the
+    user clicked "connect", ADR 0033 B3, not for whatever org is active by then).
 
-    `return_app` carries which FRONT requested the connection. Same reason as the org:
-    the callback arrives FROM Google, with no header or session — what the state does not
-    carry is lost. Without it, a user coming from a third-party front landed
-    on our side after consenting (oto-backend#877).
+    `return_app` carries which FRONT requested the connection: the callback arrives
+    FROM Google, with no header or session — what the state does not carry is lost
+    (oto-backend#877).
 
     ⚠️ The value is validated by the CALLER (`resolve_return_app`) before arriving
     here: the state must never carry an unverified front key, otherwise it
     signs an open redirect."""
-    payload = json.dumps({"sub": sub, "org": org_id, "ts": int(time.time()),
-                          "app": return_app, "c": connector,
-                          # WHO the account is entrusted to (2026-09-27): the member, or their
-                          # org / their team (SHARED account, set by an admin).
-                          "s": scope, "g": group_id},
-                         separators=(",", ":")).encode()
-    sig = hmac.new(_state_secret(), payload, hashlib.sha256).digest()
-    return f"{_b64url(payload)}.{_b64url(sig)}"
-
-
-def verify_state(state: str) -> Optional[tuple]:
-    """Returns (sub, org_id, return_app, connector, scope, group_id) if the state is valid and
-    unexpired, otherwise None. `scope` falls back to `"member"` for a state from before
-    shared accounts; a `scope="group"` without a team is refused.
-
-    `connector` falls back to `"google"` for a state issued BEFORE the split: the account,
-    exactly the card that existed then.
-
-    `return_app` falls back to `""` for a state issued BEFORE this batch: they live
-    a few minutes, some are in flight at deploy time, and breaking them would return
-    an error to someone who has just authorized correctly."""
-    if not state or "." not in state:
-        return None
-    p_b64, sig_b64 = state.split(".", 1)
     try:
-        payload = _b64url_decode(p_b64)
-        sig = _b64url_decode(sig_b64)
-    # noqa: SILENT — fail-closed: a callback never distinguishes the causes of a refusal
-    except Exception:
+        return oauth_flow.sign_state(_AUD, {
+            "sub": sub, "org": org_id, "app": return_app, "c": connector,
+            # WHO the account is entrusted to (2026-09-27): the member, or their
+            # org / their team (SHARED account, set by an admin).
+            "s": scope, "g": group_id,
+            "jti": oauth_flow.new_jti()})
+    except oauth_flow.OAuthFlowError as e:
+        # A missing state secret is a PLATFORM misconfiguration: the start paths
+        # translate `RuntimeError` into `oauth_misconfigured`, never into a refusal
+        # of the caller's input (`OAuthFlowError` is a `ValueError`).
+        raise RuntimeError(str(e)) from e
+
+
+def read_state(state: Optional[str]) -> Optional[dict]:
+    """The validated payload of a Google state, or None — `{sub, org, app, connector,
+    scope, group, jti}`.
+
+    Valid = signature checked in constant time, audience `google`, under the 10-minute
+    TTL, and a `jti` present. A state minted BEFORE this rule (no audience, no `jti`)
+    is refused: it lives ten minutes at most, and a consent in flight during the
+    deploy only needs a retry. Reading does NOT consume: the completion does, once it
+    has checked whose state it is.
+
+    `return_app` is re-validated here although it was filtered at start: the state is
+    signed, but a key removed from `RETURN_APPS` between the click and the return must
+    not come back to life through its signature."""
+    data = oauth_flow.read_state(_AUD, state, ttl=_STATE_TTL)
+    if data is None:
         return None
-    expected = hmac.new(_state_secret(), payload, hashlib.sha256).digest()
-    if not hmac.compare_digest(sig, expected):
-        return None
-    try:
-        data = json.loads(payload)
-    # noqa: SILENT — fail-closed: a callback never distinguishes the causes of a refusal
-    except Exception:
-        return None
-    if int(time.time()) - int(data.get("ts", 0)) > _STATE_TTL:
+    jti = data.get("jti")
+    if not isinstance(jti, str) or not jti:
         return None
     sub, org = data.get("sub"), data.get("org")
-    if not isinstance(sub, str) or not isinstance(org, int):
+    if not isinstance(sub, str) or not sub or not isinstance(org, int):
         return None
-    # `app` missing = state issued before oto-backend#877: return to the default front,
-    # never a refusal. Re-validated here although it was already filtered at start: the
-    # state is signed, but a key removed from `RETURN_APPS` between the click and the
-    # return must not come back to life through its signature.
-    from . import flow as oauth_flow
-
     connector = data.get("c") or "google"
     if connector != "google" and connector not in SERVICE_SCOPES:
         return None
@@ -396,8 +394,26 @@ def verify_state(state: str) -> Optional[tuple]:
     if scope not in ("member", "org", "group") or (
             scope == "group" and not isinstance(group, int)):
         return None
-    return (sub, org, oauth_flow.resolve_return_app(data.get("app") or ""), connector,
-            scope, group if scope == "group" else None)
+    return {"sub": sub, "org": org,
+            "app": oauth_flow.resolve_return_app(data.get("app") or ""),
+            "connector": connector, "scope": scope,
+            "group": group if scope == "group" else None, "jti": jti}
+
+
+def verify_state(state: Optional[str]) -> Optional[tuple]:
+    """`read_state` as a tuple — (sub, org_id, return_app, connector, scope, group_id) —
+    or None. What the callback reads to know where to send the browser back; it proves
+    nothing about who is holding that browser."""
+    d = read_state(state)
+    if d is None:
+        return None
+    return (d["sub"], d["org"], d["app"], d["connector"], d["scope"], d["group"])
+
+
+def consume_state(data: dict) -> bool:
+    """Single use of a state read by `read_state`: True the FIRST time its `jti` is
+    presented, False on any replay. Synchronous (SQL)."""
+    return oauth_flow.consume_state(_AUD, data)
 
 
 def build_auth_url(sub: str, return_app: str = "", connector: str = "google",

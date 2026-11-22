@@ -94,9 +94,10 @@ def test_un_front_inconnu_est_reduit_a_rien():
     assert google_oauth.verify_state(etat)[:4] == ("sub-1", 42, "", "google")
 
 
-def test_un_state_emis_avant_ce_lot_reste_valide():
-    """Ils vivent quelques minutes : il y en a en vol au déploiement. Les casser
-    renverrait une erreur à quelqu'un qui vient d'autoriser correctement."""
+def test_un_state_emis_avant_le_jti_est_refuse():
+    """Changé VOLONTAIREMENT le 22/11/2026 (Google CASA, ADA 3.2.2) : un state d'avant
+    — sans audience ni `jti` — ne peut pas être à usage unique, donc il est refusé.
+    Il vit dix minutes au plus : un consentement en vol au déploiement se relance."""
     import base64
     import hashlib
     import hmac
@@ -105,9 +106,9 @@ def test_un_state_emis_avant_ce_lot_reste_valide():
 
     charge = json.dumps({"sub": "sub-1", "org": 42, "ts": int(time.time())},
                         separators=(",", ":")).encode()
-    sig = hmac.new(google_oauth._state_secret(), charge, hashlib.sha256).digest()
+    sig = hmac.new(b"test-secret", charge, hashlib.sha256).digest()
     b64 = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")  # noqa: E731
-    assert google_oauth.verify_state(f"{b64(charge)}.{b64(sig)}")[:4] == ("sub-1", 42, "", "google")
+    assert google_oauth.verify_state(f"{b64(charge)}.{b64(sig)}") is None
 
 
 def test_le_flux_transmet_la_cle_cachee_du_front(monkeypatch):
@@ -152,9 +153,12 @@ def test_l_url_de_consentement_filtre_le_front_avant_de_signer(monkeypatch):
 
 @pytest.fixture
 def _echange_ok(monkeypatch):
-    monkeypatch.setattr(google_oauth, "exchange_code",
-                        lambda code, sub: {"access_token": "t"})
-    monkeypatch.setattr(google_oauth, "persist_token", lambda *a, **k: None)
+    """Le callback n'échange ni ne range RIEN (CASA 3.2.2) : s'il y touchait, ces
+    bancs rougiraient ici plutôt que de passer sur un faux succès."""
+    def _jamais(*a, **k):
+        raise AssertionError("le callback ne doit ni échanger ni ranger")
+    monkeypatch.setattr(google_oauth, "exchange_code", _jamais)
+    monkeypatch.setattr(google_oauth, "persist_token", _jamais)
 
 
 def test_le_callback_ramene_au_front_tiers(_echange_ok):
@@ -162,7 +166,8 @@ def test_le_callback_ramene_au_front_tiers(_echange_ok):
     reponse = asyncio.run(_callback()(_requete(f"code=c&state={etat}")))
     url = reponse.headers["location"]
     assert url.startswith("https://app.acme.test/"), url
-    assert "connect=connected" in url, "la convention de retour de #670 doit tenir"
+    # Le callback ne range plus rien (CASA 3.2.2) : `confirm`, le front termine.
+    assert "connect=confirm" in url, "la convention de retour de #670 doit tenir"
 
 
 def test_le_callback_sans_front_declare_ramene_sur_une_route_QUI_EXISTE(_echange_ok):
@@ -179,19 +184,17 @@ def test_le_callback_sans_front_declare_ramene_sur_une_route_QUI_EXISTE(_echange
     chemin = urllib.parse.urlsplit(url).path
     assert chemin == "/connectors", chemin
     assert "console" not in url and "acme" not in url
-    assert "connect=connected" in url
+    assert "connect=confirm" in url
 
 
 def test_un_echec_ramene_AUSSI_au_front_tiers(monkeypatch):
     """Le piège du retour OAuth : on soigne le succès et on oublie l'échec, donc
     la personne est renvoyée chez nous au pire moment — quand elle doit
-    recommencer."""
-    def _boom(code, sub):
-        raise RuntimeError("Google a refusé")
-
-    monkeypatch.setattr(google_oauth, "exchange_code", _boom)
+    recommencer. Depuis CASA 3.2.2 l'échange vit dans la complétion : l'échec du
+    callback, c'est un retour sans code (une erreur du fournisseur)."""
     etat = google_oauth.make_state("sub-1", 42, "acme")
-    url = asyncio.run(_callback()(_requete(f"code=c&state={etat}"))).headers["location"]
+    url = asyncio.run(_callback()(_requete(
+        f"error=server_error&state={etat}"))).headers["location"]
     assert url.startswith("https://app.acme.test/"), url
     assert "connect=error" in url
 
@@ -229,4 +232,4 @@ def test_les_deux_fronts_ne_partagent_que_le_suffixe(_echange_ok):
     nous = asyncio.run(_callback()(_requete(
         f"code=c&state={google_oauth.make_state('s', 42)}"))).headers["location"]
     assert q(tiers).netloc != q(nous).netloc, "la base doit suivre le front"
-    assert "connect=connected" in tiers and "connect=connected" in nous
+    assert "connect=confirm" in tiers and "connect=confirm" in nous

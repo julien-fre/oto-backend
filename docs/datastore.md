@@ -2150,9 +2150,13 @@ OAuth Google per-user (Gmail + Tasks ; scopes Sheets/Drive latents pour l'export
 - `GET /api/google/oauth/start` (Logto auth) → renvoie `{auth_url}` à
   ouvrir dans le browser. `prompt=consent select_account` → l'user choisit
   quel compte Google connecter (rejouer le flow ajoute un 2e compte).
-- `GET /api/google/oauth/callback?code=…&state=…` — Google redirige ici, on
-  échange, dérive l'email du compte via le profil Gmail, persiste, puis
-  redirige vers `app.oto.ninja/?datastore=connected`.
+- `GET /api/google/oauth/callback?code=…&state=…` — Google redirige ici. ⚠️ Depuis
+  le 22/11/2026 (Google CASA, ADA 3.2.2) **le callback ne range plus rien** : il lit
+  le state (signé, audience `google`, `jti`, 10 min) et renvoie au front
+  `?connector=<carte>&connect=confirm#code=…&state=…` (fragment).
+- `POST /api/google/oauth/complete` body `{code, state}` (Logto auth) — le front
+  termine : `sub` du state = `sub` du porteur (`403 state_not_yours`), state
+  consommé une fois (`409 state_used`), puis échange, email du compte, rangement.
 - `GET /api/google/oauth/status` → `{connected, accounts:[{email,is_default,scopes,granted_at}], …}`.
 - `POST /api/google/oauth/default` body `{account}` → choisit le compte par défaut.
 - `DELETE /api/google/oauth[?account=<email>]` → révoque un compte (ou tous).

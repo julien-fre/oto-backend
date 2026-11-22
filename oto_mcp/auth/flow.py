@@ -229,6 +229,10 @@ def return_url(app: Optional[str], suffix: str, *, org: Optional[int] = None) ->
 # administrateur), `admin_approved` / `admin_refused` (réponse d'un administrateur au
 # lien d'approbation, `auth/microsoft.admin_consent_url`).
 #
+# Et pour Google (22/11/2026, Google CASA ADA 3.2.2) : `confirm` — rien n'est encore
+# rangé ; le code et le state sont dans le FRAGMENT de l'URL, et le front termine avec
+# son jeton (`POST /api/google/oauth/complete`), qui vérifie que le state est le sien.
+#
 # Trois échecs, trois causes, trois mots (oto-app#11) — jamais l'un pour l'autre :
 # - `denied` : le fournisseur a refusé l'autorisation (`error=access_denied`, ou
 #   l'équivalent documenté du fournisseur) — rien n'a été échangé ni rangé ;

@@ -12,8 +12,8 @@ trois vagues de migration l'ont vidé de tout le reste :
   jeton — c'est ce qui les retenait ici).
 
 **Pourquoi le callback ne migre pas, et ne migrera pas.** Google y redirige le
-NAVIGATEUR de l'utilisateur : pas d'en-tête d'auth (l'identité vient du `state`
-HMAC-signé), et la réponse est une **302** vers la page connecteurs, pas du JSON. Or
+NAVIGATEUR de l'utilisateur : pas d'en-tête d'auth (le `state` signé dit où
+renvoyer, pas qui tient le navigateur), et la réponse est une **302** vers la page connecteurs, pas du JSON. Or
 `_rest_adapter` authentifie toujours et répond toujours en JSON. Il est hors du moule
 par construction, et classé par NATURE comme les autres callbacks OAuth.
 
@@ -24,15 +24,22 @@ Le succès DOUBLE désormais les deux formes (`?google=connected` reste, le dash
 le lit) ; l'échec REDIRIGE avec `connect=error` — pur ajout, rien à doubler puisque
 rien n'existait à cette place. Le diagnostic (state illisible, timeout, échange
 refusé) va au journal, plus jamais dans le corps de la réponse.
+
+**Google CASA, ADA 3.2.2 (22/11/2026)** : le callback ne range PLUS rien. Il lit le
+state (signé, audience `google`, 10 min) pour savoir où renvoyer, et remet code et
+state au front dans le fragment (`?connector=<carte>&connect=confirm#code=…&state=…`).
+Le front termine avec son jeton (`me.federation.google.complete`) : `sub` du state
+= `sub` du porteur, state consommé une fois, puis échange et rangement. Faire
+confiance au `sub` du state ICI rangeait les jetons Google de B sous le compte de A
+dès que B ouvrait une URL de consentement fabriquée par A.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Awaitable, Callable
+from urllib.parse import urlencode
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
-from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
@@ -45,12 +52,6 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the auth helper passed in from api_routes.
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
-
-# oto-backend#867 lot 2 — délai défendable pour l'échange OAuth Google hors boucle
-# (exchange_code + persist_token→_fetch_email, deux appels HTTP synchrones 15s
-# chacun ; voir google.py::_client_for_user_async pour la même justification).
-_OAUTH_EXCHANGE_TIMEOUT_S = 30
-
 
 def make_routes(
     verifier: JWTVerifier,
@@ -102,8 +103,12 @@ def make_routes(
         return oauth_flow.connector_return_url(app, connector, etat, org=org)
 
     async def google_oauth_callback(request: Request) -> Response:
-        # Pas d'auth Logto — Google redirige depuis le navigateur user.
-        # Validation via le `state` HMAC-signé.
+        # Pas d'auth Logto — Google redirige le navigateur. ⚠️ Ce navigateur ne prouve
+        # RIEN de qui le tient : le callback n'échange donc plus rien et ne range rien
+        # (Google CASA, ADA 3.2.2). Il lit le state (signature, audience, TTL) pour
+        # savoir OÙ renvoyer, puis remet code et state au front, qui termine avec SON
+        # jeton (`POST /api/google/oauth/complete`) — c'est là que le `sub` du state
+        # est comparé à celui du porteur, et le state consommé.
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         erreur = request.query_params.get("error")
@@ -111,11 +116,7 @@ def make_routes(
         if not parsed:
             logger.warning("google oauth callback: state absent, illisible ou expiré")
             return RedirectResponse(url=_retour("error"), status_code=302)
-        # `scope`/`group_id` (2026-09-27) : à qui le compte est confié — le membre, ou
-        # son org / son équipe (compte partagé posé par un admin). Un state d'avant ne
-        # les porte pas : le membre, comme alors.
-        sub, org_id, return_app, connector, *reste = parsed
-        scope, group_id = (list(reste) + ["member", None])[:2]
+        sub, org_id, return_app, connector, *_ = parsed
         if erreur or not code:
             # Le refus de la personne (`error=access_denied`) revient SANS code : il
             # repartait en `error`, et vers le front par défaut faute d'avoir lu le state.
@@ -124,37 +125,13 @@ def make_routes(
             return RedirectResponse(url=_retour(oauth_flow.etat_sans_code(erreur),
                                                 app=return_app, org=org_id,
                                                 connector=connector), status_code=302)
-
-        def _finish() -> None:
-            # `sub` (qualifié, porté par le state) choisit l'app qui a demandé le
-            # consentement — celle du tenant ou la nôtre — et son rappel exact.
-            tokens = google_oauth.exchange_code(code, sub)
-            if scope == "member":
-                google_oauth.persist_token(sub, org_id, tokens)
-            else:
-                google_oauth.persist_token(sub, org_id, tokens, scope=scope, group_id=group_id,
-                                           connector=connector)
-
-        try:
-            # DB + HTTP sync → hors event loop (#867), même patron qu'api/zoho.py.
-            await asyncio.wait_for(run_in_threadpool(_finish),
-                                   timeout=_OAUTH_EXCHANGE_TIMEOUT_S)
-        except asyncio.TimeoutError:
-            logger.warning("google oauth callback: échange sans réponse au-delà "
-                           "de %ss (sub=%s org=%s)", _OAUTH_EXCHANGE_TIMEOUT_S,
-                           sub, org_id)
-            return RedirectResponse(url=_retour("error", app=return_app, org=org_id, connector=connector), status_code=302)
-        except Exception:
-            logger.exception("google oauth callback en échec (sub=%s org=%s)",
-                             sub, org_id)
-            return RedirectResponse(url=_retour("error", app=return_app, org=org_id, connector=connector), status_code=302)
-        # Retour vers la page connecteurs (où vit la config Google, ADR 0024 B2).
-        # `datastore` n'est plus Google Sheets (ADR 0016, PG natif) → ex-signal
-        # `?datastore=connected` retiré.
-        return RedirectResponse(url=_retour("connected", app=return_app, org=org_id, connector=connector), status_code=302)
-
-
-
+        # Code et state dans le FRAGMENT : un fragment ne part vers aucun serveur et
+        # n'entre dans aucun Referer — ni le front, ni ses mesures d'audience, ni un
+        # proxy ne le voient. Le front le relit, l'efface de l'historique et le poste.
+        remise = urlencode({"code": code, "state": state})
+        return RedirectResponse(
+            url=f"{_retour('confirm', app=return_app, org=org_id, connector=connector)}#{remise}",
+            status_code=302)
 
     # --- API tokens (CLI auth) -------------------------------------------
 

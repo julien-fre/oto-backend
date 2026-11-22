@@ -280,7 +280,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   (`POST /api/me/connectors/{name}/connect`), qui **supersède** `…/unipile/connect` —
   celui-ci vit jusqu'à la bascule du front.
 - `GET /api/google/oauth/start` + `…/oauth/status` + `DELETE /api/google/oauth` +
-  `POST /api/google/oauth/default` —
+  `POST /api/google/oauth/default` + `POST /api/google/oauth/complete` —
   **les VERBES du consentement OAuth per-user**, capacités
   `me.federation.google.*` depuis le 2026-08-27
   (`capabilities/federated_oauth.py`). Les **callbacks** (`…/oauth/callback`, un par
@@ -310,6 +310,11 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   bougeait pas) ; ils ne servaient AUCUNE distinction succès/échec avant ce lot (le
   repli cassé rendait toujours la même destination), donc rien n'y avait de lecteur à
   préserver — et ils sont partis le 2026-09-09.
+  ⚠️ **Google ajoute `connect=confirm` (22/11/2026, Google CASA ADA 3.2.2)** : le
+  callback ne range plus rien, il remet `#code=…&state=…` au front (FRAGMENT), qui
+  termine par `POST /api/google/oauth/complete` avec son jeton — le `sub` du state
+  doit être celui du porteur, le state ne sert qu'une fois. Un front qui ne lit pas
+  `confirm` ne connecte plus Google : les fronts passent AVANT le tag backend.
   ⚠️ **Un échec, un mot** (oto-app#11) : `denied` = le fournisseur a refusé
   l'autorisation (`error=access_denied`, ou son équivalent documenté — `success=false`
   chez WordPress), tranché une fois par `auth.flow.etat_sans_code` ; `forbidden` = c'est

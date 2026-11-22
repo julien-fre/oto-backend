@@ -5,6 +5,8 @@ révoquer, élire le compte par défaut.
 - `GET    /api/google/oauth/status`  → l'état du consentement (multi-compte)
 - `DELETE /api/google/oauth`         → révoque
 - `POST   /api/google/oauth/default` → élit le compte Google par défaut
+- `POST   /api/google/oauth/complete` → termine un consentement, AVEC le jeton de qui l'a
+  démarré (Google CASA, ADA 3.2.2 : le callback ne range plus rien, cf. `_google_complete`)
 
 ⚠️ **Ce module a porté `atlassian` et `folkmcp` jusqu'au 2026-09-09** — d'où son nom
 et les clés de capacité `me.federation.google.*`, gardés tels quels : ce sont des
@@ -24,14 +26,18 @@ second chemin par fournisseur recréerait le doublon que ce chantier supprime.
 """
 from __future__ import annotations
 
+import hmac
+import logging
 from typing import Optional
 
 from pydantic import BaseModel
 
 from .. import access, db
 from ._authz import SUB_ONLY
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 
 # --- Entrées ----------------------------------------------------------------
@@ -54,6 +60,13 @@ class GoogleRevokeInput(BaseModel):
 class GoogleDefaultInput(BaseModel):
     account: str = ""
     scope: Optional[str] = None             # `org` / `group` : le défaut PARTAGÉ
+
+
+class GoogleCompleteInput(BaseModel):
+    """Ce que le callback a remis au front dans le FRAGMENT de l'URL de retour
+    (`#code=…&state=…`), tel quel."""
+    code: str
+    state: str
 
 
 # --- Sorties ----------------------------------------------------------------
@@ -115,6 +128,16 @@ class GoogleDefaultSet(BaseModel):
     default: str
 
 
+class GoogleConsentCompleted(BaseModel):
+    """Le compte Google est rangé : `account` = l'adresse qui a consenti, `connector` =
+    la carte qui l'a demandé (le compte, ou l'un de ses services), `scope` = à qui il
+    est confié (`member`, ou `org`/`group` pour un compte partagé)."""
+    ok: bool
+    connector: str
+    account: str
+    scope: str
+
+
 # --- Google (multi-compte) --------------------------------------------------
 
 def _google_start(ctx: ResolvedCtx, inp: OAuthStartInput) -> dict:
@@ -125,6 +148,54 @@ def _google_start(ctx: ResolvedCtx, inp: OAuthStartInput) -> dict:
         # Forme historique EXACTE, espace compris : le code machine porte la cause.
         raise AuthzDenied(500, f"oauth_misconfigured: {e}")
     return {"auth_url": url}
+
+
+def _google_complete(ctx: ResolvedCtx, inp: GoogleCompleteInput) -> dict:
+    """Termine un consentement Google — le geste que le callback faisait seul.
+
+    L'ORDRE est le contrat :
+    1. le state se lit (signature en temps constant, audience `google`, 10 min, `jti`) ;
+    2. son `sub` doit être CELUI DU PORTEUR : le state lie le consentement à la personne
+       qui l'a démarré, le jeton lie la requête à la personne qui le termine — un state
+       de A présenté par B est refusé, et rien n'est consommé ni échangé ;
+    3. il se consomme (usage unique) AVANT l'échange : deux complétions concurrentes du
+       même retour n'échangent pas deux fois, un rejeu est refusé ;
+    4. seulement alors le code s'échange (avec l'app et le rappel exact qui ont demandé
+       le consentement, `app_for(sub)` — tenant compris) et le jeton se range, pour
+       l'org et la carte que le state porte.
+
+    Le code et le state ne sont jamais journalisés."""
+    from ..auth import google as google_oauth
+    data = google_oauth.read_state(inp.state)
+    if data is None:
+        raise AuthzDenied(400, "invalid_state",
+                          "This Google connection link is invalid or has expired. "
+                          "Start the connection again.")
+    if not hmac.compare_digest(data["sub"].encode(), (ctx.sub or "").encode()):
+        logger.warning("google oauth complete: state d'une autre personne refusé "
+                       "(porteur=%s)", ctx.sub)
+        raise AuthzDenied(403, "state_not_yours",
+                          "This Google connection was started by another account. "
+                          "Start it again from your own session.")
+    if not google_oauth.consume_state(data):
+        raise AuthzDenied(409, "state_used",
+                          "This Google connection link has already been used. "
+                          "Start the connection again.")
+    sub, org_id, scope, connector = data["sub"], data["org"], data["scope"], data["connector"]
+    try:
+        tokens = google_oauth.exchange_code(inp.code, sub)
+        if scope == "member":
+            email = google_oauth.persist_token(sub, org_id, tokens)
+        else:
+            email = google_oauth.persist_token(sub, org_id, tokens, scope=scope,
+                                               group_id=data["group"], connector=connector)
+    except Exception:
+        # Le diagnostic va au journal (jamais le code) ; l'appelant reçoit un refus
+        # nommé, et sait que recommencer la connexion est la seule suite.
+        logger.exception("google oauth complete en échec (sub=%s org=%s)", sub, org_id)
+        raise AuthzDenied(502, "exchange_failed",
+                          "Google did not complete the connection. Start it again.")
+    return {"ok": True, "connector": connector, "account": email, "scope": scope}
 
 
 def _google_status(ctx: ResolvedCtx, inp: OAuthStatusInput) -> dict:
@@ -216,6 +287,19 @@ _DOC_G_DEFAULT = (
     "outils quand aucun compte n'est nommé à l'appel."
 )
 
+_DOC_G_COMPLETE = (
+    "Termine un consentement Google : le front poste le `code` et le `state` que le "
+    "callback lui a remis dans le fragment (`connect=confirm`). Le state doit avoir été "
+    "émis pour le PORTEUR du jeton (`state_not_yours` sinon), il ne sert qu'une fois "
+    "(`state_used`), puis le code est échangé et le compte rangé."
+)
+_ERREURS_G_COMPLETE = (
+    DeclaredError(400, "invalid_state", "state illisible, altéré, expiré ou d'un autre flux"),
+    DeclaredError(403, "state_not_yours", "state émis pour une autre personne que le porteur"),
+    DeclaredError(409, "state_used", "state déjà consommé (rejeu)"),
+    DeclaredError(502, "exchange_failed", "Google a refusé l'échange du code, ou le rangement a échoué"),
+)
+
 CAPABILITIES += [
         Capability(
             key="me.federation.google.start", handler=_google_start,
@@ -240,5 +324,12 @@ CAPABILITIES += [
             Input=GoogleDefaultInput, authz=SUB_ONLY, Output=GoogleDefaultSet, mcp=None,
             description=_DOC_G_DEFAULT,
             rest=RestBinding("POST", "/api/google/oauth/default"),
+        ),
+        Capability(
+            key="me.federation.google.complete", handler=_google_complete,
+            Input=GoogleCompleteInput, authz=SUB_ONLY, Output=GoogleConsentCompleted,
+            errors=_ERREURS_G_COMPLETE, mcp=None,
+            description=_DOC_G_COMPLETE,
+            rest=RestBinding("POST", "/api/google/oauth/complete"),
         ),
 ]

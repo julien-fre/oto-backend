@@ -178,52 +178,41 @@ def test_zoho_echange_echoue_ne_sert_que_la_forme_neuve(monkeypatch):
 GOOGLE_CALLBACK = "/api/google/oauth/callback"
 
 
+def _jamais_d_echange(monkeypatch):
+    def _jamais(*a, **k):
+        raise AssertionError("le callback Google ne doit ni échanger ni ranger (CASA 3.2.2)")
+    monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code", _jamais)
+    monkeypatch.setattr(datastore_routes.google_oauth, "persist_token", _jamais)
+
+
 def test_google_succes_ne_sert_que_la_forme_neuve(monkeypatch):
-    monkeypatch.setattr(datastore_routes.google_oauth, "verify_state", lambda s: ("sub-1", 7, "", "google"))
-    monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code",
-                        lambda code, sub: {"access_token": "a", "refresh_token": "r"})
-    monkeypatch.setattr(datastore_routes.google_oauth, "persist_token",
-                        lambda sub, org, tok: "e@x.io")
-    handler = _endpoint(datastore_routes, GOOGLE_CALLBACK, with_cors=True)
-    resp = asyncio.run(handler(_get(GOOGLE_CALLBACK, "code=c&state=s")))
-    q = _qs(_location(resp))
-    assert q.get("google") is None, "ancienne forme réapparue — elle est retirée depuis le 17/09"
-    assert q["connector"] == ["google"] and q["connect"] == ["connected"]
-
-
-def test_google_partage_recoit_la_carte_du_state(monkeypatch):
-    """Un compte PARTAGÉ est borné par la carte qui a demandé le consentement (revue
-    de #1081) : le callback la lui passe, telle que le state signé la porte."""
-    recus = []
+    """Le succès du CALLBACK est désormais `confirm` (Google CASA, ADA 3.2.2) : rien
+    n'est échangé ni rangé ici, code et state partent au front dans le FRAGMENT."""
     monkeypatch.setattr(datastore_routes.google_oauth, "verify_state",
                         lambda s: ("sub-1", 7, "", "drive", "org", None))
-    monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code",
-                        lambda code, sub: {"access_token": "a", "refresh_token": "r"})
-    monkeypatch.setattr(datastore_routes.google_oauth, "persist_token",
-                        lambda sub, org, tok, **k: recus.append(k) or "e@x.io")
+    _jamais_d_echange(monkeypatch)
     handler = _endpoint(datastore_routes, GOOGLE_CALLBACK, with_cors=True)
-    resp = asyncio.run(handler(_get(GOOGLE_CALLBACK, "code=c&state=s")))
-    assert _qs(_location(resp))["connect"] == ["connected"]
-    assert recus == [{"scope": "org", "group_id": None, "connector": "drive"}]
+    resp = asyncio.run(handler(_get(GOOGLE_CALLBACK, "code=c%2F1&state=s")))
+    url = _location(resp)
+    q = _qs(url)
+    assert q.get("google") is None, "ancienne forme réapparue — elle est retirée depuis le 17/09"
+    assert q["connector"] == ["drive"] and q["connect"] == ["confirm"]
+    assert "code" not in q and "state" not in q, "jamais en query : le fragment seul"
+    fragment = urllib.parse.parse_qs(urllib.parse.urlsplit(url).fragment)
+    assert fragment == {"code": ["c/1"], "state": ["s"]}
 
 
-@pytest.mark.parametrize("brise", ["absent", "illisible", "echange"])
+@pytest.mark.parametrize("brise", ["absent", "illisible"])
 def test_google_echec_redirige_desormais_au_lieu_dun_json_brut(monkeypatch, brise):
-    """Avant ce lot, ces trois cas rendaient un JSON brut (400/400/502) — aucune
-    redirection du tout. Pur ajout : rien n'existait à doubler à cette place."""
+    """Avant ce lot, ces cas rendaient un JSON brut (400/400/502) — aucune
+    redirection du tout. Pur ajout : rien n'existait à doubler à cette place.
+    (L'échec d'ÉCHANGE vit désormais dans la complétion, `test_google_oauth_completion.py`.)"""
     handler = _endpoint(datastore_routes, GOOGLE_CALLBACK, with_cors=True)
     if brise == "absent":
         req = _get(GOOGLE_CALLBACK, "")
-    elif brise == "illisible":
+    else:
         monkeypatch.setattr(datastore_routes.google_oauth, "verify_state", lambda s: None)
         req = _get(GOOGLE_CALLBACK, "code=c&state=bad")
-    else:
-        monkeypatch.setattr(datastore_routes.google_oauth, "verify_state", lambda s: ("sub-1", 7, "", "google"))
-
-        def _boom(code, sub):
-            raise RuntimeError("refus du fournisseur")
-        monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code", _boom)
-        req = _get(GOOGLE_CALLBACK, "code=c&state=s")
 
     resp = asyncio.run(handler(req))
     assert isinstance(resp, RedirectResponse), (
