@@ -222,9 +222,9 @@ CAPABILITIES += [
                      "empty personal space so you are never left without one. "
                      "Idempotent: an org already archived answers `archived: false, "
                      "already_archived: true` — nothing done, not a failure."),
-        # Session interactive seule (CASA 2.4.1, `_session_exigee`) ; la face MCP
-        # (`oto_org op=archive`) est tenue par la garde du handler.
-        rest=RestBinding("DELETE", "/api/orgs/{id}", _ID, allow_api_token=False),
+        # Geste sensible (CASA 2.4.1, `_session_exigee`) : session seule quand l'instance
+        # le déclare ; la face MCP (`oto_org op=archive`) est tenue par la garde du handler.
+        rest=RestBinding("DELETE", "/api/orgs/{id}", _ID, sensitive=True),
         refresh_visibility=True,  # org active archivée → recharge la toolbox (repli)
     ),
 ]

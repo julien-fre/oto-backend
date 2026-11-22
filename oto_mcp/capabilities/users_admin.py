@@ -499,8 +499,9 @@ CAPABILITIES += [
         authz=SUPER_ADMIN,
         description="[super admin] Set an account's platform role (member|admin|super_admin). "
                     "target = email or sub.",
-        # Session interactive seule (CASA 2.4.1, `_session_exigee`).
-        rest=RestBinding("POST", "/api/admin/users/{sub}/role", _SUB, allow_api_token=False),
+        # Geste sensible (CASA 2.4.1, `_session_exigee`) : session seule quand
+        # l'instance le déclare.
+        rest=RestBinding("POST", "/api/admin/users/{sub}/role", _SUB, sensitive=True),
     ),
     Capability(
         key="platform.user.reset_mfa", handler=_reset_mfa, Input=ResetMfaInput,
@@ -512,7 +513,7 @@ CAPABILITIES += [
                     "applies — they'll be prompted to enroll a fresh factor on next sign-in. "
                     "target = email or sub. Never reveals any factor value, only the types removed.",
         rest=RestBinding("POST", "/api/admin/users/{sub}/reset-mfa", _SUB,
-                         allow_api_token=False),
+                         sensitive=True),
     ),
     Capability(
         key="platform.key.grant", handler=_grant_key, Input=GrantKeyInput,

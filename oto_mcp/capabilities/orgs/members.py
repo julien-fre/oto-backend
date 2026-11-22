@@ -151,8 +151,9 @@ def _write_member_role(org_id: int, sub: str, role: str, *, require_member: bool
     current = org_store.get_org_role(org_id, sub)
     if current is None and require_member:
         raise AuthzDenied(404, "not_a_member", "Cible non-membre de l'org.")
-    # CASA 2.4.1 (`_session_exigee`) : CHANGER un rôle, ou donner le rang d'admin, demande
-    # une session — jamais un jeton. Ajouter un simple membre reste ouvert au jeton.
+    # CASA 2.4.1 (`_session_exigee`, quand l'instance le déclare) : CHANGER un rôle, ou
+    # donner le rang d'admin, demande une session — jamais un jeton. Ajouter un simple
+    # membre reste ouvert au jeton.
     if role == "org_admin" or (current is not None and current != role):
         exiger_session("Changer le rôle d'un membre ou nommer un admin")
     # Anti-lockout : ne pas rétrograder le dernier org_admin, par quelque route que ce soit.
@@ -312,23 +313,25 @@ CAPABILITIES += [
         key="org.member.set_role", handler=_set_member_role, Input=SetMemberRoleInput,
         authz=ORG_ADMIN_OF("org_id"), Output=MemberWritten,
         description="Change a member's role in an org you administer (org_member|org_admin).",
-        # Session interactive seule (CASA 2.4.1, `_session_exigee`) sur les DEUX paliers.
+        # Geste sensible (CASA 2.4.1, `_session_exigee`) sur les DEUX paliers : session
+        # seule quand l'instance le déclare.
         # `org.member.add` reste ouvert au jeton : sa garde de handler ne refuse que le
         # rang d'admin et le changement de rôle d'un membre existant.
-        rest=(RestBinding("POST", "/api/orgs/{id}/members/{sub}", _ID, allow_api_token=False),
+        rest=(RestBinding("POST", "/api/orgs/{id}/members/{sub}", _ID, sensitive=True),
               RestBinding("POST", "/api/admin/orgs/{id}/members/{sub}", _ID,
-                          allow_api_token=False)),
+                          sensitive=True)),
     ),
     Capability(
         key="org.member.remove", handler=_remove_member, Input=RemoveMemberInput,
         authz=ORG_ADMIN_OF("org_id"), Output=MemberRemoved,
         description="Remove a member (by email or sub) from an org you administer.",
         # MCP fusionné dans oto_admin_org_member(op=remove). REST conservé (dashboard).
-        # Session interactive seule (CASA 2.4.1, `_session_exigee`) sur les DEUX paliers.
+        # Geste sensible (CASA 2.4.1, `_session_exigee`) sur les DEUX paliers : session
+        # seule quand l'instance le déclare.
         rest=(RestBinding("DELETE", "/api/orgs/{id}/members/{sub}",
-                          {"id": "org_id", "sub": "target"}, allow_api_token=False),
+                          {"id": "org_id", "sub": "target"}, sensitive=True),
               RestBinding("DELETE", "/api/admin/orgs/{id}/members/{sub}",
-                          {"id": "org_id", "sub": "target"}, allow_api_token=False)),
+                          {"id": "org_id", "sub": "target"}, sensitive=True)),
     ),
     Capability(
         key="me.leave_org", handler=_leave_org, Input=LeaveOrgInput,

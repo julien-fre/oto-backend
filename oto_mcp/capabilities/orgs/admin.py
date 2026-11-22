@@ -103,6 +103,6 @@ CAPABILITIES += [
                     "already archived answers `archived: false, already_archived: true` "
                     "— nothing done, not a failure.",
         # MCP fusionné dans oto_admin_org(op=archive). REST conservé (dashboard).
-        rest=RestBinding("DELETE", "/api/admin/orgs/{id}", _ID, allow_api_token=False),
+        rest=RestBinding("DELETE", "/api/admin/orgs/{id}", _ID, sensitive=True),
     ),
 ]

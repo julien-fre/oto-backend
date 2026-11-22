@@ -224,14 +224,15 @@ CAPABILITIES += [
         key="group.member.set_role", handler=_set_member_role, Input=SetGroupMemberRoleInput,
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupMemberWritten,
         description="Change a member's role in a group you lead (group_member|group_admin).",
-        # Session interactive seule (CASA 2.4.1, `_session_exigee`).
-        rest=RestBinding("POST", "/api/groups/{id}/members/{sub}", _GID, allow_api_token=False),
+        # Geste sensible (CASA 2.4.1, `_session_exigee`) : session seule quand
+        # l'instance le déclare.
+        rest=RestBinding("POST", "/api/groups/{id}/members/{sub}", _GID, sensitive=True),
     ),
     Capability(
         key="group.member.remove", handler=_remove_member, Input=RemoveGroupMemberInput,
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupMemberRemoved,
         description="Remove a member (by email or sub) from a group you lead.",
         rest=RestBinding("DELETE", "/api/groups/{id}/members/{sub}",
-                         {"id": "group_id", "sub": "target"}, allow_api_token=False),
+                         {"id": "group_id", "sub": "target"}, sensitive=True),
     ),
 ]

@@ -219,16 +219,20 @@ class RestBinding:
     # (révoquer le jeton fuité ne suffit plus, l'attaquant s'en est fait un second, non
     # expirant), émettre un jeton reste donc un acte humain ; et l'agent intégré à
     # l'application (`capabilities/copilot`) — un jeton en ferait un point d'accès au
-    # modèle payé par l'instance, piloté par un script. Depuis le 22/11/2026, un troisième :
-    # les gestes SENSIBLES (archiver une org, rôles et retraits de membres, MFA, paiement —
-    # CASA 2.4.1), dont la face MCP et les cas conditionnels sont tenus par la garde de
-    # handler `capabilities/_session_exigee.py`.
+    # modèle payé par l'instance, piloté par un script.
     #
     # Le cran vit sur le BINDING et non sur la capacité parce qu'il est propre au
     # transport : côté MCP, la question ne se pose pas (l'appelant est déjà une session).
     # Sans lui, migrer ces six routes aurait été une régression de sécurité — c'est pour
     # ça qu'elles étaient restées écrites à la main.
     allow_api_token: bool = True
+    # Geste SENSIBLE (archiver une org, rôles et retraits de membres, MFA, paiement — CASA
+    # 2.4.1) : la route refuse le porteur de jeton comme `allow_api_token=False`, mais
+    # SEULEMENT quand l'instance le déclare (`OTO_SENSITIVE_ACTIONS_REQUIRE_SESSION`, lu à
+    # chaque requête par `_rest_adapter`) ; sans déclaration, la route reste ouverte au
+    # jeton, comme sur le tronc. La face MCP et les gestes conditionnels sont tenus par la
+    # garde de handler `capabilities/_session_exigee.py`, sous le même réglage.
+    sensitive: bool = False
     # Sur une route `allow_api_token=False`, laisse passer le jeton ÉMETTEUR (portée
     # `issue`) et lui seul. Posé sur les trois routes de MES jetons, jamais sur celles
     # du palier admin.

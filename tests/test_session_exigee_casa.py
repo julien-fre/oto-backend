@@ -1,4 +1,10 @@
-"""Les gestes SENSIBLES refusent un jeton d'API, sur les deux faces (CASA 2.4.1).
+"""Les gestes SENSIBLES refusent un jeton d'API, sur les deux faces (CASA 2.4.1) — quand
+l'instance le déclare (`OTO_SENSITIVE_ACTIONS_REQUIRE_SESSION=1`).
+
+Tout ce fichier joue SOUS le réglage (fixture autouse), sauf la dernière section, qui
+prouve qu'une instance qui ne déclare rien garde le comportement du tronc : les routes
+sensibles et leurs handlers acceptent le jeton, et seules les routes fermées AVANT ce
+réglage (jetons, clés d'org) le refusent encore.
 
 Deux crans (`capabilities/_session_exigee.py`), testés là où ils s'APPLIQUENT :
 
@@ -28,6 +34,13 @@ from oto_mcp.auth import hooks, platform_worker
 from oto_mcp.capabilities import _rest_adapter, _session_exigee
 from oto_mcp.capabilities._types import AuthzDenied
 
+_ENV = "OTO_SENSITIVE_ACTIONS_REQUIRE_SESSION"
+
+
+@pytest.fixture(autouse=True)
+def _reglage_pose(monkeypatch):
+    monkeypatch.setenv(_ENV, "1")
+
 
 # ── 1. Le binding REST ───────────────────────────────────────────────────────
 
@@ -54,7 +67,7 @@ def _kwargs_d_authentification(cle: str, index: int) -> dict:
     return vus
 
 
-_SESSION_SEULE = [
+_SENSIBLES = [
     ("org.archive", 0), ("org.admin.archive", 0),
     ("org.member.set_role", 0), ("org.member.set_role", 1),
     ("org.member.remove", 0), ("org.member.remove", 1),
@@ -63,10 +76,14 @@ _SESSION_SEULE = [
     ("billing.subscribe", 0), ("billing.confirm", 0), ("billing.cancel", 0),
     ("billing.resume", 0), ("billing.method_change", 0),
     ("billing.method_change_confirm", 0),
-    # Déjà là avant ce lot — gardés ici pour que la liste dise TOUT ce qui est fermé.
+]
+# Déjà fermées avant ce lot, réglage ou non — gardées ici pour que la liste dise TOUT ce
+# qui est fermé.
+_DEJA_FERMEES = [
     ("org.api_key.create", 0), ("org.api_key.delete", 0),
     ("platform.token.create", 0), ("platform.token.delete", 0),
 ]
+_SESSION_SEULE = _SENSIBLES + _DEJA_FERMEES
 
 
 @pytest.mark.parametrize("cle,index", _SESSION_SEULE)
@@ -337,4 +354,100 @@ def test_bout_en_bout_un_jeton_invite_un_simple_membre(monkeypatch):
     code, corps = _jouer_avec_la_vraie_auth(
         monkeypatch, {"sub": "u-jeton", "scopes": None, "token_id": 7,
                       "token_kind": "user"}, "org_member")
+    assert code == 200 and corps["invite_url"] == "https://front.test/invitation/inv_T", corps
+
+
+# ── 4. Réglage non posé : le tronc inchangé ──────────────────────────────────
+
+@pytest.fixture()
+def sans_reglage(monkeypatch):
+    monkeypatch.delenv(_ENV, raising=False)
+
+
+@pytest.mark.parametrize("brut,actif", [
+    ("1", True), ("on", True), ("true", True), (" YES ", True),
+    ("", False), ("0", False), ("off", False), ("false", False), ("no", False)])
+def test_le_reglage_se_lit_a_chaque_appel(monkeypatch, brut, actif):
+    monkeypatch.setenv(_ENV, brut)
+    assert _session_exigee.actif() is actif
+    _session_exigee.verifier_reglage()
+
+
+def test_le_reglage_non_pose_est_eteint(sans_reglage):
+    assert _session_exigee.actif() is False
+    _session_exigee.verifier_reglage()
+
+
+def test_un_reglage_illisible_refuse_le_demarrage_et_vaut_pose(monkeypatch):
+    monkeypatch.setenv(_ENV, "enforce")
+    with pytest.raises(RuntimeError, match=_ENV):
+        _session_exigee.verifier_reglage()
+    assert _session_exigee.actif() is True    # une faute de frappe ne rouvre rien
+
+
+@pytest.mark.parametrize("cle,index", _SENSIBLES)
+def test_sans_reglage_la_route_sensible_accepte_le_jeton(sans_reglage, cle, index):
+    assert "allow_api_token" not in _kwargs_d_authentification(cle, index), cle
+
+
+@pytest.mark.parametrize("cle,index", _DEJA_FERMEES)
+def test_sans_reglage_les_routes_deja_fermees_le_restent(sans_reglage, cle, index):
+    assert _kwargs_d_authentification(cle, index).get("allow_api_token") is False, cle
+
+
+def test_le_binding_se_lit_a_la_requete_pas_au_montage(monkeypatch):
+    """Le même handler monté une fois suit le réglage d'une requête à l'autre."""
+    vus: list = []
+
+    async def _auth(_req, _verifier, **kw):
+        vus.append(kw.get("allow_api_token", True))
+        return None, JSONResponse({"error": "stop"}, status_code=401)
+
+    c = cap("org.archive")
+    binding = c.rest_bindings()[0]
+    handler = _rest_adapter._make_handler(
+        c, binding, None, _auth,
+        lambda _r, p, status=200: JSONResponse(p, status_code=status),
+        lambda _r, s, code, d=None: JSONResponse({"error": code}, status_code=s))
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    def _jouer():
+        asyncio.run(handler(Request({"type": "http", "method": binding.verb,
+                                     "path": binding.path, "query_string": b"",
+                                     "headers": [], "path_params": {}},
+                                    receive=_receive)))
+    _jouer()
+    monkeypatch.delenv(_ENV)
+    _jouer()
+    monkeypatch.setenv(_ENV, "1")
+    _jouer()
+    assert vus == [False, True, False]
+
+
+def test_sans_reglage_la_garde_ne_refuse_aucun_porteur(sans_reglage, sous_jeton_rest):
+    _session_exigee.exiger_session("Archiver une org")
+
+
+def test_sans_reglage_le_handler_passe_sous_jeton(sans_reglage, sous_jeton_rest,
+                                                   monkeypatch):
+    """Sous un jeton REST, le handler va jusqu'à sa propre lecture de l'org."""
+    from oto_mcp import org_store
+    from oto_mcp.capabilities.orgs import update
+    monkeypatch.setattr(org_store, "get_org", lambda oid: None)
+    assert _refus(update._archive_org, _CTX, update.OrgIdInput(org_id=5)) == (
+        404, "unknown_org")
+
+
+def test_sans_reglage_un_jeton_change_un_role(sans_reglage, sous_jeton_rest, membres):
+    from oto_mcp.capabilities.orgs import members as om
+    om._write_member_role(5, "u-membre", "org_admin", require_member=True, actor="u")
+    assert membres == [("u-membre", "org_admin")]
+
+
+def test_sans_reglage_bout_en_bout_un_jeton_invite_un_admin(sans_reglage, monkeypatch):
+    code, corps = _jouer_avec_la_vraie_auth(
+        monkeypatch, {"sub": "u-jeton", "scopes": None, "token_id": 7,
+                      "token_kind": "user"}, "org_admin")
     assert code == 200 and corps["invite_url"] == "https://front.test/invitation/inv_T", corps

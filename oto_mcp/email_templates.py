@@ -68,15 +68,25 @@ def _qui_invite(inviter: str | None, inviter_name: str | None) -> str:
     return f"{nom} ({inviter})" if inviter and inviter.lower() != nom.lower() else nom
 
 
-def _echeance_du_lien(locale: str | None, heures: int) -> str:
-    """La phrase qui DIT l'échéance d'un lien d'invitation (CASA 1.1.2 : il expire en
-    24 h, `config.INVITATION_TTL_HOURS`). Sans elle, l'invité qui ouvre le mail le
-    lendemain tombe sur « invitation expirée » sans avoir été prévenu."""
+def _echeance_du_lien(locale: str | None) -> str | None:
+    """La phrase qui DIT l'échéance d'un lien d'invitation — seulement quand l'instance
+    déclare une échéance courte (`OTO_INVITATION_TTL_HOURS`, `config.invitation_ttl_declaree`,
+    CASA 1.1.2) : l'invité qui ouvre le mail le lendemain ne doit pas tomber sur
+    « invitation expirée » sans avoir été prévenu. None sinon — le mail reste celui du
+    tronc."""
+    heures = config.invitation_ttl_declaree()
+    if heures is None:
+        return None
     if locale == "en":
         return (f"this link is valid for {heures} hours. after that, ask for a new "
                 "invitation.")
     return (f"ce lien est valable {heures} heures. passé ce délai, demandez une nouvelle "
             "invitation.")
+
+
+def _paragraphe_d_echeance(locale: str | None) -> str:
+    phrase = _echeance_du_lien(locale)
+    return f'<p style="{_charte.PARA}">{phrase}</p>' if phrase else ""
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
@@ -102,7 +112,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
     locale = locale or m.langue or None
     qui = _qui_invite(inviter, inviter_name)
     nom = _email._esc(m.nom)
-    echeance = _echeance_du_lien(locale, config.INVITATION_TTL_HOURS)
+    echeance = _paragraphe_d_echeance(locale)
     if locale == "en":
         lead = (f"<strong>{_email._esc(qui)}</strong> invites you" if qui
                 else "you're invited")
@@ -122,7 +132,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
         contenu = (f'<p style="{_charte.PARA}">{lead} to join {where}.</p>'
                    f'<p style="{_charte.PARA}">{contexte}</p>'
                    + _email._bouton(invite_url, "join", brand)
-                   + f'<p style="{_charte.PARA}">{echeance}</p>'
+                   + echeance
                    + f'<p style="{_charte.PARA}">{inattendu}</p>')
     else:
         lead = (f"<strong>{_email._esc(qui)}</strong> vous invite" if qui
@@ -146,7 +156,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
         contenu = (f'<p style="{_charte.PARA}">{lead} à rejoindre {where}.</p>'
                    f'<p style="{_charte.PARA}">{contexte}</p>'
                    + _email._bouton(invite_url, "rejoindre", brand)
-                   + f'<p style="{_charte.PARA}">{echeance}</p>'
+                   + echeance
                    + f'<p style="{_charte.PARA}">{inattendu}</p>')
     return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
@@ -164,7 +174,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
     ce gabarit ne traduit pas un mot qu'on lui donne. Voix funnel dans les deux
     langues : vouvoiement/« you » + minuscules. `lien_d_invitation` = le bouton
     porte le lien d'un partage EN ATTENTE (adresse sans compte) : il expire comme
-    toute invitation, et le mail le dit."""
+    toute invitation, et le mail le dit quand l'instance déclare une échéance courte."""
     m = _charte.marque(brand)
     locale = locale or m.langue or None
     if locale == "en":
@@ -189,8 +199,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
                    f'({droit}) sur {_email._esc(m.nom)}.</p>'
                    + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
     if lien_d_invitation:
-        contenu += (f'<p style="{_charte.PARA}">'
-                    f'{_echeance_du_lien(locale, config.INVITATION_TTL_HOURS)}</p>')
+        contenu += _paragraphe_d_echeance(locale)
     return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))

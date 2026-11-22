@@ -693,6 +693,26 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_MCP_MAX_ORGS_PER_USER", Classe.REGLAGE, "10",
              "Plafond d'orgs créées par un même compte (hors super_admin et admin de son tenant).",
              ("oto_mcp/capabilities/orgs/core.py:19",)),
+    Variable("OTO_MCP_INVITE_TTL_DAYS", Classe.REGLAGE, "7",
+             "Durée de vie (jours) d'une invitation (org, équipe, plateforme, partage en "
+             "attente) et de son magic-link, quand `OTO_INVITATION_TTL_HOURS` n'est pas "
+             "posé — le comportement historique du tronc.",
+             ("oto_mcp/config.py:306",)),
+    Variable("OTO_INVITATION_TTL_HOURS", Classe.REGLAGE, "",
+             "Échéance COURTE d'une invitation, en heures (1 à 48 — CASA 1.1.2 en "
+             "recommande 24) : prime sur `OTO_MCP_INVITE_TTL_DAYS`, vaut aussi pour le "
+             "magic-link et le partage en attente, et le mail d'invitation dit alors "
+             "l'échéance. Non posé : le tronc inchangé (7 jours). Hors bornes ou illisible "
+             "refuse le démarrage. Les invitations déjà émises gardent la leur.",
+             ("oto_mcp/config.py:289",)),
+    Variable("OTO_SENSITIVE_ACTIONS_REQUIRE_SESSION", Classe.REGLAGE, "",
+             "`1` réserve les gestes SENSIBLES à une session de connexion (CASA 2.4.1, "
+             "`capabilities/_session_exigee.py`) : archiver une org, rôles et retraits de "
+             "membres, nommer un admin, transférer un objet, MFA d'org, gestes de paiement "
+             "refusent un jeton `oto_`/`otow_` en 403 `api_token_forbidden`, sur REST et "
+             "MCP. Non posé ou `0` : le tronc inchangé (le jeton passe). Lu à chaque "
+             "requête ; une valeur illisible refuse le démarrage.",
+             ("oto_mcp/capabilities/_session_exigee.py:60",)),
     Variable("OTO_MCP_DB_IDLE_TX_TIMEOUT_MS", Classe.REGLAGE, "60000",
              "`idle_in_transaction_session_timeout` du pool applicatif.",
              ("oto_mcp/db/_conn.py:73",)),

@@ -247,28 +247,81 @@ def invite_base_url() -> str:
     return require_env("OTO_INVITE_BASE_URL").strip().rstrip("/")
 
 
-#: Durée de vie d'une invitation, en HEURES — écrite UNE fois, pour ses trois porteurs :
-#: l'invitation d'org/équipe/plateforme (`org_store.create_invitation`), le partage en
-#: attente d'un objet (`partage_en_attente.creer`) et le magic-link Logto joint au mail
-#: (`auth.annuaire.magic_url`). Une invitation est un code d'activation — son lien suffit
-#: à entrer (modèle bearer) ; CASA 1.1.2 (guide de test ADA) veut qu'il expire vite :
-#: 24 h recommandées, 48 h au plus. Elle valait 7 jours (`OTO_MCP_INVITE_TTL_DAYS`,
-#: retiré) : aucun réglage d'environnement, une valeur au-delà du plafond EST le défaut
-#: que la constante corrige. L'invité qui laisse échoir la sienne se fait réinviter :
-#: une invitation échue sort de la file (`org_store._PENDING`), la suivante n'est donc
-#: pas un doublon (refus #622) et porte un jeton NEUF.
-INVITATION_TTL_HOURS = 24
-#: Le plafond du guide ADA : une échéance demandée au-delà est REFUSÉE, jamais rabotée.
+#: Durée de vie d'une invitation — UN réglage d'instance, lu à chaque usage par ses trois
+#: porteurs : l'invitation d'org/équipe/plateforme (`org_store.create_invitation`), le
+#: partage en attente d'un objet (`partage_en_attente.creer`) et le magic-link Logto joint
+#: au mail (`auth.annuaire.magic_url`). Une invitation est un code d'activation — son lien
+#: suffit à entrer (modèle bearer).
+#:
+#: - `OTO_INVITATION_TTL_HOURS` (non posé par défaut) : l'instance qui le déclare choisit
+#:   une échéance COURTE, en heures, de 1 à `INVITATION_TTL_MAX_HOURS` (48 h — le plafond
+#:   du guide de test ADA de CASA, exigence 1.1.2, qui recommande 24 h). Hors bornes ou
+#:   illisible : refus de démarrer (`verifier_reglages_invitation`), jamais raboté. Le mail
+#:   d'invitation DIT alors l'échéance (`email_templates`) ;
+#: - sinon `OTO_MCP_INVITE_TTL_DAYS` (historique, en jours, défaut 7) : le comportement
+#:   du tronc, inchangé, sans plafond ni phrase d'échéance dans le mail.
+#:
+#: L'invité qui laisse échoir la sienne se fait réinviter : une invitation échue sort de la
+#: file (`org_store._PENDING`), la suivante n'est donc pas un doublon (refus #622) et porte
+#: un jeton NEUF.
+INVITATION_TTL_ENV = "OTO_INVITATION_TTL_HOURS"
+INVITATION_TTL_DAYS_ENV = "OTO_MCP_INVITE_TTL_DAYS"
+#: Le plafond d'une échéance DÉCLARÉE en heures : au-delà, refus — jamais raboté.
 INVITATION_TTL_MAX_HOURS = 48
+#: Le défaut historique du tronc, en jours (`OTO_MCP_INVITE_TTL_DAYS`).
+INVITATION_TTL_DEFAULT_DAYS = 7
 
 
-def heures_d_invitation(ttl_hours: int) -> str:
-    """`ttl_hours` validé, en texte prêt pour `(%s || ' hours')::interval`. Lève
-    `ValueError` hors de 1..`INVITATION_TTL_MAX_HOURS`."""
-    h = int(ttl_hours)
-    if not 0 < h <= INVITATION_TTL_MAX_HOURS:
-        raise ValueError(f"échéance d'invitation hors bornes : {h} h "
-                         f"(1 à {INVITATION_TTL_MAX_HOURS} h)")
+def _entier_positif(nom: str, brut: str) -> int:
+    try:
+        n = int(brut.strip())
+    except ValueError:
+        raise ValueError(f"{nom}={brut!r} illisible : un entier positif est attendu.") from None
+    if n <= 0:
+        raise ValueError(f"{nom}={brut!r} : un entier positif est attendu.")
+    return n
+
+
+def invitation_ttl_declaree() -> Optional[int]:
+    """L'échéance COURTE que l'instance déclare (`OTO_INVITATION_TTL_HOURS`), en heures,
+    ou None quand elle n'en déclare aucune. Lève `ValueError` sur une valeur illisible ou
+    hors de 1..`INVITATION_TTL_MAX_HOURS`."""
+    brut = (os.environ.get("OTO_INVITATION_TTL_HOURS") or "").strip()
+    if not brut:
+        return None
+    h = _entier_positif(INVITATION_TTL_ENV, brut)
+    if h > INVITATION_TTL_MAX_HOURS:
+        raise ValueError(f"{INVITATION_TTL_ENV}={brut!r} hors bornes : 1 à "
+                         f"{INVITATION_TTL_MAX_HOURS} h.")
+    return h
+
+
+def invitation_ttl_hours() -> int:
+    """La durée de vie d'une invitation, en heures, lue à CHAQUE appel : l'échéance
+    déclarée (`OTO_INVITATION_TTL_HOURS`), sinon l'historique en jours
+    (`OTO_MCP_INVITE_TTL_DAYS`, défaut 7 → 168 h)."""
+    declaree = invitation_ttl_declaree()
+    if declaree is not None:
+        return declaree
+    brut = (os.environ.get("OTO_MCP_INVITE_TTL_DAYS") or "").strip()
+    jours = (_entier_positif(INVITATION_TTL_DAYS_ENV, brut) if brut
+             else INVITATION_TTL_DEFAULT_DAYS)
+    return jours * 24
+
+
+def verifier_reglages_invitation() -> None:
+    """La garde de démarrage : une échéance d'invitation illisible ou hors bornes refuse
+    de démarrer, en la nommant — jamais lue « défaut » en silence au premier envoi."""
+    invitation_ttl_hours()
+
+
+def heures_d_invitation(ttl_hours: Optional[int] = None) -> str:
+    """L'échéance en heures (`ttl_hours`, sinon `invitation_ttl_hours()`), validée, en
+    texte prêt pour `(%s || ' hours')::interval`. Lève `ValueError` sur une valeur nulle
+    ou négative."""
+    h = invitation_ttl_hours() if ttl_hours is None else int(ttl_hours)
+    if h <= 0:
+        raise ValueError(f"échéance d'invitation invalide : {h} h")
     return str(h)
 
 

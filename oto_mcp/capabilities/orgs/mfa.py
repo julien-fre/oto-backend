@@ -132,6 +132,6 @@ CAPABILITIES += [
                      "When on, every member must enroll and use a second factor at their "
                      "next sign-in (enforced by Logto). Provisions/updates the Logto "
                      "enforcement mirror; on Logto failure it errors WITHOUT changing state."),
-        rest=RestBinding("PUT", "/api/orgs/{id}/mfa", _ID, allow_api_token=False),
+        rest=RestBinding("PUT", "/api/orgs/{id}/mfa", _ID, sensitive=True),
     ),
 ]

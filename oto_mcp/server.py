@@ -1161,6 +1161,13 @@ def main():
     # Cf. `capabilities/copilot/palier.verifier_reglages`.
     from .capabilities.copilot import palier as copilot_palier
     copilot_palier.verifier_reglages()
+    # Réglages d'instance de CASA (#1896) : échéance d'invitation déclarée
+    # (`OTO_INVITATION_TTL_HOURS`, `OTO_MCP_INVITE_TTL_DAYS`) et gestes sensibles réservés
+    # à une session (`OTO_SENSITIVE_ACTIONS_REQUIRE_SESSION`) — illisibles, refus ici.
+    from .config import verifier_reglages_invitation
+    verifier_reglages_invitation()
+    from .capabilities import _session_exigee
+    _session_exigee.verifier_reglage()
 
     # Identité de l'instance (#968, décision du 28/09/2026) : adresses, email, marque,
     # contrats — tout ce qui pointerait chez quelqu'un d'autre sans déclaration. Un

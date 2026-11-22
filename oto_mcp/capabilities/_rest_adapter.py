@@ -37,6 +37,7 @@ from ..json_body import InvalidJsonBody, read_json_body
 from ._authz import accepts_service, refus_hors_vue
 from ._types import AuthzDenied, Capability, EventStream, NotModified, RawCtx
 from ._execution import execute
+from . import _session_exigee
 
 # Le principal que l'authentification REST dépose dans le scope (`api.base`). Nom
 # recopié et non importé : la couche capacité ne dépend pas de `api` (ADR 0004).
@@ -101,7 +102,12 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         # Les options ne sont passées QUE lorsqu'elles quittent leur défaut : le défaut
         # reste un appel à deux arguments, donc les appelants (et les stubs de test)
         # écrits avant ces crans continuent de fonctionner tels quels.
-        sub, err = await authenticate(request, verifier, **kwargs_auth)
+        # Un geste SENSIBLE (`binding.sensitive`) se ferme au jeton quand l'instance le
+        # déclare — lu à CHAQUE requête, jamais figé au montage (`_session_exigee`).
+        kw = kwargs_auth
+        if binding.sensitive and binding.allow_api_token and _session_exigee.actif():
+            kw = {**kwargs_auth, "allow_api_token": False}
+        sub, err = await authenticate(request, verifier, **kw)
         if err:
             return err
         data: dict = {}

@@ -671,10 +671,11 @@ def _payments(ctx: ResolvedCtx, inp: PaymentsInput) -> dict:
 
 
 # Les six gestes qui engagent un paiement (souscrire, confirmer, résilier, reprendre,
-# changer de moyen de paiement) : session interactive seule (`allow_api_token=False`,
-# CASA 2.4.1, `capabilities/_session_exigee.py`) — jamais un jeton d'API, même si le
-# cœur les refuse aujourd'hui en 409 `billing_moved` : la garde ne dépend pas de ce
-# refus-là, qui peut tomber.
+# changer de moyen de paiement) : gestes SENSIBLES (`sensitive=True`, CASA 2.4.1,
+# `capabilities/_session_exigee.py`) — session interactive seule, jamais un jeton d'API,
+# quand l'instance le déclare (`OTO_SENSITIVE_ACTIONS_REQUIRE_SESSION`), même si le cœur
+# les refuse aujourd'hui en 409 `billing_moved` : la garde ne dépend pas de ce refus-là,
+# qui peut tomber.
 _BILLING_CAPS = [
     Capability(
         key="billing.plans", handler=_plans, Input=NoInput, authz=SUB_ONLY,
@@ -693,7 +694,7 @@ _BILLING_CAPS = [
                     "billing is run by the billing service (oto-commerce), which sets "
                     "the org's rights — subscribing happens there.",
         errors=(facturation_externe.declaration(),),
-        rest=RestBinding("POST", "/api/me/billing/subscribe", allow_api_token=False),
+        rest=RestBinding("POST", "/api/me/billing/subscribe", sensitive=True),
     ),
     Capability(
         key="billing.confirm", handler=_confirm, Input=ConfirmInput,
@@ -701,7 +702,7 @@ _BILLING_CAPS = [
         description="Confirm a subscription's first payment. ⚠️ Always refused with 409 "
                     "`billing_moved`: billing is run by the billing service (oto-commerce).",
         errors=(facturation_externe.declaration(),),
-        rest=RestBinding("POST", "/api/me/billing/confirm", allow_api_token=False),
+        rest=RestBinding("POST", "/api/me/billing/confirm", sensitive=True),
     ),
     # Résiliation et reprise : refusées depuis la coupure du cœur (#1097), comme les
     # autres gestes du cycle — l'abonnement se gère dans oto-commerce.
@@ -711,7 +712,7 @@ _BILLING_CAPS = [
         description="Cancel the org's subscription. ⚠️ Always refused with 409 "
                     "`billing_moved`: billing is run by the billing service (oto-commerce).",
         errors=(facturation_externe.declaration(),),
-        rest=RestBinding("POST", "/api/me/billing/cancel", allow_api_token=False),
+        rest=RestBinding("POST", "/api/me/billing/cancel", sensitive=True),
     ),
     Capability(
         key="billing.resume", handler=_resume, Input=NoInput,
@@ -719,7 +720,7 @@ _BILLING_CAPS = [
         description="Undo a subscription cancellation. ⚠️ Always refused with 409 "
                     "`billing_moved`: billing is run by the billing service (oto-commerce).",
         errors=(facturation_externe.declaration(),),
-        rest=RestBinding("POST", "/api/me/billing/resume", allow_api_token=False),
+        rest=RestBinding("POST", "/api/me/billing/resume", sensitive=True),
     ),
     # Changer de moyen de paiement (#845 ①) — on perdait un abonné payant en silence :
     # carte morte, relances qui échouent toutes, et aucun geste pour y remédier.
@@ -731,7 +732,7 @@ _BILLING_CAPS = [
         description="Change the payment method. ⚠️ Always refused with 409 "
                     "`billing_moved`: billing is run by the billing service (oto-commerce).",
         errors=(facturation_externe.declaration(),),
-        rest=RestBinding("POST", "/api/me/billing/method", allow_api_token=False),
+        rest=RestBinding("POST", "/api/me/billing/method", sensitive=True),
     ),
     Capability(
         key="billing.method_change_confirm", handler=_method_change_confirm,
@@ -739,7 +740,7 @@ _BILLING_CAPS = [
         description="Confirm a payment-method change. ⚠️ Always refused with 409 "
                     "`billing_moved`: billing is run by the billing service (oto-commerce).",
         errors=(facturation_externe.declaration(),),
-        rest=RestBinding("POST", "/api/me/billing/method/confirm", allow_api_token=False),
+        rest=RestBinding("POST", "/api/me/billing/method/confirm", sensitive=True),
     ),
     Capability(
         key="billing.payments", handler=_payments, Input=PaymentsInput,

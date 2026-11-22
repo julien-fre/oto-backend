@@ -10,7 +10,7 @@ brute-forçable) et a été RETIRÉ le 15/09/2026 sur arbitrage d'Alexis ; la co
 
 Quatre façons d'en sortir, et elles ne se ressemblent pas : **acceptée** (`accepted_at`,
 l'invité rejoint), **refusée** (`declined_at`, #654 — l'invité dit non, aucune appartenance
-créée), **expirée** (`expires_at`, 24 h : `config.INVITATION_TTL_HOURS`), **révoquée** (la
+créée), **expirée** (`expires_at` : `config.invitation_ttl_hours()`), **révoquée** (la
 ligne est SUPPRIMÉE, geste de l'émetteur). `_PENDING` est la définition unique de « encore
 en attente » ; toute requête qui filtre l'état passe par lui.
 
@@ -28,7 +28,7 @@ from ..db import _connect, _hash_token
 
 
 def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str, invited_by: str,
-                      ttl_hours: int = config.INVITATION_TTL_HOURS, source: Optional[str] = None,
+                      ttl_hours: Optional[int] = None, source: Optional[str] = None,
                       group_id: Optional[int] = None,
                       group_role: Optional[str] = None) -> tuple[int, str]:
     """Crée une invitation nominative. **Scope dérivé** des cibles (feature cascade
