@@ -1,6 +1,6 @@
 ## prerequisite — qonto api key
 
-an **owner or admin** in Qonto opens Settings → Integrations and partnerships → API key. The page shows the **login** (like `acme-1234` — not an email) and lets you generate a **secret key**. Paste both into oto joined by a colon: `login:secret-key`.
+an **owner or admin** in Qonto opens Settings → Integrations and partnerships → API key. The page shows the **login** (like `acme-1234` — not an email) and lets you generate a **secret key**. Paste each into its own box: **Login** and **Secret key** (a key saved earlier as `login:secret-key` in one box keeps working).
 - byo-only: no shared oto key — this is your bank account, each organization sets its own
 - read-only: an API key reaches no payment route, and the connector never writes into Qonto
 - the "test connection" button reads the organization and its accounts: no side effect

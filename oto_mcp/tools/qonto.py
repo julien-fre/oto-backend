@@ -1,8 +1,10 @@
 """Qonto tool — French business banking, read-only.
 
 Wraps `oto.tools.qonto.QontoClient` (Business API v2, `Authorization:
-login:secret-key`), key resolved per call via `access.resolve_api_key("qonto")`
+login:secret-key`), credential resolved per call via `access.resolve_credential("qonto")`
 (member → team → org, never a platform key: it opens ONE company's bank account).
+The form asks for the login and the secret key in two boxes; `_authorization` joins
+them (and still reads a key saved before the split, `login:secret-key` in one box).
 
 The connector is read-only, so it serves ONE tool, `qonto` (LECTURE), the read verb
 in `op` — no `qonto_act` (`tests/test_convention_act.py`). An API key reaches no
@@ -100,9 +102,11 @@ def _upstream_message(e) -> str:
         return ("Qonto serves this read only to an OAuth connection, not to an API "
                 f"key (401): {detail}")
     if status == 401:
-        return ("Qonto rejected the API key (401): it must be the login and the secret "
-                "key joined by a colon (login:secret-key), from Settings → Integrations "
-                "and partnerships → API key. A revoked key fails the same way.")
+        return ("Qonto rejected the login and secret key (401). Both come from Settings → "
+                "Integrations and partnerships → API key: the Login (like acme-1234, not "
+                "an email) and the latest Secret key — regenerating it revokes the old "
+                "one. Update them on Tulina's Qonto connector; retrying unchanged fails "
+                "the same way.")
     if status == 403:
         return f"Qonto refused this read (403): the key's member lacks the right. {detail}"
     if status == 404:
@@ -125,17 +129,41 @@ def _month(value: Optional[str]) -> Optional[str]:
     return value
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
+def _authorization(key: Optional[str], login: Optional[str] = None) -> str:
+    """The `Authorization` value Qonto wants, `login:secret-key`, from the two boxes.
+
+    The secret key is what follows the last colon of `key` (a key saved before the
+    split, or the pair pasted into the secret box out of habit, carries the login in
+    front of it); the login is the `login` field, else that prefix. Raises
+    `ValueError` (actionable) when a half is missing."""
+    key, login = (key or "").strip(), (login or "").strip()
+    prefix, _, secret = key.rpartition(":")
+    login = login or prefix.strip()
+    secret = secret.strip()
+    if not secret:
+        raise ValueError("The Qonto Secret key is empty: copy it from Settings → "
+                         "Integrations and partnerships → API key (click Generate if "
+                         "it is empty).")
+    if not login:
+        raise ValueError("The Qonto Login is missing: it is shown above the Secret key "
+                         "in Settings → Integrations and partnerships → API key (like "
+                         "acme-1234, not your email).")
+    return f"{login}:{secret}"
+
+
+def _verify(fields: dict, config: dict | None = None) -> None:
     """"Test connection" probe: reads the organization (`get_organization`) — no
-    side effect; 401 on a wrong or malformed key."""
+    side effect; 401 on a wrong key. The login comes with the fields at save time,
+    from `config` (the row's `meta`) otherwise."""
     from oto.tools.qonto import QontoClient
     from oto.tools.common.errors import UpstreamHTTPError
 
     try:
-        QontoClient(api_key=fields.get("key")).probe()
+        login = fields.get("login") or (config or {}).get("login")
+        QontoClient(api_key=_authorization(fields.get("key"), login)).probe()
     except UpstreamHTTPError as e:
         if e.status_code in (401, 403):
-            raise connector_verify.NonAutorise(f"Qonto HTTP {e.status_code}: {e.body}")
+            raise connector_verify.NonAutorise(_upstream_message(e))
         raise RuntimeError(f"Qonto HTTP {e.status_code}: {e.body}")
     except ValueError as e:
         raise connector_verify.NonAutorise(str(e))
@@ -148,8 +176,11 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register(_NAME, _verify)
 
     def _client() -> QontoClient:
-        key, _ = access.resolve_api_key(_NAME)
-        return QontoClient(api_key=key)
+        rc = access.resolve_credential(_NAME, want="auto")
+        key = rc.key
+        # The login lives in the row's `meta`, read only when the key does not carry it.
+        login = None if ":" in (key or "") else rc.config.get("login")
+        return QontoClient(api_key=_authorization(key, login))
 
     def _run(fn):
         try:

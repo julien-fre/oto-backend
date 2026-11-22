@@ -6,7 +6,8 @@ ce qui est PROPRE à ce module :
 
 - un seul outil `qonto` (LECTURE), le verbe de lecture dans `op` ;
 - chaque op appelle la BONNE méthode, avec les bons arguments, et la clé
-  `login:secret-key` arrive au client ;
+  `login:secret-key` arrive au client — jointe depuis les deux cases (identifiant
+  en `meta`, clé secrète au coffre) ou lue telle quelle (clé posée avant la scission) ;
 - les bornes de date posées sur le champ de l'op, `date_field` pour un autre ;
 - les transactions sans compte lisent le compte principal ;
 - `all_pages` suit `meta.next_page`, borné ; la vue par défaut allège les lignes ;
@@ -30,10 +31,17 @@ ORG = {"organization": {"bank_accounts": [
     {"id": "acc-other", "main": False}, {"id": ACCOUNT, "main": True}]}}
 
 
+class _Resolved:
+    """Ce que `access.resolve_credential` rend : la clé du coffre, le `meta` en config."""
+
+    def __init__(self, key, config=None):
+        self.key, self.config = key, config or {}
+
+
 @pytest.fixture(autouse=True)
 def _fake_key(monkeypatch):
-    monkeypatch.setattr("oto_mcp.access.resolve_api_key",
-                        lambda provider, account=None: (KEY, False))
+    monkeypatch.setattr("oto_mcp.access.resolve_credential",
+                        lambda provider, want="auto", account=None: _Resolved(KEY))
 
 
 def _tools():
@@ -64,7 +72,17 @@ def test_registry_entry():
     assert c.keyed is True
     assert c.auth_modes == {"byo_user", "byo_org"}
     assert c.category == "Finance"
-    assert {f.name: f.secret for f in c.credential_fields} == {"key": True}
+    assert {f.name: f.secret for f in c.credential_fields} == {"login": False, "key": True}
+    # The login lives in `meta`: the vault blob keeps ONE field, so a key saved
+    # before the split (`login:secret-key`, raw) still unpacks.
+    assert [f.name for f in c.vault_fields] == ["key"]
+
+
+def test_a_key_saved_before_the_split_still_unpacks():
+    from oto_mcp import credentials_store
+
+    assert credentials_store.unpack_secret("qonto", KEY) == {"key": KEY}
+    assert credentials_store.pack_secret("qonto", {"login": "acme-1234", "key": "sk"}) == "sk"
 
 
 def test_one_read_tool_served():
@@ -81,6 +99,47 @@ def test_key_reaches_the_client_and_default_op_reads_accounts(client):
     assert _fn()() == ORG
     client.assert_called_once_with(api_key=KEY)
     client.return_value.get_organization.assert_called_once_with()
+
+
+def test_split_credential_is_joined_for_the_client(client, monkeypatch):
+    monkeypatch.setattr("oto_mcp.access.resolve_credential",
+                        lambda provider, want="auto", account=None:
+                        _Resolved("sk_test", {"login": "acme-1234"}))
+    _fn()()
+    client.assert_called_once_with(api_key=KEY)
+
+
+def test_split_credential_without_login_is_refused_clearly(client, monkeypatch):
+    monkeypatch.setattr("oto_mcp.access.resolve_credential",
+                        lambda provider, want="auto", account=None: _Resolved("sk_test"))
+    with pytest.raises(McpError, match="Login is missing"):
+        _fn()()
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize("key, login, expected", [
+    ("sk_test", "acme-1234", KEY),                 # the two boxes
+    (KEY, None, KEY),                              # saved before the split
+    (KEY, "acme-1234", KEY),                       # pair pasted in the secret box
+    ("old-1:sk_test", "acme-1234", KEY),           # login edited over a legacy row
+    ("  sk_test \n", " acme-1234 ", KEY),          # copy-paste debris
+])
+def test_authorization_joins_the_two_halves(key, login, expected):
+    from oto_mcp.tools import qonto
+
+    assert qonto._authorization(key, login) == expected
+
+
+@pytest.mark.parametrize("key, login, match", [
+    ("sk_test", None, "Login is missing"),
+    ("", "acme-1234", "Secret key is empty"),
+    ("acme-1234:", None, "Secret key is empty"),
+])
+def test_authorization_names_the_missing_half(key, login, match):
+    from oto_mcp.tools import qonto
+
+    with pytest.raises(ValueError, match=match):
+        qonto._authorization(key, login)
 
 
 def test_transactions_without_account_read_the_main_one(client):
@@ -217,10 +276,10 @@ def _upstream(status, body):
     return UpstreamHTTPError(status_code=status, body=body, service="qonto")
 
 
-def test_401_names_the_key_shape(client):
+def test_401_names_both_halves(client):
     client.return_value.get_organization.side_effect = _upstream(
         401, {"errors": [{"code": "unauthorized"}]})
-    with pytest.raises(McpError, match="login:secret-key"):
+    with pytest.raises(McpError, match="Login .* Secret key"):
         _fn()()
 
 
@@ -239,5 +298,17 @@ def test_probe_refuses_a_bad_key():
         qonto._verify({"key": "no-colon"})
     with patch("oto.tools.qonto.QontoClient") as cls:
         cls.return_value.probe.side_effect = _upstream(401, "nope")
-        with pytest.raises(verify.NonAutorise):
+        # The saving screen shows this message: plain words, not Qonto's raw body.
+        with pytest.raises(verify.NonAutorise, match="not an email") as e:
             qonto._verify({"key": KEY})
+        assert "trace_id" not in str(e.value)
+
+
+def test_probe_joins_the_login_from_fields_or_config():
+    from oto_mcp.tools import qonto
+
+    with patch("oto.tools.qonto.QontoClient") as cls:
+        qonto._verify({"login": "acme-1234", "key": "sk_test"})
+        cls.assert_called_with(api_key=KEY)
+        qonto._verify({"key": "sk_test"}, {"login": "acme-1234"})
+        cls.assert_called_with(api_key=KEY)
