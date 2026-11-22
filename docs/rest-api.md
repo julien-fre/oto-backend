@@ -488,6 +488,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - **Palier org** (100 % en CAPACITÉS — `capabilities/orgs*.py` ; ⚠️ cette ligne renvoyait à `api_routes_orgs.py` jusqu'au 2026-08-27, fichier **supprimé** lors de la migration : projection 1:1 des meta-tools `oto_admin_*org*` / `oto_list_orgs`) :
   - self-service : `GET|POST /api/me/orgs` (**`POST` = `org.create` self-serve**, créateur→org_admin, cap `OTO_MCP_MAX_ORGS_PER_USER`) ; `GET /api/orgs/{id}` ; `POST|DELETE /api/orgs/{id}/members[/{sub}]` + `GET /api/orgs/{id}/members/events` (journal des entrées, sorties et changements de rôle, le plus récent d'abord, `limit`/`before_id` ; oto#145) + `PUT|DELETE /api/orgs/{id}/secrets/{provider}` (org_admin)
   - **invitations — feature cascade plateforme/org/équipe** (le scope est DÉRIVÉ des cibles : org_id NULL = plateforme, org_id seul = org, org_id+group_id = équipe). Trois faces émettrices, une seule acceptation :
+    - **échéance : 24 h** (`config.INVITATION_TTL_HOURS`, 48 h au plus — CASA 1.1.2, 22/11/2026 ; elle valait 7 jours et le réglage `OTO_MCP_INVITE_TTL_DAYS` est retiré). Le magic-link Logto joint au mail et le partage en attente d'un objet ont la même. Le mail dit l'échéance. Une invitation échue sort de la file : réinviter la même adresse n'est pas un doublon (pas de 409) et émet un jeton NEUF ; une invitation encore valide se révoque puis se réémet. Celles émises avant le déploiement gardent leurs 7 jours.
     - **org** : `POST|GET /api/orgs/{id}/invitations` + `DELETE …/{inv}` (org_admin ; `oto_org` op=invite). Le POST refuse en 409 une adresse déjà membre (`already_member`) ou déjà invitée avec une invitation valide (`already_invited`, l'existante dans `details`) — #622, 29/08/2026.
     - **équipe** : `POST|GET /api/groups/{id}/invitations` + `DELETE …/{inv}` (group_admin ; `oto_group` op=invite). L'invité rejoint l'org parente PUIS l'équipe à l'acceptation.
     - **plateforme** : `POST|GET /api/admin/invitations` + `DELETE …/{inv}` (platform_admin ; `oto_admin_invite` op=create/list/revoke). `org_id` optionnel (vide = onboarding pur, sinon rattachement direct). Porter une org est réservé au super admin (règle `PLATFORM_INVITE`, 403 `forbidden` sinon, quel que soit le rôle) ; sans org, un admin plateforme suffit. L'acceptation rejuge la règle sur l'émetteur : une invitation plateforme qui porte une org sans avoir été émise par un super admin n'est honorée par aucun chemin (403 `platform_invite_not_allowed` sur le lien, 404 `no_pending_invitation` sur la réclamation par l'adresse, ignorée au signup).
@@ -1226,6 +1227,26 @@ déploiement : **`docs/version-servie.md`**.
   enfant porte le verrou d'org. `kind='org'`, `created_by` = l'admin émetteur (révision
   Alembic `0047_cles_d_org`) ; la liste rend aussi les enfants (`parent_id`). L'archivage
   de l'org révoque ses clés ; la désactivation de son tenant aussi, par le préfixe du sub.
+- **Les gestes sensibles demandent une session de connexion complète** (CASA 2.4.1, 22/11/2026,
+  `capabilities/_session_exigee.py`). Un jeton `oto_` — d'une personne, d'un agent hébergé,
+  une clé d'org — et un secret de worker en sont refusés en `403 api_token_forbidden`, à
+  l'authentification (`allow_api_token=False`, la route entière) :
+  `DELETE /api/orgs/{id}` et `DELETE /api/admin/orgs/{id}` (archiver une org),
+  `POST|DELETE /api/orgs/{id}/members/{sub}` et leurs miroirs `/api/admin/…` (rôle,
+  retrait), `POST|DELETE /api/groups/{id}/members/{sub}`, `PUT /api/orgs/{id}/mfa`,
+  `POST /api/admin/users/{sub}/role`, `POST /api/admin/users/{sub}/reset-mfa`, les six
+  gestes de paiement `POST /api/me/billing/{subscribe,confirm,cancel,resume,method,method/confirm}`
+  — en plus des jetons et clés ci-dessus. **Sur la face MCP** (qui accepte un jeton `oto_`
+  non porté) et pour les gestes CONDITIONNELS, la même garde vit dans le handler, même code :
+  `oto_org op=archive`, `oto_admin_org op=archive`, `oto_admin_org_member op=remove|set_role`,
+  `oto_group op=remove_member`, `oto_org_settings` (mfa), `oto_admin_user op=set_role` ; une
+  invitation (org, équipe, plateforme) qui donne le rang d'admin ; `org.member.add` /
+  `group.member.add` qui nomment un admin ou changent le rôle d'un membre existant ;
+  `op=transfer` d'`oto_resource` et de `POST /api/resources`. Ajouter un simple membre,
+  inviter un simple membre, partager restent ouverts au jeton. Une session OAuth Logto
+  (le tableau de bord, un client MCP connecté par OAuth) n'est pas un jeton : elle passe.
+  ⚠️ `GET /api/orgs/{id}` reste ouvert au jeton (lecture générale) : un service tiers qui y
+  lit `my_role` pour autoriser une dépense doit refuser lui-même un porteur `oto_`/`otow_`.
 - **Portée opt-in** (`auth/token_scopes.py`, colonne `user_api_tokens.scopes` JSONB) : à la
   création, `POST /api/me/tokens {"label":"scout", "scopes":{"datastores":{"leads":"read"}}}`
   rend un jeton **porté** — deny-by-default, il n'ouvre QUE les tableaux nommés, en `read`

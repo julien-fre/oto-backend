@@ -20,7 +20,6 @@ rejoindre n'avait aucun moyen de le dire, et son invitation restait en attente.
 from __future__ import annotations
 
 import logging
-import os
 
 from typing import Literal, Optional
 
@@ -30,13 +29,13 @@ from ... import config, db, org_store, org_suspension, tenancy
 from ...auth import annuaire
 from ... import email as email_mod  # alias : le param `email` d'emit_invitation masquerait le module
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
+from .._session_exigee import exiger_session
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
 
 _ID = {"id": "org_id"}
-_INVITE_TTL_DAYS = int(os.environ.get("OTO_MCP_INVITE_TTL_DAYS", "7"))
 
 
 def _invite_base(front_base: str | None = None) -> str:
@@ -272,12 +271,18 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
     (`orgs.front_*`), jamais déclaré par l'appelant : une invitation ne peut pas
     prétendre venir d'un front auquel l'org n'appartient pas, et les 3 niveaux en
     héritent sans rien porter. Sans org (invitation plateforme pure) = la marque
-    que l'instance déclare (`email_brand.marque_instance`)."""
+    que l'instance déclare (`email_brand.marque_instance`).
+
+    Une invitation qui donne le rang d'ADMIN (d'org ou d'équipe) demande une session,
+    jamais un jeton (CASA 2.4.1, `_session_exigee`) — les trois niveaux passent ici,
+    les deux faces aussi. Inviter un simple membre reste ouvert au jeton."""
+    if role == "org_admin" or group_role == "group_admin":
+        exiger_session("Inviter quelqu'un comme admin")
     email_addr = _norm_email(email, required=send_email)
     front_base, brand = org_store.org_front(org_id)
     _, token = org_store.create_invitation(
-        org_id, email_addr, role, invited_by=ctx.sub, ttl_days=_INVITE_TTL_DAYS,
-        source=source, group_id=group_id, group_role=group_role)
+        org_id, email_addr, role, invited_by=ctx.sub, source=source,
+        group_id=group_id, group_role=group_role)
     share_url = _nominal_url(token, front_base=front_base)
     emailed = False
     if send_email and email_addr:

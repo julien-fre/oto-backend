@@ -14,6 +14,8 @@ import os
 import time
 from dataclasses import dataclass
 
+from .. import config
+
 _log = logging.getLogger("oto_mcp.annuaire")
 
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"  # vs WAF Cloudflare (1010)
@@ -180,7 +182,13 @@ def reset_user_mfa(sub: str) -> list[str]:
 # porte → la custom UI Logto le consomme (signIn extraParams) → auth silencieuse,
 # compte créé/loggé avec l'email EXACT (pas de mismatch). Best-effort : si le mint
 # échoue (M2M absent, Logto down), l'invitation reste valide via le flow code email.
-def mint_one_time_token(email: str, *, expires_in: int = 7 * 24 * 3600) -> str | None:
+# Le jeton vit autant que l'invitation qui le porte (`config.INVITATION_TTL_HOURS`, 24 h,
+# CASA 1.1.2) : c'est un code d'activation, il ne survit pas à son invitation. Il valait
+# 7 jours.
+OTT_TTL_S = config.INVITATION_TTL_HOURS * 3600
+
+
+def mint_one_time_token(email: str, *, expires_in: int = OTT_TTL_S) -> str | None:
     """Mint un one-time-token Logto (magic link) pour `email`. Renvoie le token,
     ou None si le mint échoue (l'appelant dégrade vers le lien sans magic-link)."""
     import requests
@@ -200,7 +208,7 @@ def mint_one_time_token(email: str, *, expires_in: int = 7 * 24 * 3600) -> str |
         return None
 
 
-def magic_url(base_url: str, email: str, *, expires_in: int = 7 * 24 * 3600) -> str:
+def magic_url(base_url: str, email: str, *, expires_in: int = OTT_TTL_S) -> str:
     """Augmente `base_url` d'un magic-link Logto pour `email` (params `otl` +
     `login_hint`). Le front fait `signIn({extraParams:{one_time_token: otl},
     loginHint})`. Si le mint échoue, renvoie `base_url` inchangé (dégradation

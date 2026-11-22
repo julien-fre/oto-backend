@@ -25,6 +25,7 @@ from .. import (access, db, deprecations, email, group_store, org_store, ownersh
 from ..access import heritage
 from . import _portee, _publication
 from ._authz import RESOURCE_GOVERN
+from ._session_exigee import exiger_session
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .docs import partage as page
 from .registry import CAPABILITIES
@@ -277,9 +278,11 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
             return email.send_resource_transferred_email(
                 to_email, type_label=type_label, name=name, app_url=app_url,
                 sharer=sharer, brand=brand, locale=locale)
+        # Un partage EN ATTENTE porte un lien d'invitation : il expire, le mail le dit.
         return email.send_resource_shared_email(
             to_email, type_label=type_label, name=name, permission=permission,
-            app_url=app_url, sharer=sharer, brand=brand, locale=locale)
+            app_url=app_url, sharer=sharer, brand=brand, locale=locale,
+            **({"lien_d_invitation": True} if lien is not None else {}))
     except Exception as e:  # best-effort
         log.warning("notify(%s %s %s → %s) failed: %s",
                     event, resource_type, rid, to_email, e)
@@ -554,7 +557,7 @@ def _share_pending(ctx: ResolvedCtx, inp: ResourceInput, rid: str, kind: str,
     Refusé avec `cascade` ou un prêt de clés : ce sont des gestes sur un compte
     existant, à refaire une fois la personne inscrite. Un deuxième partage vers la
     même adresse rend le premier, sans second lien ni second mail."""
-    from .orgs.invites import _INVITE_TTL_DAYS, _nominal_url
+    from .orgs.invites import _nominal_url
     if inp.cascade or inp.credentials not in (None, heritage.OWN):
         raise AuthzDenied(
             400, "pending_share_plain_only",
@@ -564,8 +567,7 @@ def _share_pending(ctx: ResolvedCtx, inp: ResourceInput, rid: str, kind: str,
     nom = _resource_name(inp.resource_type, rid)
     r = partage_en_attente.creer(
         resource_type=inp.resource_type, kind=kind, resource_id=rid, email=inp.email,
-        role=role, ttl_days=inp.ttl_days, invited_by=ctx.sub, nom=nom,
-        jours=_INVITE_TTL_DAYS)
+        role=role, ttl_days=inp.ttl_days, invited_by=ctx.sub, nom=nom)
     adresse = inp.email.strip().lower()
     emailed = False
     if r["token"]:
@@ -781,6 +783,10 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         return out
 
     if inp.op == "transfer":
+        # Céder la propriété d'un objet demande une session, jamais un jeton (CASA
+        # 2.4.1, `_session_exigee`) — sur les deux faces, `oto_resource` comme
+        # `POST /api/resources`. Partager reste ouvert au jeton.
+        exiger_session("Transférer la propriété d'une ressource")
         # Le TRANSFERT de propriété exclut le simple gérant (ADR 0048 §3) : owner ∪
         # escalade `roles.py` seulement. Le gate capacité (`RESOURCE_GOVERN`) laisse
         # passer un gérant (il gouverne) → on re-garde ici la structure.

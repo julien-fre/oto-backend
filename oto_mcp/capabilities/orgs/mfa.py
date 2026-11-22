@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from ... import mfa_mirror, org_store
 from .._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
+from .._session_exigee import exiger_session
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
@@ -87,6 +88,8 @@ def _get_org_mfa(ctx: ResolvedCtx, inp: GetOrgMfaInput) -> dict:
 
 
 def _set_org_mfa(ctx: ResolvedCtx, inp: SetOrgMfaInput) -> dict:
+    # Réglage de SÉCURITÉ de l'org, dans les deux sens : session seule (CASA 2.4.1).
+    exiger_session("Changer l'exigence de double authentification d'une org")
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     if inp.require:
@@ -129,6 +132,6 @@ CAPABILITIES += [
                      "When on, every member must enroll and use a second factor at their "
                      "next sign-in (enforced by Logto). Provisions/updates the Logto "
                      "enforcement mirror; on Logto failure it errors WITHOUT changing state."),
-        rest=RestBinding("PUT", "/api/orgs/{id}/mfa", _ID),
+        rest=RestBinding("PUT", "/api/orgs/{id}/mfa", _ID, allow_api_token=False),
     ),
 ]

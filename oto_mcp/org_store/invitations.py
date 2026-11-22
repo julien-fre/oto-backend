@@ -8,15 +8,14 @@ brute-forçable) et a été RETIRÉ le 15/09/2026 sur arbitrage d'Alexis ; la co
 `code` et son index restent en base (boot additif seulement, jamais de DROP —
 `docs/live-migrations.md`), simplement plus écrits ni lus.
 
-Quatre façons d'en sortir, et elles ne se ressemblent pas : **acceptée**
-(`accepted_at`, l'invité rejoint), **refusée** (`declined_at`, #654 — l'invité dit
-non, aucune appartenance créée), **expirée** (`expires_at`), **révoquée** (la ligne
-est SUPPRIMÉE, geste de l'émetteur). Le prédicat `_PENDING` est la définition
-unique de « encore en attente » ; toute requête qui filtre l'état passe par lui.
+Quatre façons d'en sortir, et elles ne se ressemblent pas : **acceptée** (`accepted_at`,
+l'invité rejoint), **refusée** (`declined_at`, #654 — l'invité dit non, aucune appartenance
+créée), **expirée** (`expires_at`, 24 h : `config.INVITATION_TTL_HOURS`), **révoquée** (la
+ligne est SUPPRIMÉE, geste de l'émetteur). `_PENDING` est la définition unique de « encore
+en attente » ; toute requête qui filtre l'état passe par lui.
 
-Étage 1 du package : consomme `members` (adhésion + maison). Les paliers
-voisins (`roles`, `group_store`) restent en import
-PARESSEUX au point d'appel — c'est ce qui évite le cycle.
+Étage 1 du package : consomme `members` (adhésion + maison). Les paliers voisins (`roles`,
+`group_store`) restent en import PARESSEUX au point d'appel — c'est ce qui évite le cycle.
 """
 from __future__ import annotations
 
@@ -24,11 +23,12 @@ import secrets
 from typing import Optional
 
 from . import members
+from .. import config
 from ..db import _connect, _hash_token
 
 
 def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str, invited_by: str,
-                      ttl_days: int = 7, source: Optional[str] = None,
+                      ttl_hours: int = config.INVITATION_TTL_HOURS, source: Optional[str] = None,
                       group_id: Optional[int] = None,
                       group_role: Optional[str] = None) -> tuple[int, str]:
     """Crée une invitation nominative. **Scope dérivé** des cibles (feature cascade
@@ -47,7 +47,7 @@ def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str
         raise ValueError(f"org_role invalide {org_role!r}")
     if group_id is not None and org_id is None:
         raise ValueError("une invitation d'équipe exige l'org parente (org_id)")
-    token = "inv_" + secrets.token_urlsafe(32)
+    heures, token = config.heures_d_invitation(ttl_hours), "inv_" + secrets.token_urlsafe(32)
     with _connect() as conn:
         row = conn.execute(
             """
@@ -55,11 +55,11 @@ def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str
                 (org_id, email, org_role, token_hash, invited_by, source,
                  group_id, group_role, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                    NOW() + (%s || ' days')::interval)
+                    NOW() + (%s || ' hours')::interval)
             RETURNING id
             """,
             (org_id, email, org_role, _hash_token(token), invited_by, source,
-             group_id, group_role, str(int(ttl_days))),
+             group_id, group_role, heures),
         ).fetchone()
         return int(row["id"]), token
 

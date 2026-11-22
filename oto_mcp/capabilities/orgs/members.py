@@ -20,6 +20,7 @@ from .._authz import ORG_ADMIN_OF, ORG_ADMIN_OF_OR_OPERATOR, SUB_ONLY
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding,
                       cap_limit)
 from ..registry import CAPABILITIES
+from .._session_exigee import exiger_session
 from .core import refuser_maison_sous_verrou
 
 _ID = {"id": "org_id"}  # placeholder de route {id} → champ Input org_id
@@ -150,6 +151,10 @@ def _write_member_role(org_id: int, sub: str, role: str, *, require_member: bool
     current = org_store.get_org_role(org_id, sub)
     if current is None and require_member:
         raise AuthzDenied(404, "not_a_member", "Cible non-membre de l'org.")
+    # CASA 2.4.1 (`_session_exigee`) : CHANGER un rôle, ou donner le rang d'admin, demande
+    # une session — jamais un jeton. Ajouter un simple membre reste ouvert au jeton.
+    if role == "org_admin" or (current is not None and current != role):
+        exiger_session("Changer le rôle d'un membre ou nommer un admin")
     # Anti-lockout : ne pas rétrograder le dernier org_admin, par quelque route que ce soit.
     if current == "org_admin" and role != "org_admin" and _count_org_admins(org_id) <= 1:
         raise AuthzDenied(409, "last_org_admin", "Impossible de rétrograder le dernier org_admin.")
@@ -185,6 +190,7 @@ def _rendre_un_espace(sub: str) -> None:
 
 
 def _remove_member(ctx: ResolvedCtx, inp: RemoveMemberInput) -> dict:
+    exiger_session("Retirer un membre d'une org")  # CASA 2.4.1, `_session_exigee`
     target_sub = _resolve_target(inp.target)
     # Anti-lockout : ne pas retirer le dernier org_admin.
     if org_store.get_org_role(inp.org_id, target_sub) == "org_admin" and _count_org_admins(inp.org_id) <= 1:
@@ -306,16 +312,23 @@ CAPABILITIES += [
         key="org.member.set_role", handler=_set_member_role, Input=SetMemberRoleInput,
         authz=ORG_ADMIN_OF("org_id"), Output=MemberWritten,
         description="Change a member's role in an org you administer (org_member|org_admin).",
-        rest=(RestBinding("POST", "/api/orgs/{id}/members/{sub}", _ID),
-              RestBinding("POST", "/api/admin/orgs/{id}/members/{sub}", _ID)),
+        # Session interactive seule (CASA 2.4.1, `_session_exigee`) sur les DEUX paliers.
+        # `org.member.add` reste ouvert au jeton : sa garde de handler ne refuse que le
+        # rang d'admin et le changement de rôle d'un membre existant.
+        rest=(RestBinding("POST", "/api/orgs/{id}/members/{sub}", _ID, allow_api_token=False),
+              RestBinding("POST", "/api/admin/orgs/{id}/members/{sub}", _ID,
+                          allow_api_token=False)),
     ),
     Capability(
         key="org.member.remove", handler=_remove_member, Input=RemoveMemberInput,
         authz=ORG_ADMIN_OF("org_id"), Output=MemberRemoved,
         description="Remove a member (by email or sub) from an org you administer.",
         # MCP fusionné dans oto_admin_org_member(op=remove). REST conservé (dashboard).
-        rest=(RestBinding("DELETE", "/api/orgs/{id}/members/{sub}", {"id": "org_id", "sub": "target"}),
-              RestBinding("DELETE", "/api/admin/orgs/{id}/members/{sub}", {"id": "org_id", "sub": "target"})),
+        # Session interactive seule (CASA 2.4.1, `_session_exigee`) sur les DEUX paliers.
+        rest=(RestBinding("DELETE", "/api/orgs/{id}/members/{sub}",
+                          {"id": "org_id", "sub": "target"}, allow_api_token=False),
+              RestBinding("DELETE", "/api/admin/orgs/{id}/members/{sub}",
+                          {"id": "org_id", "sub": "target"}, allow_api_token=False)),
     ),
     Capability(
         key="me.leave_org", handler=_leave_org, Input=LeaveOrgInput,

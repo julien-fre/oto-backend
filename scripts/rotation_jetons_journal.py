@@ -31,8 +31,8 @@ Restent les deux jetons LONGS, les SECTIONS de ce script :
                  est celui du produit (`db.set_doc_public`) : retirer puis rendre
                  public = un NOUVEAU lien ; l'ancien répond 404. `--sans-reemission`
                  laisse la page privée.
-    invitations  `org_invitations` en attente, émises AVANT la bascule — 7 jours de
-                 vie (`OTO_MCP_INVITE_TTL_DAYS`), seul son hash est rangé. Le geste est
+    invitations  `org_invitations` en attente, émises AVANT la bascule — 24 h de
+                 vie (`config.INVITATION_TTL_HOURS`), seul son hash est rangé. Le geste est
                  celui du produit (`org_store.revoke_invitation` et ses deux voisins).
                  Aucune réémission, aucun mail : l'invité ne détient que le lien du
                  mail, c'est à un admin de réinviter.

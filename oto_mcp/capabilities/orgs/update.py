@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from ... import org_store, session_org
 from ...db import users as db_users
 from .._authz import ORG_ADMIN_OF, ORG_ADMIN_OF_LIVE
+from .._session_exigee import exiger_session
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
@@ -154,6 +155,7 @@ def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     aussi que le backfill ne vienne, des heures plus tard, tamponner `personal_of` sur
     l'espace que l'utilisateur se serait recréé entre-temps
     (`_reclaim_or_create_personal` ne réclame que faute de perso existante)."""
+    exiger_session("Archiver une org")  # CASA 2.4.1 : jamais sous un jeton (`_session_exigee`)
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     membres = [m["sub"] for m in org_store.list_org_members(inp.org_id)]
@@ -220,7 +222,9 @@ CAPABILITIES += [
                      "empty personal space so you are never left without one. "
                      "Idempotent: an org already archived answers `archived: false, "
                      "already_archived: true` — nothing done, not a failure."),
-        rest=RestBinding("DELETE", "/api/orgs/{id}", _ID),
+        # Session interactive seule (CASA 2.4.1, `_session_exigee`) ; la face MCP
+        # (`oto_org op=archive`) est tenue par la garde du handler.
+        rest=RestBinding("DELETE", "/api/orgs/{id}", _ID, allow_api_token=False),
         refresh_visibility=True,  # org active archivée → recharge la toolbox (repli)
     ),
 ]

@@ -46,6 +46,7 @@ récent la compile sans broncher (cf. `send_signal_digest_email`, hérité tel
 quel de `email.py`)."""
 from __future__ import annotations
 
+from . import config
 from . import email as _email
 from . import email_brand as _charte
 
@@ -65,6 +66,17 @@ def _qui_invite(inviter: str | None, inviter_name: str | None) -> str:
     if not nom or "@" in nom:
         return inviter or ""
     return f"{nom} ({inviter})" if inviter and inviter.lower() != nom.lower() else nom
+
+
+def _echeance_du_lien(locale: str | None, heures: int) -> str:
+    """La phrase qui DIT l'échéance d'un lien d'invitation (CASA 1.1.2 : il expire en
+    24 h, `config.INVITATION_TTL_HOURS`). Sans elle, l'invité qui ouvre le mail le
+    lendemain tombe sur « invitation expirée » sans avoir été prévenu."""
+    if locale == "en":
+        return (f"this link is valid for {heures} hours. after that, ask for a new "
+                "invitation.")
+    return (f"ce lien est valable {heures} heures. passé ce délai, demandez une nouvelle "
+            "invitation.")
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
@@ -90,6 +102,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
     locale = locale or m.langue or None
     qui = _qui_invite(inviter, inviter_name)
     nom = _email._esc(m.nom)
+    echeance = _echeance_du_lien(locale, config.INVITATION_TTL_HOURS)
     if locale == "en":
         lead = (f"<strong>{_email._esc(qui)}</strong> invites you" if qui
                 else "you're invited")
@@ -109,6 +122,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
         contenu = (f'<p style="{_charte.PARA}">{lead} to join {where}.</p>'
                    f'<p style="{_charte.PARA}">{contexte}</p>'
                    + _email._bouton(invite_url, "join", brand)
+                   + f'<p style="{_charte.PARA}">{echeance}</p>'
                    + f'<p style="{_charte.PARA}">{inattendu}</p>')
     else:
         lead = (f"<strong>{_email._esc(qui)}</strong> vous invite" if qui
@@ -132,6 +146,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
         contenu = (f'<p style="{_charte.PARA}">{lead} à rejoindre {where}.</p>'
                    f'<p style="{_charte.PARA}">{contexte}</p>'
                    + _email._bouton(invite_url, "rejoindre", brand)
+                   + f'<p style="{_charte.PARA}">{echeance}</p>'
                    + f'<p style="{_charte.PARA}">{inattendu}</p>')
     return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
@@ -141,12 +156,15 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
 def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
                                permission: str, app_url: str,
                                sharer: str | None = None, brand: str | None = None,
-                               locale: str | None = None) -> bool:
+                               locale: str | None = None,
+                               lien_d_invitation: bool = False) -> bool:
     """Email à un utilisateur avec qui on vient de PARTAGER une ressource (projet,
     datastore, guide). Best-effort (False si non envoyé) — un échec ne casse
     jamais le partage. `type_label` DOIT déjà être dans la langue de `locale` —
     ce gabarit ne traduit pas un mot qu'on lui donne. Voix funnel dans les deux
-    langues : vouvoiement/« you » + minuscules."""
+    langues : vouvoiement/« you » + minuscules. `lien_d_invitation` = le bouton
+    porte le lien d'un partage EN ATTENTE (adresse sans compte) : il expire comme
+    toute invitation, et le mail le dit."""
     m = _charte.marque(brand)
     locale = locale or m.langue or None
     if locale == "en":
@@ -170,6 +188,9 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
         contenu = (f'<p style="{_charte.PARA}">{who} avec vous {_email._esc(titre)} '
                    f'({droit}) sur {_email._esc(m.nom)}.</p>'
                    + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
+    if lien_d_invitation:
+        contenu += (f'<p style="{_charte.PARA}">'
+                    f'{_echeance_du_lien(locale, config.INVITATION_TTL_HOURS)}</p>')
     return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))

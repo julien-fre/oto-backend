@@ -462,6 +462,12 @@ def current() -> Optional[dict]:
     return _CURRENT.get()
 
 
+def jeton_courant() -> Optional[int]:
+    """L'id du jeton `oto_` de la requête REST courante, porté ou non ; None sous une
+    session (JWT) — `set_current` le repose à chaque authentification."""
+    return _JETON.get()
+
+
 def emetteur() -> Optional[tuple[int, dict]]:
     """`(id, plafond)` quand la requête vient d'un jeton ÉMETTEUR, None sinon (session
     humaine, jeton sans portée d'émission)."""

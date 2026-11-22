@@ -247,6 +247,31 @@ def invite_base_url() -> str:
     return require_env("OTO_INVITE_BASE_URL").strip().rstrip("/")
 
 
+#: Durée de vie d'une invitation, en HEURES — écrite UNE fois, pour ses trois porteurs :
+#: l'invitation d'org/équipe/plateforme (`org_store.create_invitation`), le partage en
+#: attente d'un objet (`partage_en_attente.creer`) et le magic-link Logto joint au mail
+#: (`auth.annuaire.magic_url`). Une invitation est un code d'activation — son lien suffit
+#: à entrer (modèle bearer) ; CASA 1.1.2 (guide de test ADA) veut qu'il expire vite :
+#: 24 h recommandées, 48 h au plus. Elle valait 7 jours (`OTO_MCP_INVITE_TTL_DAYS`,
+#: retiré) : aucun réglage d'environnement, une valeur au-delà du plafond EST le défaut
+#: que la constante corrige. L'invité qui laisse échoir la sienne se fait réinviter :
+#: une invitation échue sort de la file (`org_store._PENDING`), la suivante n'est donc
+#: pas un doublon (refus #622) et porte un jeton NEUF.
+INVITATION_TTL_HOURS = 24
+#: Le plafond du guide ADA : une échéance demandée au-delà est REFUSÉE, jamais rabotée.
+INVITATION_TTL_MAX_HOURS = 48
+
+
+def heures_d_invitation(ttl_hours: int) -> str:
+    """`ttl_hours` validé, en texte prêt pour `(%s || ' hours')::interval`. Lève
+    `ValueError` hors de 1..`INVITATION_TTL_MAX_HOURS`."""
+    h = int(ttl_hours)
+    if not 0 < h <= INVITATION_TTL_MAX_HOURS:
+        raise ValueError(f"échéance d'invitation hors bornes : {h} h "
+                         f"(1 à {INVITATION_TTL_MAX_HOURS} h)")
+    return str(h)
+
+
 def cors_origins() -> list[str]:
     """Les origines navigateur autorisées à appeler `/api/*` — liste séparée par des
     virgules. Obligatoire (décision du 28/09/2026, #968) : la liste en dur qui servait de
