@@ -36,7 +36,10 @@ _CARTE = ("id, owner_type, owner_id, context_org_id, title, thumbnail, created_b
 # brouillon : de quoi dire au lecteur quelle version il ouvre. Jamais le brouillon
 # lui-même (`db/app_versions.py`), réservé à ses éditeurs.
 _VERSION = "drafts_enabled, published_at, version_note"
-_TOUT = _CARTE + ", manifest, html, " + _VERSION
+# Qui l'app PRÊTE, sur quel manifeste, depuis quand (`docs/apps.md` § Une app qui prête
+# l'accès de quelqu'un) : lu par l'appel d'une app et par ses éditeurs, jamais par une liste.
+_PRET = "acts_as, acts_as_manifest, acts_as_at"
+_TOUT = _CARTE + ", manifest, html, " + _VERSION + ", " + _PRET
 # Les révisions ORDINAIRES gardées par app ; les versions publiées, à part.
 MAX_REVISIONS = 50
 MAX_PUBLISHED = 200
@@ -48,6 +51,15 @@ class AppConflict(Exception):
     def __init__(self, current_rev: str):
         super().__init__(current_rev)
         self.current_rev = current_rev
+
+
+def empreinte_manifeste(manifest: Any) -> str:
+    """L'empreinte d'un manifeste (SHA-256 de sa forme JSON triée) : ce qu'une personne
+    a vu en prêtant ses droits à l'app (`apps.acts_as_manifest`). Un manifeste stocké est
+    déjà normalisé (`apps_manifeste.forme`) : deux écritures du même contenu ont la même."""
+    brut = json.dumps(manifest or {}, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, default=str)
+    return hashlib.sha256(brut.encode("utf-8")).hexdigest()
 
 
 def app_rev(title: str, manifest: Any, html: str, thumbnail: Any) -> str:
@@ -99,7 +111,7 @@ def get_for_call(app_id: int) -> Optional[dict]:
     (`op=get`)."""
     with _connect() as conn:
         return conn.execute(
-            f"SELECT {_CARTE}, manifest FROM apps WHERE id = %s", (app_id,)).fetchone()
+            f"SELECT {_CARTE}, manifest, {_PRET} FROM apps WHERE id = %s", (app_id,)).fetchone()
 
 
 def _archives(archived: bool) -> str:
@@ -320,6 +332,12 @@ def ecrire_sous_verrou(conn, prior: dict, *, by: str, title: Optional[str] = Non
     if manifest is not None:
         sets.append("manifest = %s")
         params.append(Jsonb(manifest))
+        # Le prêt est FIGÉ sur le manifeste que sa personne a vu : réécrit par elle, il la
+        # suit ; par quelqu'un d'autre, l'app ne prête plus rien tant qu'elle ne l'a pas
+        # prêté à nouveau (`apps_appel._preteur`, `op=act_as`).
+        if prior.get("acts_as") and prior["acts_as"] == by:
+            sets.append("acts_as_manifest = %s")
+            params.append(empreinte_manifeste(manifest))
     if html is not None:
         sets.append("html = %s")
         params.append(html)
@@ -335,6 +353,52 @@ def ecrire_sous_verrou(conn, prior: dict, *, by: str, title: Optional[str] = Non
         f"UPDATE apps SET {', '.join(sets)} WHERE id = %s RETURNING {_TOUT}",
         (*params, app_id),
     ).fetchone()
+
+
+def set_acts_as(app_id: int, sub: Optional[str],
+                expected_rev: Optional[str] = None) -> Optional[dict]:
+    """L'app prête les droits de `sub`, sur son manifeste VIVANT de cet instant (lu sous
+    le verrou de la ligne : une écriture concurrente ne passe pas entre la lecture et
+    l'empreinte) — ou plus rien (`sub=None`). `expected_rev` : la version que la personne
+    a VUE ; une autre sous le verrou → `AppConflict`, rien n'est prêté (elle ne prête
+    pas un manifeste qu'elle n'a pas lu). Ni révision ni `updated_by` : le contenu de
+    l'app ne change pas. `None` = app inconnue. Le jugement (qui peut prêter, et quoi)
+    est celui de la capacité (`capabilities/apps.py`, `op=act_as`)."""
+    with _connect() as conn:
+        prior = conn.execute(
+            "SELECT title, manifest, html, thumbnail FROM apps WHERE id = %s FOR UPDATE",
+            (app_id,)).fetchone()
+        if prior is None:
+            return None
+        if expected_rev is not None:
+            courant = app_rev(prior["title"], prior["manifest"], prior["html"],
+                              prior["thumbnail"])
+            if courant != expected_rev:
+                raise AppConflict(courant)
+        empreinte = empreinte_manifeste(prior["manifest"]) if sub else None
+        return with_rev(conn.execute(
+            "UPDATE apps SET acts_as = %s, acts_as_manifest = %s, "
+            "acts_as_at = CASE WHEN %s::text IS NULL THEN NULL ELSE NOW() END "
+            f"WHERE id = %s RETURNING {_TOUT}",
+            (sub, empreinte, sub, app_id)).fetchone())
+
+
+def apps_act_as_de_l_org(org_id: int) -> Optional[bool]:
+    """Le réglage d'une org : ses apps peuvent-elles prêter (`orgs.apps_act_as`).
+    `None` = l'org n'a rien choisi (le défaut de l'instance s'applique, `apps_appel`)
+    ou n'existe pas."""
+    with _connect() as conn:
+        row = conn.execute("SELECT apps_act_as AS v FROM orgs WHERE id = %s",
+                           (int(org_id),)).fetchone()
+    return None if row is None or row["v"] is None else bool(row["v"])
+
+
+def poser_apps_act_as(org_id: int, valeur: Optional[bool]) -> bool:
+    """Pose le réglage (`None` = revenir au défaut de l'instance). Faux si l'org n'existe pas."""
+    with _connect() as conn:
+        row = conn.execute("UPDATE orgs SET apps_act_as = %s WHERE id = %s RETURNING id",
+                           (valeur, int(org_id))).fetchone()
+    return row is not None
 
 
 def set_archived(app_id: int, archived: bool) -> Optional[dict]:
