@@ -85,6 +85,9 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `lemlist` by trade (cold email), served by the generic reader of
     # its description.
     "instantly",
+    # Neighbour of `instantly` (cold email, on the customer's own instance), served
+    # by the generic reader of its description — the first with an account setting.
+    "emailbison",
     "kaspr",
     "pennylane",
     # The firm side of the same publisher (one token, every company of the firm):
