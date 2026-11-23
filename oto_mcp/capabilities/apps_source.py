@@ -57,7 +57,6 @@ MAX_NIVEAU = 1
 MIN_LIGNES_DECLARATION = 20
 
 _OUVRE = re.compile(r"<(script|style)\b[^<>]*>", re.I)
-_FERME = re.compile(r"</(script|style)\s*>", re.I)
 _IDENT = r"[A-Za-z_$][\w$]*"
 _FONCTIONS = (
     re.compile(rf"^\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*({_IDENT})\s*\("),
@@ -239,11 +238,11 @@ def plan(html: str) -> dict[str, Any]:
             i += 1
             continue
         genre = o.group(1).lower()
-        f = _FERME.search(ligne, o.end())
-        bout = i
-        if f is None:
-            bout = next((j for j in range(i + 1, total + 1) if _FERME.search(lignes[j - 1])),
-                        total)
+        # La balise du MÊME bloc ferme : un `</style>` écrit dans une chaîne du script ne
+        # termine pas le script.
+        ferme = re.compile(rf"</{genre}\s*>", re.I)
+        bout = i if ferme.search(ligne, o.end()) else next(
+            (j for j in range(i + 1, total + 1) if ferme.search(lignes[j - 1])), total)
         bloc = {"kind": genre, "name": "", "line": i, "end": bout, "depth": 0}
         entrees.append(bloc)
         if bout > i + 1:
@@ -349,22 +348,28 @@ def chercher(html: str, requete: str, context: Optional[int]) -> dict[str, Any]:
             fenetres[-1][1] = max(fenetres[-1][1], b)
         else:
             fenetres.append([a, b])
+    # Rempli LIGNE À LIGNE sous le budget, comme une lecture de `lines` : une fenêtre
+    # s'arrête à sa dernière ligne entière, jamais au milieu d'une ligne, et `to` le dit.
     hunks, taille, coupe = [], 0, False
     for a, b in fenetres:
-        rendu = []
+        rendu, fin = [], a - 1
         for n in range(a, b + 1):
             ligne = lignes[n - 1]
             if n in par_ligne:
                 texte = _fenetre(ligne, par_ligne[n], len(requete))
             else:
                 texte = _coupe(ligne, MAX_CONTEXTE_LIGNE)
-            rendu.append(_numero(n, texte))
-        bloc = "\n".join(rendu)
-        if hunks and taille + len(bloc) > MAX_TEXTE:
-            coupe = True
+            morceau = _numero(n, texte)
+            if (hunks or rendu) and taille + len(morceau) + 1 > MAX_TEXTE:
+                coupe = True
+                break
+            rendu.append(morceau)
+            taille += len(morceau) + 1
+            fin = n
+        if rendu:
+            hunks.append({"from": a, "to": fin, "text": "\n".join(rendu)})
+        if coupe:
             break
-        hunks.append({"from": a, "to": b, "text": bloc[:MAX_TEXTE]})
-        taille += len(bloc)
     if coupe or total > len(occurrences):
         out["truncated"] = True
     return {**out, "lines_matched": len(par_ligne), "hunks": hunks}

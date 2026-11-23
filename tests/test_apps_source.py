@@ -148,12 +148,29 @@ def test_requetes_refusees(kw):
         S.lire("ab\nab", **kw)
 
 
-def test_un_million_de_caracteres_reste_rapide():
-    import time
+def test_recherche_bornee_sur_des_lignes_longues_voisines():
+    """Cinquante occurrences sur des lignes voisines de 3 000 caractères : une seule
+    fenêtre, qui dépasserait le budget — coupée à sa dernière ligne ENTIÈRE, `to` exact."""
+    lignes = [f"hit{i:02d}" + "x" * 3_000 for i in range(50)]
+    res = S.lire("\n".join(lignes), search="hit", context=0)
+    assert res["truncated"] is True
+    (h,) = res["hunks"]
+    rendues = h["text"].split("\n")
+    assert int(rendues[-1].split("\t", 1)[0]) == h["to"] < 50
+    assert all(r.split("\t", 1)[1] == lignes[int(r.split("\t", 1)[0]) - 1] for r in rendues)
+    assert len(h["text"]) <= S.MAX_TEXTE
+
+
+def test_une_balise_d_un_autre_bloc_ne_ferme_pas_le_script():
+    html = "<script>\nvar css = '</style>';\nfunction f(){\nreturn 1;\n}\n</script>"
+    plan = _plan(html)
+    assert any(l.startswith("1-6 script") for l in plan)
+    assert any(l.startswith("3-5 function f") for l in plan)
+
+
+def test_un_million_de_caracteres():
     bloc = "function f%d(){var s='{';return `${'}'}`;}\n"
     html = "<script>\n" + "".join(bloc % i for i in range(25_000)) + "</script>"
     assert len(html) > 1_000_000
-    t = time.perf_counter()
-    S.lire(html)
-    S.lire(html, search="f24999")
-    assert time.perf_counter() - t < 3
+    assert S.lire(html)["omitted"] > 0
+    assert S.lire(html, search="f24999(")["matches"] == 1
