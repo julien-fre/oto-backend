@@ -385,3 +385,27 @@ def test_un_lot_melange_le_prete_et_l_accessible(monde):
             {"id": "b", "action": "read_rows", "table": "notes"}]))
     par_id = {r["id"]: r for r in out["results"]}
     assert par_id["a"]["code"] == "app_author_not_lending" and par_id["b"]["ok"]
+
+
+def test_la_liste_dit_le_pret_a_ses_editeurs_seuls(monde):
+    """Une carte d'app porte `lends` pour qui peut la modifier — l'état du prêt sans
+    lire le manifeste ni le HTML — et rien pour un lecteur."""
+    from oto_mcp import db
+    m = monde
+    _preter(m)
+    carte = next(c for c in _app_op(m, m["auteur"], m["org"], op="list")["apps"]
+                 if c["id"] == m["app"])
+    assert carte["lends"] == {"sub": m["auteur"], "email": f"{m['auteur']}@example.test",
+                              "current": True}
+    db.grant_resource("app", str(m["app"]), "user", m["membre"], role="editor",
+                      granted_by=m["auteur"])
+    db.grant_resource("datastore_namespace", str(m["ns_id"]), "user", m["membre"],
+                      role="viewer", granted_by=m["auteur"])
+    autre = {"tables": {"leads": {**m["manifest"]["tables"]["leads"], "fields": ["name"]}}}
+    _app_op(m, m["membre"], m["org"], op="update", manifest=autre)
+    carte = next(c for c in _app_op(m, m["auteur"], m["org"], op="list")["apps"]
+                 if c["id"] == m["app"])
+    assert carte["lends"]["current"] is False
+    from oto_mcp.capabilities import apps as A
+    vu = A._cards(m["lecteur"], [db.apps.get(m["app"])])[0]
+    assert "lends" not in vu

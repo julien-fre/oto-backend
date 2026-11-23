@@ -14,8 +14,7 @@ MANIFEST = {"tables": {"leads": T}}
 
 
 def _app(**kw):
-    base = {"id": 5, "manifest": MANIFEST, "acts_as": "preteur",
-            "acts_as_manifest": db.apps.empreinte_manifeste(MANIFEST)}
+    base = {"id": 5, "manifest": MANIFEST, "acts_as": "preteur", "acts_as_current": True}
     return {**base, **kw}
 
 
@@ -30,14 +29,8 @@ def test_sans_personne_nommee_rien_n_est_prete():
 
 
 def test_un_manifeste_qui_n_est_pas_celui_du_pret_ne_prete_pas():
-    qui, raison = C._preteur(_app(acts_as_manifest="autre"), "12", T, "read")
+    qui, raison = C._preteur(_app(acts_as_current=False), "12", T, "read")
     assert qui is None and "manifest changed" in raison
-
-
-def test_l_empreinte_ne_depend_pas_de_l_ordre_des_cles():
-    a = {"tables": {"x": {"table": "1", "fields": ["a"]}}, "agents": {}}
-    b = {"agents": {}, "tables": {"x": {"fields": ["a"], "table": "1"}}}
-    assert db.apps.empreinte_manifeste(a) == db.apps.empreinte_manifeste(b)
 
 
 def test_la_console_regle_le_pret(monkeypatch):

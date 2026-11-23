@@ -216,7 +216,9 @@ en montre.
   membre de son org, et que l'org le permette (403 `act_as_off` sinon). `enabled=false`
   retire le prêt (qui gouverne l'app, ou la personne nommée).
 - **Figé sur le manifeste** : `acts_as_manifest` = l'empreinte du manifeste vivant au
-  moment du prêt (`db.apps.empreinte_manifeste`). Réécrit par la personne nommée, il la
+  moment du prêt, `md5(manifest::text)` calculée par PostgreSQL (le texte d'un jsonb
+  est canonique) et comparée par lui (`acts_as_current`) : une liste dit l'état d'un
+  prêt sans lire un manifeste. Réécrit par la personne nommée, il la
   suit (`ecrire_sous_verrou`, le seul point d'écriture de l'état vivant : update,
   restore, publication d'un brouillon) ; par quelqu'un d'autre, l'app ne prête plus
   rien jusqu'à un nouveau prêt — l'écriture le dit dans ses `warnings`. Un patch du
@@ -246,7 +248,13 @@ pas de l'annuler par les routes de tableau, qui le refuseraient au lecteur.
 
 **Ce que voient les éditeurs** : `op=get` (et la réponse d'`op=act_as`) porte
 `acts_as` = `{sub, email, at, current, tables: {alias: null | pourquoi pas}}` — le
-jugement même de l'appel, tableau par tableau ; un lecteur n'en voit rien.
+jugement même de l'appel, tableau par tableau ; chaque carte d'`op=list` porte `lends`
+= `{sub, email, current}` (l'écran Apps › Settings) ; un lecteur n'en voit rien.
+
+**Qui décide de qui voit** : la personne nommée prête SES droits, mais quiconque peut
+repartager l'app (un gérant, le partage par défaut de l'org, un transfert à l'org)
+choisit à qui ils s'ouvrent. C'est pourquoi le prêt tombe quand elle ne gère plus l'app,
+et pourquoi l'écran le dit à qui prête.
 
 **Déploiement** : colonnes nullables (`20261123_1200_app_act_as`, fragment `PRET`),
 ordre indifférent avec le code. Personne ne gagne d'accès au tag : il faut une org qui

@@ -374,7 +374,8 @@ def _preteur(app: dict, ns: str, t: dict, want: str) -> tuple[Optional[str], str
 
     - **une personne NOMMÉE** (`apps.acts_as`), qui s'est nommée elle-même — on ne prête
       que ses propres droits —, jamais le dernier à avoir écrit l'app ;
-    - **FIGÉE sur le manifeste** qu'elle a prêté (`acts_as_manifest`) : réécrit par
+    - **FIGÉE sur le manifeste** qu'elle a prêté (`acts_as_current`, l'empreinte que
+      PostgreSQL compare à celle du manifeste vivant, `db/apps.py`) : réécrit par
       quelqu'un d'autre, l'app ne prête plus rien jusqu'à un nouveau prêt ; jamais sur
       un aperçu de brouillon ;
     - **l'org de l'app le permet** (`prets_permis`), la personne en est membre et GÈRE
@@ -392,7 +393,7 @@ def _preteur(app: dict, ns: str, t: dict, want: str) -> tuple[Optional[str], str
         return None, "a draft preview never lends access"
     if not qui:
         return None, "nobody lends their access to this app"
-    if db.apps.empreinte_manifeste(app.get("manifest")) != app.get("acts_as_manifest"):
+    if not app.get("acts_as_current"):
         return None, ("its manifest changed since its access was lent, and must be lent "
                       "again")
     org = org_de_l_app(app)

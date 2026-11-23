@@ -133,6 +133,10 @@ class AppCard(BaseModel):
     # Peut-il en cliquer les boutons (Use, ou la modifier) ? Servi par `op=get` seul ;
     # absent d'une liste. Faux = View : le front désactive les gestes.
     can_use: Optional[bool] = None
+    # À qui peut la modifier : la personne dont l'app PRÊTE l'accès (`op=act_as`) —
+    # `{sub, email, current}`, `current` faux = son manifeste a changé depuis le prêt.
+    # Absent = rien de prêté, ou un lecteur. Le détail par tableau : `op=get` (`acts_as`).
+    lends: Optional[dict] = None
     title: str
     thumbnail: Optional[dict] = None
     created_by: Optional[str] = None
@@ -314,10 +318,18 @@ def _cards(sub: str, rows: list[dict], writable: Optional[set[int]] = None) -> l
     lus = _projets_lisibles(sub, rangees)
     filed = {a: [p for p in pids if p in lus] for a, pids in rangees.items()}
     vis = db.apps.visibilites(_orgs_des_apps(rows))
-    return [{**r, "project_ids": filed.get(int(r["id"]), []),
-             "visibility": vis[int(r["id"])],
-             "can_edit": (int(r["id"]) in writable if writable is not None
-                          else _can(sub, r["id"], "write"))} for r in rows]
+    cartes = [{**r, "project_ids": filed.get(int(r["id"]), []),
+               "visibility": vis[int(r["id"])],
+               "can_edit": (int(r["id"]) in writable if writable is not None
+                            else _can(sub, r["id"], "write"))} for r in rows]
+    # Qui prête, aux éditeurs seuls — les adresses en UNE lecture pour la liste.
+    preteurs = {c["acts_as"] for c in cartes if c.get("can_edit") and c.get("acts_as")}
+    emails = db.emails_by_subs(list(preteurs)) if preteurs else {}
+    for c in cartes:
+        if c.get("can_edit") and c.get("acts_as"):
+            c["lends"] = {"sub": c["acts_as"], "email": emails.get(c["acts_as"]),
+                          "current": bool(c.get("acts_as_current"))}
+    return cartes
 
 
 def _view(sub: str, row: dict) -> dict:
@@ -346,8 +358,7 @@ def _pret_vu(row: dict) -> Optional[dict]:
             tables[alias] = raison or None
     return {"sub": qui, "email": db.emails_by_subs([qui]).get(qui),
             "at": row.get("acts_as_at"),
-            "current": db.apps.empreinte_manifeste(row.get("manifest"))
-            == row.get("acts_as_manifest"),
+            "current": bool(row.get("acts_as_current")),
             "tables": tables}
 
 
@@ -356,9 +367,7 @@ def _avertir_pret(avant: dict, apres: Optional[dict]) -> list[str]:
     prêt (`db.apps.ecrire_sous_verrou`) : l'app ne prête plus rien. Dit à qui écrit."""
     if not apres or not avant.get("acts_as"):
         return []
-    empreinte = db.apps.empreinte_manifeste
-    if (empreinte(avant.get("manifest")) == avant.get("acts_as_manifest")
-            and empreinte(apres.get("manifest")) != apres.get("acts_as_manifest")):
+    if avant.get("acts_as_current") and not apres.get("acts_as_current"):
         qui = db.emails_by_subs([avant["acts_as"]]).get(avant["acts_as"]) or "its lender"
         return [f"This app no longer lends {qui}'s access: its manifest changed. People "
                 "without their own access to its tables can't read them until "

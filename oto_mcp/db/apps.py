@@ -36,9 +36,16 @@ _CARTE = ("id, owner_type, owner_id, context_org_id, title, thumbnail, created_b
 # brouillon : de quoi dire au lecteur quelle version il ouvre. Jamais le brouillon
 # lui-même (`db/app_versions.py`), réservé à ses éditeurs.
 _VERSION = "drafts_enabled, published_at, version_note"
-# Qui l'app PRÊTE, sur quel manifeste, depuis quand (`docs/apps.md` § Une app qui prête
-# l'accès de quelqu'un) : lu par l'appel d'une app et par ses éditeurs, jamais par une liste.
-_PRET = "acts_as, acts_as_manifest, acts_as_at"
+# Qui l'app PRÊTE, depuis quand, et si le prêt vaut pour le manifeste VIVANT (`docs/apps.md`
+# § Une app qui prête l'accès de quelqu'un). L'empreinte est calculée par PostgreSQL
+# (`md5(manifest::text)` : le texte d'un jsonb est canonique — clés ordonnées, espaces
+# normalisés), au prêt comme à la lecture : une liste dit l'état d'un prêt sans lire les
+# manifestes.
+_PRET_COURANT = "(acts_as IS NOT NULL AND acts_as_manifest = md5(manifest::text))"
+_PRET = f"acts_as, acts_as_at, {_PRET_COURANT} AS acts_as_current"
+# Le même, pour les listes (`a.` devant chaque colonne).
+_PRET_A = ("a.acts_as, a.acts_as_at, (a.acts_as IS NOT NULL AND "
+           "a.acts_as_manifest = md5(a.manifest::text)) AS acts_as_current")
 _TOUT = _CARTE + ", manifest, html, " + _VERSION + ", " + _PRET
 # Les révisions ORDINAIRES gardées par app ; les versions publiées, à part.
 MAX_REVISIONS = 50
@@ -51,15 +58,6 @@ class AppConflict(Exception):
     def __init__(self, current_rev: str):
         super().__init__(current_rev)
         self.current_rev = current_rev
-
-
-def empreinte_manifeste(manifest: Any) -> str:
-    """L'empreinte d'un manifeste (SHA-256 de sa forme JSON triée) : ce qu'une personne
-    a vu en prêtant ses droits à l'app (`apps.acts_as_manifest`). Un manifeste stocké est
-    déjà normalisé (`apps_manifeste.forme`) : deux écritures du même contenu ont la même."""
-    brut = json.dumps(manifest or {}, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False, default=str)
-    return hashlib.sha256(brut.encode("utf-8")).hexdigest()
 
 
 def app_rev(title: str, manifest: Any, html: str, thumbnail: Any) -> str:
@@ -126,8 +124,8 @@ def list_for_projects(project_ids: Iterable[int], *, archived: bool = False) -> 
         return []
     with _connect() as conn:
         return conn.execute(
-            f"SELECT DISTINCT {', '.join('a.' + c.strip() for c in _CARTE.split(','))} "
-            f"FROM apps a JOIN app_projects f ON f.app_id = a.id "
+            f"SELECT DISTINCT {', '.join('a.' + c.strip() for c in _CARTE.split(','))}, "
+            f"{_PRET_A} FROM apps a JOIN app_projects f ON f.app_id = a.id "
             f"WHERE f.project_id = ANY(%s) AND {_archives(archived)} "
             "ORDER BY a.updated_at DESC, a.id DESC",
             (ids,),
@@ -153,8 +151,9 @@ def list_for_owners(owners: list[tuple[str, str]], *, archived: Optional[bool] =
     arch = "" if archived is None else f" AND {_archives(archived)}"
     with _connect() as conn:
         return conn.execute(
-            f"SELECT {', '.join('a.' + c.strip() for c in _CARTE.split(','))} FROM apps a "
-            f"WHERE ({' OR '.join(clauses)}){arch} ORDER BY a.updated_at DESC, a.id DESC",
+            f"SELECT {', '.join('a.' + c.strip() for c in _CARTE.split(','))}, {_PRET_A} "
+            f"FROM apps a WHERE ({' OR '.join(clauses)}){arch} "
+            "ORDER BY a.updated_at DESC, a.id DESC",
             tuple(params),
         ).fetchall()
 
@@ -169,7 +168,7 @@ def list_granted_to(principals: list[tuple[str, str]], *, archived: bool = False
     with _connect() as conn:
         cols = ', '.join('a.' + c.strip() for c in _CARTE.split(','))
         return conn.execute(
-            f"SELECT {cols}, max(g.permission) AS permission "
+            f"SELECT {cols}, {_PRET_A}, max(g.permission) AS permission "
             "FROM resource_grants g JOIN apps a ON a.id::text = g.resource_id "
             f"WHERE g.resource_type = 'app' AND {PARTAGE_VIVANT_G} "
             "AND (g.principal_type, g.principal_id) IN "
@@ -336,8 +335,8 @@ def ecrire_sous_verrou(conn, prior: dict, *, by: str, title: Optional[str] = Non
         # suit ; par quelqu'un d'autre, l'app ne prête plus rien tant qu'elle ne l'a pas
         # prêté à nouveau (`apps_appel._preteur`, `op=act_as`).
         if prior.get("acts_as") and prior["acts_as"] == by:
-            sets.append("acts_as_manifest = %s")
-            params.append(empreinte_manifeste(manifest))
+            sets.append("acts_as_manifest = md5((%s)::jsonb::text)")
+            params.append(Jsonb(manifest))
     if html is not None:
         sets.append("html = %s")
         params.append(html)
@@ -375,12 +374,13 @@ def set_acts_as(app_id: int, sub: Optional[str],
                               prior["thumbnail"])
             if courant != expected_rev:
                 raise AppConflict(courant)
-        empreinte = empreinte_manifeste(prior["manifest"]) if sub else None
         return with_rev(conn.execute(
-            "UPDATE apps SET acts_as = %s, acts_as_manifest = %s, "
+            "UPDATE apps SET acts_as = %s, "
+            "acts_as_manifest = CASE WHEN %s::text IS NULL THEN NULL "
+            "ELSE md5(manifest::text) END, "
             "acts_as_at = CASE WHEN %s::text IS NULL THEN NULL ELSE NOW() END "
             f"WHERE id = %s RETURNING {_TOUT}",
-            (sub, empreinte, sub, app_id)).fetchone())
+            (sub, sub, sub, app_id)).fetchone())
 
 
 def apps_act_as_de_l_org(org_id: int) -> Optional[bool]:
