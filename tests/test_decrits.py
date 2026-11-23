@@ -1196,3 +1196,53 @@ def test_the_probe_reads_the_address_from_the_fields_tested(a_reglage, vendeur):
     assert envoi["url"] == "https://other.example.test/api/account" and envoi["headers"]["x-key"] == "key-1"
     with pytest.raises(RuntimeError, match="settings are refused: setting instance_url is not set"):
         connector_verify._REGISTRY["essai"]({"api_key": "key-1"}, {})
+
+
+# --- EmailBison: a token and the address of the customer's instance --------------------------------------------------
+
+
+@pytest.fixture
+def emailbison(vendeur, monkeypatch):
+    """The real description mounted as the registry inscribes it, the token and the address by
+    `resolve_credential_fields`."""
+    from oto.tools.common import url_guard
+    champs = {"api_key": "token-0", "instance_url": "https://send.example.test"}
+    monkeypatch.setattr(decrits.access, "resolve_credential_fields", lambda nom, *a, **k: dict(champs))
+    monkeypatch.setattr(url_guard.socket, "getaddrinfo", _resoudre_vers("93.184.216.34"))
+    yield {t.name: t for t in decrits.monter(FastMCP("emailbison"), "emailbison", descriptions.charger("emailbison"))}
+    connector_verify._REGISTRY.pop("emailbison", None)
+    connector_verify._COUVERTURE.pop("emailbison", None)
+
+
+def test_emailbison_is_inscribed_with_its_token_and_its_address():
+    c = providers.REGISTRY["emailbison"]
+    assert (c.namespaces, c.auth_modes, c.secret_kind, c.keyed, c.decrit) == (
+        ("emailbison",), frozenset({"byo_user", "byo_org"}), "fields", False, True)
+    assert [(f.name, f.secret) for f in c.secret_fields] == [("api_key", True), ("instance_url", False)]
+    assert descriptions.refus_de_montage(descriptions.charger("emailbison")) == []
+
+
+def test_emailbison_what_reaches_people_is_on_the_act_side(emailbison):
+    assert emailbison["emailbison"].annotations == LECTURE and emailbison["emailbison_act"].annotations == ACTE
+    envoyer = effets.EFFETS["emailbison_act"]["envoyer"].split()
+    assert {"reply_to_email", "add_leads_to_campaign", "add_lead_list_to_campaign", "resume_campaign",
+            "create_webhook"} <= set(envoyer)
+    assert effets.EFFETS["emailbison_act"]["detruire"].split() == ["delete_webhook"]
+    assert "list_replies" in emailbison["emailbison"].description and "reply_to_email" not in emailbison[
+        "emailbison"].description
+
+
+def test_emailbison_lists_replies_on_the_instance_without_the_attachment_address(emailbison, vendeur):
+    signee = "https://bison.example.test/reply-attachments/0/download?signature=secret"
+    vendeur.answers.append((200, {"data": [{"id": 45, "text_body": "Sounds good", "html_body": "<p>Sounds good</p>",
+                                            "raw_body": "MIME", "headers": "Received: x",
+                                            "attachments": [{"file_name": "deck.pdf", "download_url": signee}]}],
+                                  "meta": {"next_cursor": None}}))
+    rendu = _appel(emailbison["emailbison"], op="list_replies", folder="inbox", read=0)
+    texte = json.dumps(rendu)
+    assert "secret" not in texte and "MIME" not in texte and "html_body" not in texte and "deck.pdf" in texte
+    envoi = essai.envoyee(vendeur.requests[0])
+    assert envoi["url"] == "https://send.example.test/api/replies"
+    assert envoi["headers"]["authorization"] == "Bearer token-0"
+    assert envoi["query"] == [("pagination_type", "cursor"), ("folder", "inbox"), ("read", "0")]
+
