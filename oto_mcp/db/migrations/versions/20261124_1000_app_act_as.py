@@ -21,8 +21,8 @@ l'ancien code les ignore (il ne prête rien).
 Retour arrière : retire les colonnes (les apps qui prêtaient reviennent à auteur ∩
 lecteur).
 
-Révision : 20261123_1200_app_act_as
-Précédente : 20261120_2250_org_erasures
+Révision : 20261124_1000_app_act_as
+Précédente : 20261123_1433_embed_file
 """
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ from alembic import op
 
 from oto_mcp.db.schema.apps import PRET
 
-revision = "20261123_1200_app_act_as"
-down_revision = "20261120_2250_org_erasures"
+revision = "20261124_1000_app_act_as"
+down_revision = "20261123_1433_embed_file"
 branch_labels = None
 depends_on = None
 

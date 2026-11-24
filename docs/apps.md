@@ -256,7 +256,7 @@ repartager l'app (un gérant, le partage par défaut de l'org, un transfert à l
 choisit à qui ils s'ouvrent. C'est pourquoi le prêt tombe quand elle ne gère plus l'app,
 et pourquoi l'écran le dit à qui prête.
 
-**Déploiement** : colonnes nullables (`20261123_1200_app_act_as`, fragment `PRET`),
+**Déploiement** : colonnes nullables (`20261124_1000_app_act_as`, fragment `PRET`),
 ordre indifférent avec le code. Personne ne gagne d'accès au tag : il faut une org qui
 le permet ET une personne qui prête. Gardé par `tests/test_apps_pret_db.py` (de bout en
 bout, lecteur d'une autre org, chaque garde retirée tour à tour) et
