@@ -79,6 +79,13 @@ def check_site(site_url: str) -> bool:
     return http_allowed(site_url)
 
 
+def _session():
+    """The pinned transport of the site being connected (`egress_transport`)."""
+    from .. import egress_transport
+    return egress_transport.session(connector="wordpress", field="site_url",
+                                    exceptions_declarees=True)
+
+
 def http_allowed(site_url: str) -> bool:
     """The "scheme" half of `check_site`, for a caller that sets the egress guard
     itself (the tools, which `tests/test_egress_guard.py` reads): False over
@@ -143,7 +150,7 @@ def _authorization_endpoint(site_url: str, *, allow_http: bool = False) -> str:
     # credentials on ANY REST route, index included — a dummy credential
     # would return a 401 there (`rest_application_password_check_errors`). The two
     # constructor values are never sent.
-    c = WordPressClient(site_url, "-", "-", allow_http=allow_http)
+    c = WordPressClient(site_url, "-", "-", allow_http=allow_http, session=_session())
     try:
         index = c.public_index()
     except ValueError as e:
@@ -264,7 +271,8 @@ def finish(parsed: dict, site_url: str, user_login: str, password: str) -> str:
         raise ConnectRefused("WordPress returned neither a username nor a password.")
     allow_http = check_site(asked)
 
-    me = WordPressClient(asked, user_login, password, allow_http=allow_http).me()
+    me = WordPressClient(asked, user_login, password, allow_http=allow_http,
+                         session=_session()).me()
     if not me.get("id"):
         raise ConnectRefused("the received password does not authenticate (empty users/me).")
 

@@ -47,7 +47,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, egress, status_hints
+from .. import access, egress, egress_transport, status_hints
 from ..connectors import flow as connector_flow
 from ..connectors import health as connector_health
 from ..connectors import verify as connector_verify
@@ -273,6 +273,10 @@ def _verify(fields: dict, config: dict | None = None,
         # compared the org token to the personal token, didn't recognize it, persisted
         # nothing, and thus killed the org token by refreshing it. Lived 03/08.
         on_refresh=_rotation_writer_for(fields.get("refresh_token") or "", instance),
+        # The refresh on `login_url` AND the calls on the returned `instance_url` go
+        # out through the pinned transport (`egress_transport`).
+        session=egress_transport.session(connector="salesforce", field="login_url",
+                                         exceptions_declarees=True),
     )
     try:
         client.query("SELECT Id FROM Contact LIMIT 1")
@@ -445,6 +449,8 @@ def register(mcp: FastMCP) -> None:
             refresh_token=creds.get("refresh_token"),
             login_url=_login_url(creds.get("login_url")),
             on_refresh=_rotation_writer(rc, creds.get("refresh_token") or ""),
+            session=egress_transport.session(connector="salesforce", field="login_url",
+                                             exceptions_declarees=True),
         )
         return client, rc
 

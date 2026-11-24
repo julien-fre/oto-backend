@@ -273,29 +273,17 @@ def client_for(fields: dict, headers: dict | None = None, *,
         session = {"guard": api_session.guard(base_url),
                    "jar": api_session.read_jar(row, fields),
                    "on_jar": api_session.jar_writer(row, fields)}
-    client = HttpConnectorClient(base_url, mode, fields, timeout=TIMEOUT, **session)
-    return api_operations.with_constant_headers(_pinned(client), headers)
-
-
-def _pinned(client: HttpConnectorClient) -> HttpConnectorClient:
-    """The client's session goes out through the pinned transport (`egress_transport`):
-    the guard holds at CONNECTION time, on the addresses actually joined — a resolution
-    that changes after `check_url` (DNS rebinding) is refused there, and so is every
-    hop of a session-mode login. The session must be pinned BEFORE the auth configures
-    it (the session mode logs in right there), hence oto-core's private `_ready`
-    REPLACED by the same three steps on a guarded session — coupled to `_session` and
-    `_auth`, held by `tests/test_egress_transport.py`. Follow-up: a `session=`
-    parameter in oto-core. ⚠️ The oauth2 token request leaves through a module-level
-    `requests.post` in oto-core: outside this session, checked only by `check_url`."""
-    def _ready():
-        if client._session is None:
-            s = egress_transport.harden(requests.Session(), connector="api",
-                                        field="base_url")
-            client._auth.configure(s)
-            client._session = s
-        return client._session
-    client._ready = _ready
-    return client
+    # Both transports are pinned (`egress_transport`): the guard holds at CONNECTION
+    # time, on the addresses actually joined — the calls and the session-mode login on
+    # one session, the oauth2 token request on its own (oto-core keeps it apart from the
+    # session that carries the bearer being renewed).
+    client = HttpConnectorClient(
+        base_url, mode, fields, timeout=TIMEOUT, **session,
+        session=egress_transport.session(connector="api", field="base_url",
+                                         exceptions_declarees=True),
+        token_session=egress_transport.session(connector="api", field="token_url",
+                                               exceptions_declarees=True))
+    return api_operations.with_constant_headers(client, headers)
 
 
 def client_from_fields(f: dict, headers: dict | None = None, *,

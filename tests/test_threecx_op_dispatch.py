@@ -75,7 +75,11 @@ def test_credential_passe_tel_quel(construits, egress_vu, monkeypatch, creds, at
     _creds(monkeypatch, creds)
     inst.list_calls.return_value = {"calls": [], "next_skip": None}
     _tool("threecx_call")("2026-09-01", "2026-09-02")
-    assert calls == [attendu]
+    # La session est le transport épinglé (`egress_transport`), les champs passent tels quels.
+    from oto_mcp import egress_transport
+    assert [{k: v for k, v in c.items() if k != "session"} for c in calls] == [attendu]
+    assert isinstance(calls[0]["session"].get_adapter("https://pbx.exemple.fr/"),
+                      egress_transport.AdaptateurEpingle)
     assert egress_vu == [("https://pbx.exemple.fr", "threecx")]
 
 

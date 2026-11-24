@@ -327,9 +327,8 @@ def test_l_import_d_un_document_public_refuse_un_rebinding(monkeypatch, aucune_s
 
 def test_la_carte_api_sort_par_le_transport_epingle_avant_son_auth(monkeypatch):
     """`HttpConnectorClient` crée sa session paresseusement et la confie à l'auth
-    (le mode session s'y connecte aussitôt) : la session doit être gardée AVANT.
-    Tient aussi le couplage au `_ready` privé d'oto-core — un renommage côté lib
-    rougit ici."""
+    (le mode session s'y connecte aussitôt) : la session doit être gardée AVANT —
+    c'est la session DONNÉE à oto-core (`session=`) que l'auth configure."""
     from oto_mcp.tools import api as tool_api
     monkeypatch.setattr(egress, "resolved_addresses", _Resolveur([PUBLIQUE]))
     client = tool_api.client_for({"base_url": "https://api.exemple.test",
@@ -419,3 +418,44 @@ def test_l_echange_partage_n_utilise_la_session_que_si_on_la_donne(monkeypatch):
     oauth_flow.exchange_code("https://ex.test/token", **args)
     oauth_flow.exchange_code("https://ex.test/token", session=_Session(), **args)
     assert vus == ["module", "session"]
+
+
+# ── 6. les clients d'oto-core qui prennent `session=` (oto-core, transport injectable) ──
+
+@pytest.mark.parametrize("connecteur,fields,config,controles", [
+    ("lighton", {"api_key": "k", "base_url": "https://lighton.exemple.test"}, None, 1),
+    ("salesforce", {"client_id": "c", "client_secret": "s", "refresh_token": "r",
+                    "login_url": "https://acme.my.exemple.test"}, None, 1),
+    ("wordpress", {"site_url": "https://blog.exemple.test", "username": "u",
+                   "application_password": "p"}, None, 1),
+    ("threecx", {"base_url": "https://pbx.exemple.test", "auth_mode": "api_client",
+                 "client_id": "c", "client_secret": "s"}, None, 1),
+])
+def test_un_client_a_appels_de_module_sort_desormais_par_le_transport(
+        monkeypatch, aucune_socket, connecteur, fields, config, controles):
+    """Public au contrôle, interne à la connexion : refusé par le transport, jetons
+    compris (Salesforce sur `login_url`, 3CX), sans socket ouverte."""
+    monkeypatch.setattr(egress, "resolved_addresses",
+                        _Resolveur([PUBLIQUE], ["127.0.0.1"], n=controles))
+    # 3CX fait aussi son propre contrôle d'adresse publique, par la résolution du
+    # système : vue publique ici. Le transport, lui, passe par la couture d'egress.
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, *a, **k: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIQUE, 443))])
+    monkeypatch.delenv(egress.ALLOW_VAR, raising=False)
+    sonde = importlib.import_module(f"oto_mcp.tools.{connecteur}")._verify
+    with pytest.raises(Exception, match="boucle locale"):
+        sonde(fields, config)
+
+
+def test_le_jeton_oauth2_de_la_carte_api_sort_par_le_transport(monkeypatch, aucune_socket):
+    """`token_url` reçoit le secret client : sa requête sort par sa propre session
+    gardée, distincte de celle des appels."""
+    from oto_mcp.tools import api as tool_api
+    monkeypatch.setattr(egress, "resolved_addresses",
+                        _Resolveur([PUBLIQUE], ["127.0.0.1"], n=2))
+    client = tool_api.client_for({"base_url": "https://api.exemple.test",
+                                  "auth_mode": "oauth2",
+                                  "token_url": "https://jeton.exemple.test/token",
+                                  "client_id": "c", "client_secret": "s"})
+    with pytest.raises(egress.EgressRefused, match="token_url"):
+        client.get("/v1/x")

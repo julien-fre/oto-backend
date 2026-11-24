@@ -37,7 +37,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto.tools.common.errors import UpstreamHTTPError
 
-from .. import access, egress
+from .. import access, egress, egress_transport
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from . import wordpress_blocks
@@ -201,13 +201,21 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     allow_http = _guard(fields.get("site_url") or "")
     try:
         me = WordPressClient(fields["site_url"], fields["username"],
-                             fields["application_password"], allow_http=allow_http).me()
+                             fields["application_password"], allow_http=allow_http,
+                             session=_session()).me()
     except UpstreamHTTPError as e:
         if e.status_code == 401:
             raise connector_verify.NonAutorise(_translate(e).error.message) from e
         raise
     if not me.get("id"):
         raise RuntimeError(f"unexpected response from users/me: {str(me)[:200]}")
+
+
+def _session():
+    """The pinned transport of a WordPress site (`egress_transport`): the site address
+    comes from a credential, so the guard holds at connection time."""
+    return egress_transport.session(connector="wordpress", field="site_url",
+                                    exceptions_declarees=True)
 
 
 def _client(account: Optional[str] = None) -> WordPressClient:
@@ -219,7 +227,7 @@ def _client(account: Optional[str] = None) -> WordPressClient:
         allow_http = _guard(site)
         return WordPressClient(site, creds.get("username") or "",
                                creds.get("application_password") or "",
-                               allow_http=allow_http)
+                               allow_http=allow_http, session=_session())
     except ValueError as e:   # egress guard, HTTP, URL or credentials missing
         raise _bad(f"unusable WordPress credential: {e}") from e
 

@@ -201,7 +201,7 @@ def session(*, connector: str, field: str = "url",
 def pinned(client, *, connector: str, field: str = "base_url"):
     """Un client d'oto-core qui porte sa `requests.Session` en `.session`, rendu avec
     cette session gardée (politique d'un credential d'administrateur). Rend `client`.
-    ⚠️ Ne couvre que ce qui passe par `.session` : un appel `requests.<verbe>` au
-    niveau module dans la lib reste hors du transport (`docs/connector-vault.md`)."""
+    ⚠️ Ne couvre que ce qui passe par `.session` ; un client qui prend `session=`
+    reçoit plutôt `session(...)` à sa construction (`docs/connector-vault.md`)."""
     harden(client.session, connector=connector, field=field)
     return client

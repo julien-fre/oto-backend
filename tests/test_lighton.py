@@ -132,7 +132,7 @@ def _call(tool_name, **kwargs):
 
 
 def test_search_sends_bearer_and_body():
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp({"results": []})
         _call("lighton_search", query="code secret", workspace_ids=[7046],
               max_results=3)
@@ -150,7 +150,7 @@ def test_search_uses_instance_default_workspace(monkeypatch):
         "oto_mcp.access.resolve_credential_fields",
         lambda provider, account=None: {**_CREDS, "workspace_id": "7046"},
     )
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp({"results": []})
         _call("lighton_search", query="x")
     _, kwargs = req.call_args
@@ -162,7 +162,7 @@ def test_search_explicit_workspace_overrides_default(monkeypatch):
         "oto_mcp.access.resolve_credential_fields",
         lambda provider, account=None: {**_CREDS, "workspace_id": "7046"},
     )
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp({"results": []})
         _call("lighton_search", query="x", workspace_ids=[99])
     _, kwargs = req.call_args
@@ -178,7 +178,7 @@ def test_ask_and_search_strip_page_images():
     ]}
     for tool, kwargs in (("lighton_ask", {"query": "q"}),
                          ("lighton_search", {"query": "q"})):
-        with patch("oto.tools.lighton.client.requests.request") as req:
+        with patch("requests.Session.request") as req:
             req.return_value = _Resp(heavy)
             out = _call(tool, **kwargs)
         assert all("image" not in r for r in out["results"]), tool
@@ -186,7 +186,7 @@ def test_ask_and_search_strip_page_images():
 
 
 def test_ask_body():
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp({"answer": "42", "results": []})
         _call("lighton_ask", query="le code ?", file_ids=[7],
               model="mistral-large-latest")
@@ -200,7 +200,7 @@ def test_ask_body():
 def test_upload_without_workspace_errors_actionably():
     # Pas de workspace_id explicite NI configuré sur l'instance → erreur
     # actionnable AVANT tout appel réseau LightOn.
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         with pytest.raises(McpError) as exc:
             _call("lighton_upload_document",
                   source={"kind": "url", "url": "https://x/f.pdf"})
@@ -208,7 +208,7 @@ def test_upload_without_workspace_errors_actionably():
 
 
 def test_delete_document_returns_ack():
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp(None, 204)
         out = _call("lighton_delete_document", file_id=7)
     args, _ = req.call_args
@@ -217,7 +217,7 @@ def test_delete_document_returns_ack():
 
 
 def test_401_maps_to_actionable_message():
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp({"error": "unauthorized", "code": 401}, 401)
         with pytest.raises(McpError) as exc:
             _call("lighton_workspaces")
@@ -225,7 +225,7 @@ def test_401_maps_to_actionable_message():
 
 
 def test_5xx_maps_to_retry_message():
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         req.return_value = _Resp({"error": "oops"}, 503)
         with pytest.raises(McpError) as exc:
             _call("lighton_workspaces")
@@ -233,7 +233,7 @@ def test_5xx_maps_to_retry_message():
 
 
 def test_parse_bad_source_never_hits_network():
-    with patch("oto.tools.lighton.client.requests.request") as req:
+    with patch("requests.Session.request") as req:
         with pytest.raises(McpError):
             _call("lighton_parse", source={"kind": "nope"})
     req.assert_not_called()

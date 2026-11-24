@@ -292,11 +292,12 @@ session compris), `n8n`, `make`, `github`, `posthog`, `lucca`, `threecx` et du w
 passe une session gardée à `auth/flow.exchange_code`, dont le défaut — hôte fixe des
 autres fournisseurs — ne change pas). Banc : `tests/test_egress_transport.py`.
 
-⚠️ **Ce qui reste sous le seul contrôle précoce, nommé** : les appels qu'oto-core fait par
-`requests.<verbe>` au niveau module, sans session à monter — `lighton`, `salesforce`
-(dont l'échange du refresh token sur `login_url`), `wordpress`, le jeton `oauth2` du
-connecteur `api` (`token_url`) et les jetons `threecx`. Les fermer demande un
-paramètre `session=` côté lib, donc un bump de pin.
+Depuis qu'oto-core prend un transport injectable (`session=`), les clients qui appelaient
+`requests.<verbe>` au niveau module sortent aussi par une session gardée : `lighton`,
+`salesforce` (l'échange du refresh token sur `login_url` et les appels sur
+l'`instance_url` rendue), `wordpress` (outils et connexion), `threecx` (jetons compris)
+et la carte `api`, dont la requête de jeton `oauth2` (`token_url`) a sa propre session
+gardée, distincte de celle des appels (`token_session=`).
 
 ⚠️ **Contredit l'ADR 0037 §4**, qui décidait « zéro code SSRF dans le connecteur » et
 renvoyait le blocage des plages privées à un egress proxy « plus tard… si le besoin
