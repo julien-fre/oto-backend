@@ -243,3 +243,13 @@ def test_le_fork_d_un_simple_membre_cree_une_procedure_perso(banc, monkeypatch):
     assert (banc.ecrit[-1]["owner_type"],
             banc.ecrit[-1]["owner_id"]) == ("user", "compte-membre")
     assert banc.ecrit[-1]["install_org_id"] == ORG
+
+
+def test_le_slug_apps_est_reserve(banc):
+    """`apps` est l'adresse de la page des apps de la communauté (site, application) :
+    aucune procédure ne le porte. Même refus qu'un nom pris, rien d'écrit."""
+    with pytest.raises(AuthzDenied) as e:
+        _servir("library.publish", "compte-admin-org", "rest", slug="veille-concurrence",
+                public_slug="Apps")
+    assert (e.value.status, e.value.code) == (409, "slug_taken")
+    assert banc.ecrit == []

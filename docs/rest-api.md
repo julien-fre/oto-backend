@@ -570,7 +570,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   `sort` ∈ `trending` (installs_30d) | `most_added` (installs_total) | `new` (création) ; sans `sort`, le
   tri d'avant (dernière publication d'abord).
   Une entrée signée par une `org` reste possédée par elle : un autre auteur ne la reprend pas (409
-  `slug_taken`), son org_admin peut la dépublier.
+  `slug_taken`), son org_admin peut la dépublier. Le slug public `apps` est RÉSERVÉ (adresse de la
+  page des apps de la communauté, site et application) : même refus 409 `slug_taken`.
   **Fork** réutilise `org_store.set_instruction` (`fork_library_entry`) → procédure
   versionnée dont le palier suit le rôle réel dans l'org active (décision du 06/10/2026) :
   procédure d'org pour un org_admin, procédure PERSONNELLE pour un membre ; `scope=user|org`

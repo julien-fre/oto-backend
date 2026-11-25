@@ -286,6 +286,11 @@ class UnpublishResult(BaseModel):
                     "voulu est déjà atteint.")
 
 
+#: Les slugs publics qui ne désignent pas une entrée : des adresses de la communauté
+#: elle-même (`/community/apps` sur le site et dans l'application).
+SLUGS_RESERVES = frozenset({"apps"})
+
+
 def _author_for(ctx: ResolvedCtx) -> tuple[str, Optional[int], str]:
     """Auteur affiché : super_admin plateforme → Otomata ; sinon l'org active (un
     opérateur `admin` publie comme l'org dont il est admin, pas au nom d'Otomata).
@@ -363,6 +368,12 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
                           f"Guide `{inp.slug}` absent de ton org active.",
                           deprecations.details_avec_code_dhier("unknown_guide"))
     kind, author_org_id, display = _author_for(ctx)
+    public = org_store.normalize_slug(inp.public_slug or inp.slug)
+    if public in SLUGS_RESERVES:
+        # Même refus qu'un nom pris : le slug est l'adresse de l'entrée, et `apps` est
+        # celle de la page des apps de la communauté (site et application).
+        raise AuthzDenied(409, "slug_taken", f"Le nom `{public}` n'est pas disponible — "
+                          "publie sous un autre `public_slug`.")
     title = inp.title if inp.title is not None else (src.get("title") or "")
     description = (inp.description if inp.description is not None
                    else (src.get("description") or ""))
