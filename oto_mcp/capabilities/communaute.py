@@ -57,9 +57,11 @@ def projeter(sub: str, entry: dict, *, privilegie: Optional[bool] = None) -> dic
     d = dict(entry)
     raison = d.pop("moderation_reason", "")
     par, quand = d.pop("removed_by", None), d.pop("removed_at", None)
+    if d.get("moderation_state") != store.REMOVED:
+        return d
     if privilegie is None:
         privilegie = peut_voir_retiree(sub, d)
-    if privilegie and d.get("moderation_state") == store.REMOVED:
+    if privilegie:
         d["moderation"] = {"state": store.REMOVED, "reason": raison,
                            "removed_by": par, "removed_at": quand}
     return d
