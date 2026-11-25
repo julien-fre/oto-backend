@@ -458,13 +458,16 @@ def _fork(ctx: ResolvedCtx, inp: ForkInput) -> dict:
 
 
 def _unpublish(ctx: ResolvedCtx, inp: UnpublishInput) -> dict:
-    entry = org_store.get_library_entry(entry_id=inp.id, include_unlisted=True)
-    if not entry:
+    entry = org_store.get_library_entry(entry_id=inp.id, include_unlisted=True,
+                                        include_removed=True)
+    if not entry or (entry.get("moderation_state") == "removed"
+                     and not communaute.peut_voir_retiree(ctx.sub, entry)):
         raise AuthzDenied(404, "unknown_entry", "Entrée inconnue.")
     is_author = (entry["author_kind"] == "org" and entry.get("author_org_id") is not None
                  and roles.is_org_admin(ctx.sub, entry["author_org_id"]))
     if not (is_author or access.is_platform_operator(ctx.sub)):
         raise AuthzDenied(403, "forbidden", "Réservé à l'auteur ou à un admin plateforme.")
+    communaute.refuser_si_retiree(ctx.sub, entry)
     return {"unpublished": org_store.unpublish_guide(inp.id)}
 
 
@@ -525,7 +528,10 @@ CAPABILITIES += [
     Capability(
         key="library.unpublish", handler=_unpublish, Input=UnpublishInput, authz=SUB_ONLY,
         description="Remove a guide you published from the public library (author org_admin "
-                    "or platform admin). id = the library entry id.",
+                    "or platform admin). id = the library entry id. An entry removed by "
+                    "platform staff can't be unpublished by its author (403 "
+                    "entree_retiree): unpublishing then re-publishing would lift the "
+                    "removal.",
         Output=UnpublishResult,
         rest=RestBinding("DELETE", "/api/me/guide-library/{id}"),
     ),

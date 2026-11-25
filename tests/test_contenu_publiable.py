@@ -62,3 +62,21 @@ def test_les_constats_nomment_le_champ_et_jamais_la_valeur():
     assert "body_md" in msg and "adresse email" in msg and "téléphone" in msg
     for valeur in ("paul", "vraie-boite", "11 22"):
         assert valeur not in msg
+
+
+def test_le_html_d_une_app_ordinaire_passe():
+    """Une app charge une bibliothèque de CDN avec son empreinte d'intégrité, embarque une
+    image en `data:`, dessine en SVG, prend une police : rien de tout cela n'est un
+    secret. Une vraie clé posée à côté l'est toujours."""
+    html = (
+        '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" '
+        'integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" '
+        'crossorigin="anonymous"></script>'
+        '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUl'
+        'EQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">'
+        '<svg><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>'
+        '</svg><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600" '
+        'rel="stylesheet"><script>oto.rows("deals", {limit: 50})</script>')
+    assert cp.categories(html) == []
+    assert cp.categories(html + "<script>const k = 'sk-proj-AbCdEfGhIjKlMnOpQrStUv12'</script>") \
+        == ["secret"]

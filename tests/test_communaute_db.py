@@ -220,6 +220,22 @@ def test_la_vitrine_anonyme_ne_sert_que_ses_champs(monde):
                  params={"sort": "trending", "category": "sales"}).status_code == 200
 
 
+def test_l_auteur_ne_leve_pas_un_retrait_en_depubliant(monde):
+    """Dépublier puis republier sous le même slug ferait une entrée NEUVE, sans retrait :
+    une entrée retirée ne se dépublie que par le personnel."""
+    L = _lib()
+    m, u = monde, monde["u"]
+    r = _publier(m, "admin_a", "a", "relance", f"relance-{u}")
+    _moderer(m, "staff", r["id"], "remove")
+    with pytest.raises(AuthzDenied) as e:
+        L._unpublish(_ctx(m, "admin_a", "a"), L.UnpublishInput(id=r["id"]))
+    assert (e.value.status, e.value.code) == (403, "entree_retiree")
+    with pytest.raises(AuthzDenied) as e:
+        L._unpublish(_ctx(m, "admin_b", "b"), L.UnpublishInput(id=r["id"]))
+    assert e.value.status == 404, "un tiers ne sait même pas qu'elle existe"
+    assert L._unpublish(_ctx(m, "staff", None), L.UnpublishInput(id=r["id"]))["unpublished"]
+
+
 def test_depublier_emporte_les_lignes_de_la_communaute(monde):
     from oto_mcp import org_store
     from oto_mcp.db._conn import _connect
@@ -227,7 +243,7 @@ def test_depublier_emporte_les_lignes_de_la_communaute(monde):
     r = _publier(m, "admin_a", "a", "relance", f"relance-{u}")
     _forker(m, "admin_b", "b", r["slug"])
     _moderer(m, "staff", r["id"], "remove")
-    assert org_store.unpublish_guide(r["id"]) is True
+    assert org_store.unpublish_guide(r["id"]) is True     # le geste du personnel
     with _connect() as conn:
         for t in ("community_installs", "community_moderation"):
             n = conn.execute(f"SELECT count(*) AS n FROM {t} WHERE kind = 'procedure' "

@@ -50,6 +50,16 @@ def peut_voir_retiree(sub: str, entry: dict) -> bool:
             and roles.is_org_admin(sub, int(org)))
 
 
+def refuser_si_retiree(sub: str, entry: dict) -> None:
+    """Une entrée RETIRÉE ne se dépublie que par le personnel de la plateforme : son
+    auteur la dépublierait puis la republierait sous le même slug — une entrée neuve,
+    sans retrait. 403 `entree_retiree`."""
+    if entry.get("moderation_state") == store.REMOVED and not access.is_platform_operator(sub):
+        raise AuthzDenied(403, "entree_retiree",
+                          "Cette entrée a été retirée par l'équipe de la plateforme : elle ne "
+                          "se dépublie pas de ton côté. Écris-nous pour la faire revoir.")
+
+
 def projeter(sub: str, entry: dict, *, privilegie: Optional[bool] = None) -> dict:
     """Range les champs de modération d'une ligne lue : `moderation` (motif, auteur,
     date du retrait) n'est rendu qu'à qui peut voir une entrée retirée ; les autres ne

@@ -564,7 +564,9 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   de `list`/`get`/`fork` (404 `unknown_entry`, celui d'une entrée inconnue) et de la vitrine anonyme, pour
   tous sauf les admins de l'org autrice et les opérateurs plateforme, qui la lisent avec
   `moderation: {state, reason, removed_by, removed_at}` (et la listent avec `include_removed=true`). Une
-  REPUBLICATION ne lève pas un retrait (`PublishResult.moderation_state` le dit).
+  REPUBLICATION ne lève pas un retrait (`PublishResult.moderation_state` le dit), et l'auteur ne
+  dépublie pas une entrée retirée (403 `entree_retiree` : dépublier puis republier ferait une entrée
+  neuve sans retrait) — seul le personnel la dépublie.
   **Installations** (`community_installs`) : chaque fork réussi est noté (entrée, org active, compte) ;
   `installs_total` / `installs_30d` = orgs DISTINCTES, servis sur `list` et `get`. `library.list` prend
   `sort` ∈ `trending` (installs_30d) | `most_added` (installs_total) | `new` (création) ; sans `sort`, le

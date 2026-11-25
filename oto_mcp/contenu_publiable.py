@@ -13,6 +13,11 @@ n'a rien à faire dans un modèle partagé :
 - une adresse web qui porte un secret (identifiants `user:pass@`, ou un paramètre de
   requête nommé comme un secret : `token`, `key`, `signature`…).
 
+Ce qui a la forme d'un secret sans en être un dans le HTML d'une app — une empreinte
+d'intégrité (`integrity="sha384-…"`) ou une ressource `data:…;base64,…` — n'est pas
+compté (relevé sur les modèles d'app du front : sans cette exception, une app qui charge
+une bibliothèque de CDN avec son empreinte serait refusée).
+
 Fonction PURE, sans I/O : elle ne voit que les textes qu'on lui donne et ne rend que des
 CATÉGORIES — jamais la valeur trouvée, qui est précisément ce qu'on ne doit pas
 recopier (ni dans un message d'erreur, ni dans un journal).
@@ -65,6 +70,13 @@ _RE_SECRETS = [
 # Longue chaîne base64/base64url : un secret si elle MÉLANGE minuscules, majuscules et
 # chiffres — un mot composé, un slug ou un chemin n'en ont pas la forme.
 _RE_B64 = re.compile(r"(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{40,}={0,2}")
+
+# Ce qui a la FORME d'un secret sans en être un, dans le HTML d'une app : une empreinte
+# d'intégrité de sous-ressource (`integrity="sha384-…"`, publique par construction) et une
+# ressource embarquée (`data:image/png;base64,…`). Retirés avant de chercher les secrets.
+_RE_NEUTRES = re.compile(
+    r"\b(?:sha256|sha384|sha512)-[A-Za-z0-9+/]{40,}={0,2}"
+    r"|\bdata:[\w.+-]+/[\w.+-]+(?:;[\w.+-]+=[\w.+-]+)*;base64,[A-Za-z0-9+/]+={0,2}", re.I)
 
 _RE_URL = re.compile(r"\bhttps?://[^\s<>\"')\]]+", re.I)
 _PARAMS_SECRETS = re.compile(
@@ -120,8 +132,10 @@ def categories(texte: str) -> list[str]:
         _ajout(EMAIL)
     if _RE_TEL.search(sans_url):
         _ajout(TELEPHONE)
-    if (any(r.search(t) for r in _RE_SECRETS)
-            or any(_b64_secret(m.group(0)) for m in _RE_B64.finditer(sans_url))):
+    neutre = _RE_NEUTRES.sub(" ", t)
+    if (any(r.search(neutre) for r in _RE_SECRETS)
+            or any(_b64_secret(m.group(0))
+                   for m in _RE_B64.finditer(_RE_NEUTRES.sub(" ", sans_url)))):
         _ajout(SECRET)
     return [c for c in (URL_SECRETE, EMAIL, TELEPHONE, SECRET) if c in trouve]
 
