@@ -148,8 +148,9 @@ def test_restaurer_vers_le_brouillon_d_une_app_sans_brouillon(brouillons):
 
 
 def test_qui_ecrit_le_brouillon_doit_atteindre_son_manifeste(brouillons):
-    """L'auteur du brouillon borne son aperçu : écrire sans lire ce qu'il déclare est
-    refusé, comme pour l'app publiée."""
+    """L'auteur du brouillon borne son aperçu : écrire sans lire ce qu'il déclare, sur
+    un brouillon dont l'auteur ne le lit plus non plus, est refusé, comme pour l'app
+    publiée."""
     brouillons["draft"] = _brouillon(manifest={"tables": {"t": {"table": "99"}}}, by="autre")
     e = _refus(lambda: _app(op="patch", edits=[{"find": "draft", "replace": "x"}]))
     assert (e.status, e.code) == (403, "would_break_app")

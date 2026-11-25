@@ -150,10 +150,17 @@ auteur celui de l'app, et un éditeur sans les tableaux était refusé (`would_b
   encore**. Sinon le refus est le sien, nommé par SES problèmes (rien ne dit ce que
   l'auteur atteint). Une restauration ou une publication se juge pareil, contre ce
   qu'elle remplace.
-- **Il ne lit rien de plus** : à l'appel, la règle auteur ∩ lecteur le juge comme tout
-  lecteur. Ce que l'écriture lui ouvre, c'est le HTML qui tourne chez les lecteurs qui
-  ont les tableaux — comme tout éditeur d'une app, dans le cadre isolé (§ Ce que le cadre
-  isolé laisse sortir), et ses gestes demandent l'accord du lecteur.
+- **Il ne lit rien de plus par l'app** : à l'appel, la règle auteur ∩ lecteur le juge
+  comme tout lecteur (refusé sur un tableau qu'il n'a pas).
+- **Ce qui change** : jusqu'ici, qui écrivait le HTML lisait déjà tout ce que l'app
+  montre. Désormais le HTML d'un éditeur SANS les tableaux tourne chez des lecteurs qui
+  les ont. Le cadre isolé ne laisse rien sortir vers lui (§ Ce que le cadre isolé laisse
+  sortir : `connect-src 'none'`, requêtes vers les CDN permis seuls). Restent trois
+  chemins, chacun derrière un geste du LECTEUR : `oto.open(url)` (l'adresse entière
+  montrée, ouverte s'il la choisit), `set`/`add` vers un tableau déclaré que l'éditeur
+  lit (accord du lecteur, valeur montrée), et l'entrée d'un agent déclaré `run` (accord
+  du lecteur). L'éditeur ne peut ni ajouter un tableau, un champ ou un agent, ni élargir
+  `set`/`add` : ces chemins sont ceux que l'auteur a déclarés.
 
 ## Une app ouverte — auteur ∩ lecteur (`me.app.call`)
 

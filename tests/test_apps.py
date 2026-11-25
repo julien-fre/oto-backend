@@ -766,3 +766,16 @@ def test_ecrire_le_brouillon_sans_ses_tableaux_garde_son_auteur(editeur, monkeyp
     A._app(CTX, A.AppInput(op="patch", app_id=5, edits=[{"find": "x", "replace": "y"}]))
     A._app(CTX, A.AppInput(op="update", app_id=5, manifest={"height": 700, **SANS}))
     assert vus == [("auteur", "u1"), ("auteur", "u1")]
+
+
+def test_restaurer_sans_les_tableaux_garde_l_auteur_si_les_declarations_restent(editeur):
+    editeur["old_manifest"] = {"height": 300, **SANS}
+    A._app(CTX, A.AppInput(op="restore", app_id=5, revision_id=3))
+    ((by, edited_by, fields),) = editeur["ecrit"]
+    assert (by, edited_by, fields["manifest"]["height"]) == ("auteur", "u1", 300)
+
+
+def test_restaurer_sans_les_tableaux_d_autres_declarations_est_refuse(editeur):
+    editeur["old_manifest"] = {"tables": {"t": {"table": "99"}}}
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="restore", app_id=5, revision_id=3)))
+    assert (e.status, e.code) == (400, "invalid_manifest") and editeur["ecrit"] == []
