@@ -1,27 +1,29 @@
-"""Publier dans la bibliothèque publique est réservé aux super_admin de la plateforme.
+"""Qui publie dans la communauté (bibliothèque publique), et sous quel nom.
 
-La bibliothèque publique est une vitrine éditée par la plateforme : ses entrées sont
-signées Otomata. Ce qui reste ouvert ne change pas — ses procédures personnelles pour
-tout compte, le fork d'une entrée pour tout membre d'org — et garde ses propres gardes.
+Décision produit du 25/11/2026, qui remplace « publication réservée à la plateforme »
+(14/09/2026) : tout **admin de l'org active** publie une procédure de cette org, signée
+du NOM de l'org ; un **super_admin** plateforme publie toujours au nom d'Otomata. Un
+simple membre ne publie pas. Ce qui reste ouvert ne change pas — ses procédures
+personnelles pour tout compte, le fork d'une entrée pour tout membre d'org.
 
 Ce que ces tests figent, sur la séquence SERVIE (validation → règle d'autz déclarée →
 canal posé au seuil → handler, celle de `_rest_adapter` et de `_mcp_adapter`) :
-- un org_admin sans rôle plateforme est refusé (403
-  `publication_reservee_a_la_plateforme`), et rien n'est lu ni écrit ;
-- un opérateur plateforme (`admin`, pas `super_admin`) est refusé de même ;
-- le refus de rôle passe AVANT l'exigence d'org active, sur les deux faces ; un
-  super_admin sans org active reçoit, lui, `no_active_org` ;
-- un super_admin publie depuis son org active, au nom d'Otomata ;
+- un membre non admin est refusé (403 `publication_reservee_aux_admins`), et rien
+  n'est lu ni écrit ; un opérateur plateforme `admin` qui n'est pas admin de l'org
+  active aussi ;
+- l'org active est exigée AVANT le rôle (le rôle s'y lit), sur les deux faces ;
+- un org_admin publie au nom de son org ; un opérateur `admin` qui est admin de l'org
+  publie au nom de l'org, JAMAIS d'Otomata ; un super_admin publie au nom d'Otomata ;
+- le contrôle automatique refuse avant toute écriture (400 `contenu_refuse`), en
+  nommant le champ et la catégorie, jamais la valeur ;
 - le droit ANNONCÉ (`capacite_autorise`, `platform_floor`) lit la même règle ;
-- sur `oto_procedure`, la garde d'agent parle toujours avant le handler pour un
-  super_admin, et un compte qui ne publiera nulle part reçoit le refus de plateforme ;
-- le fork est ouvert à tout membre de l'org active, admin ou non ; le palier de la
-  copie suit le rôle (org pour un org_admin, personnel pour un membre).
+- sur `oto_procedure`, la garde d'agent parle avant le handler pour qui peut publier,
+  et un compte qui ne publiera pas reçoit le refus d'admin ;
+- le fork est ouvert à tout membre de l'org active ; le palier suit le rôle, et
+  l'installation est notée dans l'org active.
 
-⚠️ Le rôle se pose sur `access.get_user_role`, la source commune des deux prédicats
-(`is_super_admin`, `is_platform_operator`), jamais sur l'un d'eux : les stubber
-séparément fabriquerait un état que le système ne connaît pas (un super_admin qui ne
-serait pas opérateur).
+⚠️ Le rôle plateforme se pose sur `access.get_user_role`, la source commune des deux
+prédicats (`is_super_admin`, `is_platform_operator`), jamais sur l'un d'eux.
 """
 from __future__ import annotations
 
@@ -39,24 +41,28 @@ from oto_mcp.capabilities._types import AuthzDenied, RawCtx, ResolvedCtx
 from oto_mcp.capabilities.registry import CAPABILITIES
 
 ORG = 7
-ROLES = {"compte-membre": "member", "compte-operateur": "admin",
+ROLES = {"compte-membre": "member", "compte-admin-org": "member",
+         "compte-operateur": "admin", "compte-operateur-admin-org": "admin",
          "compte-super": "super_admin"}
-CODE = "publication_reservee_a_la_plateforme"
+ADMINS_D_ORG = {"compte-admin-org", "compte-operateur-admin-org"}
+CODE = "publication_reservee_aux_admins"
 
 
 @pytest.fixture
 def banc(monkeypatch):
     """Règles, gates et handlers réels ; seuls les rôles, l'org active et le store
-    sont posés. Tous les comptes du banc sont org_admin de leur org active : ce qui
-    les distingue ne tient qu'au rôle plateforme."""
+    sont posés. `roles.is_org_admin` suit `ADMINS_D_ORG` (un super_admin y escalade,
+    comme dans le système)."""
     trace = types.SimpleNamespace(lu=[], ecrit=[], org_active=dict.fromkeys(ROLES, ORG))
     monkeypatch.setattr(access, "get_user_role", lambda sub: ROLES[sub])
     monkeypatch.setattr(access, "current_org", lambda sub: trace.org_active[sub])
-    monkeypatch.setattr(roles, "is_org_admin", lambda sub, org_id: True)
+    monkeypatch.setattr(roles, "is_org_admin",
+                        lambda sub, org_id: sub in ADMINS_D_ORG or ROLES[sub] == "super_admin")
 
     def _get_instruction(otype, org_id, slug):
         trace.lu.append((otype, org_id, slug))
-        return {"body_md": "# corps", "title": "T", "description": "d", "slots": []}
+        return {"body_md": trace.__dict__.get("corps", "# corps"), "title": "T",
+                "description": "d", "slots": []}
 
     def _publish_guide(**k):
         trace.ecrit.append(k)
@@ -66,6 +72,7 @@ def banc(monkeypatch):
     monkeypatch.setattr(org_store, "publish_guide", _publish_guide)
     monkeypatch.setattr(org_store, "get_org",
                         lambda org_id: {"id": org_id, "name": "Org de test"})
+    monkeypatch.setattr(lib.db_communaute, "etat", lambda kind, i: {"state": "listed"})
     return trace
 
 
@@ -75,8 +82,7 @@ def _cap(cle):
 
 def _servir(cle, sub, canal, **champs):
     """Rejoue ce que font les deux adaptateurs : `Input` → règle d'autz DÉCLARÉE →
-    canal posé au seuil → handler. Que le canal soit bien posé sur un vrai appel a
-    son banc à lui (`test_canal_d_appel.py`)."""
+    canal posé au seuil → handler."""
     cap = _cap(cle)
     inp = cap.Input(**champs)
     ctx = dataclasses.replace(cap.authz(RawCtx(sub=sub), inp), channel=canal)
@@ -94,7 +100,7 @@ def _publier_mcp(sub):
 
 
 @pytest.mark.parametrize("sub", ["compte-membre", "compte-operateur"])
-def test_hors_super_admin_la_publication_est_refusee_sans_rien_toucher(banc, sub):
+def test_hors_admin_de_l_org_la_publication_est_refusee_sans_rien_toucher(banc, sub):
     with pytest.raises(AuthzDenied) as e:
         _publier_rest(sub)
     assert (e.value.status, e.value.code) == (403, CODE)
@@ -103,79 +109,87 @@ def test_hors_super_admin_la_publication_est_refusee_sans_rien_toucher(banc, sub
 
 
 def test_le_refus_dit_qui_publie_et_ce_qui_reste_ouvert(banc):
-    """Un refus qui ne nomme que l'interdit enseigne « ne partage rien » ; un refus
-    qui promet un chemin fermé envoie vers un second refus. Il dit donc QUI publie,
-    ce qui reste ouvert à tous, et la condition du fork (#632)."""
     with pytest.raises(AuthzDenied) as e:
         _publier_rest("compte-membre")
     m = e.value.message
-    assert "super-administrateurs de la plateforme" in m, "qui publie"
+    assert "réservé aux admins de l'org" in m, "qui publie"
     assert "tes procédures personnelles" in m, "ce qui reste ouvert à tout compte"
     assert "forker une entrée" in m, "le fork reste promis"
 
 
 @pytest.mark.parametrize("servir", [_publier_rest, _publier_mcp], ids=["rest", "mcp"])
-def test_le_refus_de_role_passe_avant_l_exigence_d_org_active(banc, servir):
-    """Dire « choisis une org » à qui ne peut pas publier ne mènerait qu'au même refus,
-    une étape plus loin. Joué par la règle d'autz, sur les deux faces servies."""
-    banc.org_active["compte-membre"] = None
+@pytest.mark.parametrize("sub", ["compte-membre", "compte-admin-org", "compte-super"])
+def test_l_org_active_est_exigee_avant_le_role(banc, servir, sub):
+    """Le rôle se lit DANS l'org active : sans elle, le refus dit d'en choisir une —
+    être admin d'une autre org est une porte ouverte."""
+    banc.org_active[sub] = None
     with pytest.raises(AuthzDenied) as e:
-        servir("compte-membre")
-    assert (e.value.status, e.value.code) == (403, CODE)
-
-
-def test_un_super_admin_sans_org_active_doit_en_choisir_une(banc):
-    """Le corps publié se lit dans une procédure de l'org active : sans elle, rien à
-    publier — le refus le dit, avant toute lecture."""
-    banc.org_active["compte-super"] = None
-    with pytest.raises(AuthzDenied) as e:
-        _publier_rest("compte-super")
+        servir(sub)
     assert (e.value.status, e.value.code) == (400, "no_active_org")
     assert banc.lu == [] and banc.ecrit == []
 
 
-def test_des_slots_refuses_par_la_publication_rendent_un_400_qui_dit_pourquoi(
-        banc, monkeypatch):
-    """oto#34 : la publication valide le schéma cible des slots (`publish_guide`) ; le
-    refus remonte en `invalid_slots`, avec la phrase du validateur — jamais en 500."""
-    def _refuse(**k):
-        raise org_store.LibrarySlotsInvalid("`slots[0].schema` invalide : `help` …")
-    monkeypatch.setattr(org_store, "publish_guide", _refuse)
-    with pytest.raises(AuthzDenied) as e:
-        _publier_rest("compte-super")
-    assert (e.value.status, e.value.code) == (400, "invalid_slots")
-    assert "slots[0].schema" in e.value.message
+@pytest.mark.parametrize("sub", ["compte-admin-org", "compte-operateur-admin-org"])
+def test_un_admin_d_org_publie_au_nom_de_son_org(banc, sub):
+    out = _publier_rest(sub)
+    assert out["published"] is True and out["slug"] == "veille-concurrence"
+    assert (out["author_kind"], out["author_display"]) == ("org", "Org de test")
+    assert out["moderation_state"] == "listed"
+    (ecrit,) = banc.ecrit
+    assert (ecrit["author_kind"], ecrit["author_org_id"], ecrit["author_display"]) \
+        == ("org", ORG, "Org de test"), "un opérateur `admin` ne signe pas Otomata"
+    assert (ecrit["source_org_id"], ecrit["published_by"]) == (ORG, sub)
 
 
 def test_un_super_admin_publie_au_nom_d_otomata(banc):
     out = _publier_rest("compte-super")
-    assert out["published"] is True and out["slug"] == "veille-concurrence"
+    assert out["published"] is True
     assert banc.lu == [("org", ORG, "veille-concurrence")], \
         "le corps se lit dans l'org active"
     (ecrit,) = banc.ecrit
     assert (ecrit["author_kind"], ecrit["author_org_id"], ecrit["author_display"]) \
         == ("otomata", None, "Otomata")
-    assert (ecrit["source_org_id"], ecrit["published_by"]) == (ORG, "compte-super")
+
+
+def test_le_controle_automatique_refuse_avant_toute_ecriture(banc):
+    banc.corps = ("# Relance\n\nÉcrire à jeanne.dupont@client-reel.fr ou au "
+                  "06 12 34 56 78, clé sk-proj-abcdefghijklmnopqrstuvwx.")
+    with pytest.raises(AuthzDenied) as e:
+        _publier_rest("compte-admin-org")
+    assert (e.value.status, e.value.code) == (400, "contenu_refuse")
+    assert banc.ecrit == [], "rien n'est publié"
+    kinds = {(f["field"], f["kind"]) for f in e.value.details["found"]}
+    assert kinds == {("body_md", "email"), ("body_md", "phone"), ("body_md", "secret")}
+    for secret in ("jeanne.dupont", "client-reel", "06 12", "sk-proj"):
+        assert secret not in e.value.message, "le refus ne recopie jamais la valeur"
+
+
+def test_des_slots_refuses_par_la_publication_rendent_un_400_qui_dit_pourquoi(
+        banc, monkeypatch):
+    def _refuse(**k):
+        raise org_store.LibrarySlotsInvalid("`slots[0].schema` invalide : `help` …")
+    monkeypatch.setattr(org_store, "publish_guide", _refuse)
+    with pytest.raises(AuthzDenied) as e:
+        _publier_rest("compte-admin-org")
+    assert (e.value.status, e.value.code) == (400, "invalid_slots")
+    assert "slots[0].schema" in e.value.message
 
 
 def test_le_droit_annonce_lit_la_meme_regle(banc):
     """Un drapeau de droit servi à un écran se calcule par `capacite_autorise`, qui
-    exécute la règle DÉCLARÉE (#695). Tant que le rôle ne vivait que dans le handler,
-    elle annonçait le geste à tout membre d'org."""
+    exécute la règle DÉCLARÉE (#695)."""
     for cle, champs in (("library.publish", {}),
                         ("org.procedure.console", {"op": "publish"})):
         assert not _authz.capacite_autorise(cle, "compte-membre", **champs), cle
         assert not _authz.capacite_autorise(cle, "compte-operateur", **champs), cle
+        assert _authz.capacite_autorise(cle, "compte-admin-org", **champs), cle
         assert _authz.capacite_autorise(cle, "compte-super", **champs), cle
-    assert _authz.platform_floor(_cap("library.publish").authz) == "super"
-    # La console réunit des ops ouvertes à tous : son plancher reste le plus BAS de ses
-    # branches, et `oto_procedure` reste servi à chacun.
+    # Plus aucun plancher plateforme : un org_admin publie.
+    assert _authz.platform_floor(_cap("library.publish").authz) is None
     assert _authz.platform_floor(_cap("org.procedure.console").authz) is None
 
 
 def test_le_filet_du_handler_leve_le_meme_refus(banc):
-    """Un appelant qui câblerait `_publish` sous une autre règle rencontre le même
-    mur, dit par la même source."""
     ctx = ResolvedCtx(sub="compte-membre", org_id=ORG, role="member")
     with pytest.raises(AuthzDenied) as e:
         lib._publish(ctx, lib.PublishInput(slug="veille-concurrence"))
@@ -185,14 +199,12 @@ def test_le_filet_du_handler_leve_le_meme_refus(banc):
 
 
 def test_la_console_garde_l_ordre_des_refus(banc):
-    """Face agent : pour un super_admin, la garde d'agent parle toujours avant le
-    handler, inchangée. Pour un compte qui ne publiera nulle part, la règle de
-    plateforme parle d'abord — la garde d'agent le renverrait vers un dashboard qui
-    le refuserait aussi."""
-    with pytest.raises(AuthzDenied) as e:
-        _publier_mcp("compte-super")
-    assert e.value.code == "publication_reservee_a_l_humain"
-
+    """Face agent : pour qui peut publier, la garde d'agent parle avant le handler.
+    Pour un compte qui ne publiera pas, la règle d'admin parle d'abord."""
+    for sub in ("compte-admin-org", "compte-super"):
+        with pytest.raises(AuthzDenied) as e:
+            _publier_mcp(sub)
+        assert e.value.code == "publication_reservee_a_l_humain", sub
     for sub in ("compte-membre", "compte-operateur"):
         with pytest.raises(AuthzDenied) as e:
             _publier_mcp(sub)
@@ -202,7 +214,8 @@ def test_la_console_garde_l_ordre_des_refus(banc):
 
 def _fork_stub(monkeypatch, banc):
     monkeypatch.setattr(org_store, "get_library_entry",
-                        lambda **k: {"id": 3, "body_md": "# corps"})
+                        lambda **k: {"id": 3, "body_md": "# corps",
+                                     "moderation_state": "listed"})
 
     def _fork(**k):
         banc.ecrit.append(k)
@@ -214,18 +227,19 @@ def _fork_stub(monkeypatch, banc):
 
 def test_le_fork_d_un_org_admin_cree_une_procedure_d_org(banc, monkeypatch):
     _fork_stub(monkeypatch, banc)
-    out = _servir("library.fork", "compte-membre", "rest", slug="veille-concurrence")
+    out = _servir("library.fork", "compte-admin-org", "rest", slug="veille-concurrence")
     assert out["forked"] is True and out["org_id"] == ORG and out["scope"] == "org"
     assert (banc.ecrit[-1]["owner_type"], banc.ecrit[-1]["owner_id"]) == ("org", ORG)
+    assert banc.ecrit[-1]["install_org_id"] == ORG, "l'installation est notée dans l'org"
 
 
 def test_le_fork_d_un_simple_membre_cree_une_procedure_perso(banc, monkeypatch):
     """Ajouter un process de la communauté n'est pas réservé aux admins, et ce qu'un
-    membre crée lui appartient : une procédure PERSONNELLE, pas une procédure d'org
-    que tous les membres verraient (décision du 06/10/2026)."""
-    monkeypatch.setattr(roles, "is_org_admin", lambda sub, org_id: False)
+    membre crée lui appartient (décision du 06/10/2026) — l'installation compte pour
+    l'org active."""
     _fork_stub(monkeypatch, banc)
     out = _servir("library.fork", "compte-membre", "rest", slug="veille-concurrence")
     assert out["forked"] is True and out["org_id"] == ORG and out["scope"] == "user"
     assert (banc.ecrit[-1]["owner_type"],
             banc.ecrit[-1]["owner_id"]) == ("user", "compte-membre")
+    assert banc.ecrit[-1]["install_org_id"] == ORG
