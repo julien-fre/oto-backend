@@ -947,6 +947,10 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/public/community/processes", options_handler, methods=["OPTIONS"]),
         Route("/api/public/community/processes/{slug}", public.community_process, methods=["GET"]),
         Route("/api/public/community/processes/{slug}", options_handler, methods=["OPTIONS"]),
+        Route("/api/public/community/apps", public.community_apps, methods=["GET"]),
+        Route("/api/public/community/apps", options_handler, methods=["OPTIONS"]),
+        Route("/api/public/community/apps/{slug}", public.community_app, methods=["GET"]),
+        Route("/api/public/community/apps/{slug}", options_handler, methods=["OPTIONS"]),
         # Désinscription du résumé des LECTEURS — même régime que la ligne au-dessus,
         # route, jeton (`typ`) et table distincts.
         Route("/o/r/{token}", public.readers_digest_unsubscribe, methods=["GET", "POST"]),

@@ -186,6 +186,11 @@ CLASSEMENT: dict[str, Table] = {
     # Les installations d'entrées de la communauté faites DANS l'org (un fork = une
     # ligne) : son activité, elle part avec elle ; `installed_by` = l'auteur du geste.
     "community_installs": possedee(ParOrg()),
+    # Les apps publiées dans la communauté : une entrée part avec l'org qui l'a écrite ;
+    # celles de la plateforme (`author_org_id` NULL) restent.
+    "app_library": possedee(ParOrg("author_org_id"),
+                            "une app publiée part avec l'org qui l'a écrite ; celles de "
+                            "la plateforme restent"),
     # Le retrait d'une entrée de la communauté par le personnel de la plateforme : une
     # décision de l'instance sur SA communauté, qui ne suit aucune org.
     "community_moderation": instance("décision du personnel de la plateforme d'origine "

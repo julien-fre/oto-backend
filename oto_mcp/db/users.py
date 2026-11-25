@@ -615,6 +615,7 @@ _SUB_COLUMNS = [
     # colonnes d'AUTEUR, sans FK ni unicité : elles suivent la personne.
     ("community_installs", "installed_by"), ("community_moderation", "removed_by"),
     ("community_moderation", "restored_by"),
+    ("app_library", "published_by"),
     # attribution (soft), dossier du 23/08 — qui a écrit/résolu/accordé quoi. Sans
     # repointage ces signatures pointaient un compte supprimé (affichage « inconnu »
     # au mieux, jointure vide au pire). `set_by` du coffre est HORS AAD (`_aad` =

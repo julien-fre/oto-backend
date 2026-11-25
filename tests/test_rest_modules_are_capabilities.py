@@ -199,6 +199,8 @@ _KNOWN: dict[str, str] = {
     # métadonnées seules (jamais le corps, oto#84).
     "/api/public/community/processes": NATURE,
     "/api/public/community/processes/{slug}": NATURE,
+    "/api/public/community/apps": NATURE,
+    "/api/public/community/apps/{slug}": NATURE,
     # Réception d'un upload signé (#105) : PAS de JWT, le jeton scellé de l'URL fait
     # foi (sub/org/cible, TTL, usage unique). Appelée par un `curl` d'agent (PUT) ou
     # le formulaire humain (POST/GET) — un tiers, hors session dashboard.

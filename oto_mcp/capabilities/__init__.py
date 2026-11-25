@@ -202,6 +202,8 @@ from . import node_rows  # noqa: F401 — me.node.rows (lignes d'un tableau, cur
 import oto_mcp.capabilities.docs.core  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pages d'un projet
 import oto_mcp.capabilities.apps  # noqa: F401 — me.app (oto_apps, POST /api/me/apps) — apps d'un projet
 import oto_mcp.capabilities.apps_appel  # noqa: F401 — me.app.call (POST /api/me/apps/{app_id}/call) — une app ouverte, auteur ∩ lecteur
+# La bibliothèque d'apps de la communauté — après `apps`, dont elle réutilise les gardes.
+import oto_mcp.capabilities.apps_bibliotheque  # noqa: F401 — apps.library.{list,get,publish,install,unpublish}
 from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push out-of-bande de gros contenu (#105)
 # Journal de travail du datastore (ADR 0046 b4) — parcours d'une ligne + activité du tableau.
 import oto_mcp.capabilities.datastore.activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)

@@ -124,10 +124,29 @@ def vitrine(entry: dict) -> dict:
     return out
 
 
+def vitrine_app(entry: dict) -> dict:
+    """La vitrine d'une APP de la communauté, pour une surface ANONYME : les champs de
+    `vitrine` (sans `slots`), la vignette (`image` | `color` | `emoji`) et, par tableau,
+    son alias, son nom et son nombre de colonnes. Jamais le HTML, le manifeste ni un
+    schéma."""
+    out = vitrine(entry)
+    out.pop("slots", None)
+    v = entry.get("thumbnail") or {}
+    out["thumbnail"] = {k: v[k] for k in ("image", "color", "emoji") if v.get(k)} or None
+    out["tables"] = [
+        {"alias": a, "name": (t or {}).get("name") or a,
+         "fields": len([f for f in ((t or {}).get("schema") or {}).get("fields") or []
+                        if isinstance(f, dict)])}
+        for a, t in (entry.get("tables") or {}).items()]
+    return out
+
+
 # ── library.moderate ────────────────────────────────────────────────────────────
 
 class ModerateInput(BaseModel):
     id: int                               # l'entrée de bibliothèque (≠ slug)
+    # Le genre de l'entrée : une procédure (bibliothèque de guides) ou une app.
+    kind: Literal["procedure", "app"] = "procedure"
     action: Literal["remove", "restore"]
     reason: str                           # obligatoire : il est montré à l'org autrice
 
@@ -158,12 +177,17 @@ class ModerationResult(BaseModel):
 
 
 def _moderate(ctx: ResolvedCtx, inp: ModerateInput) -> dict:
-    entry = org_store.get_library_entry(entry_id=inp.id, include_unlisted=True,
-                                        include_removed=True)
+    if inp.kind == "app":
+        from ..db import app_library
+        entry = app_library.lire(entry_id=inp.id, include_unlisted=True,
+                                 include_removed=True)
+    else:
+        entry = org_store.get_library_entry(entry_id=inp.id, include_unlisted=True,
+                                            include_removed=True)
     if not entry:
         raise AuthzDenied(404, "unknown_entry", "Entrée inconnue.")
     geste = store.retirer if inp.action == "remove" else store.restaurer
-    etat = geste(org_store.KIND, entry["id"], by=ctx.sub, reason=inp.reason)
+    etat = geste(inp.kind, entry["id"], by=ctx.sub, reason=inp.reason)
     return {"id": entry["id"], "slug": entry["slug"],
             **{k: _date(v) for k, v in etat.items()}}
 
@@ -172,8 +196,8 @@ CAPABILITIES += [
     Capability(
         key="library.moderate", handler=_moderate, Input=ModerateInput,
         authz=PLATFORM_ADMIN, mcp=None,
-        description="Platform staff only: remove a community (public library) entry, or "
-                    "restore one, with a reason shown to the author org's admins. A "
+        description="Platform staff only: remove a community entry (kind = procedure, "
+                    "the default, or app), or restore one, with a reason shown to the author org's admins. A "
                     "removed entry disappears from list/get/fork for everyone except the "
                     "author org's admins and platform operators, and from the anonymous "
                     "community pages. Re-publishing does not lift a removal.",

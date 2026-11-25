@@ -26,6 +26,7 @@ nettoyage du dépôt. Les guides se lisent authentifié (`/api/me/guide-library`
 - `GET /api/public/process-shares/{token}` → VITRINE d'une procédure partagée par lien (jamais le corps)
 - `GET|POST /o/r/{token}`                  → désinscription du résumé des LECTEURS d'une procédure partagée, même régime
 - `GET /api/public/community/processes[/{slug}]` → VITRINE de la communauté (métadonnées seules, jamais le corps)
+- `GET /api/public/community/apps[/{slug}]` → même régime pour les apps (jamais le HTML)
 
 `/api/connectors` est la seule MIXTE : anonyme pour la vitrine, authentifiée pour
 le dashboard qui y scope son catalogue sur l'org active — d'où son `verifier`.
@@ -550,3 +551,50 @@ def community_process(request: Request) -> JSONResponse:
     if not entry:
         return _json_error(request, 404, "not_found")
     return _json(request, communaute.vitrine(entry), extra_headers=_communaute_entetes())
+
+
+def _limite(request: Request):
+    try:
+        return max(1, min(int(request.query_params.get("limit") or COMMUNAUTE_LIMITE_DEFAUT),
+                          COMMUNAUTE_LIMITE_MAX)), None
+    except ValueError:
+        return None, _json_error(request, 400, "bad_limit", "`limit` doit être un entier.")
+
+
+@en_thread
+def community_apps(request: Request) -> JSONResponse:
+    """La vitrine des APPS de la communauté — `GET /api/public/community/apps`, sans
+    auth. Même régime que `community_processes` : métadonnées seules par la liste fermée
+    `capabilities.communaute.vitrine_app` (jamais le HTML, le manifeste ni un schéma,
+    jamais un identifiant d'org ou de compte), entrées `public` et listées seulement."""
+    from ..capabilities import communaute
+    from ..db import app_library
+    refus = _communaute_refus_rythme(request)
+    if refus is not None:
+        return refus
+    sort = request.query_params.get("sort") or None
+    if sort is not None and sort not in org_store.SORTS:
+        return _json_error(request, 400, "bad_sort",
+                           f"`sort` attendu : {' | '.join(org_store.SORTS)}.")
+    limit, refus = _limite(request)
+    if refus is not None:
+        return refus
+    rows = app_library.lister(category=request.query_params.get("category") or None,
+                              sort=sort, limit=limit)
+    return _json(request, {"apps": [communaute.vitrine_app(r) for r in rows]},
+                 extra_headers=_communaute_entetes())
+
+
+@en_thread
+def community_app(request: Request) -> JSONResponse:
+    """Une app de la vitrine — `GET /api/public/community/apps/{slug}`, sans auth. 404
+    identique pour une entrée inconnue, `unlisted` ou retirée."""
+    from ..capabilities import communaute
+    from ..db import app_library
+    refus = _communaute_refus_rythme(request)
+    if refus is not None:
+        return refus
+    entry = app_library.lire(slug=request.path_params.get("slug", ""))
+    if not entry:
+        return _json_error(request, 404, "not_found")
+    return _json(request, communaute.vitrine_app(entry), extra_headers=_communaute_entetes())
