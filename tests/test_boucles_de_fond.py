@@ -102,6 +102,7 @@ def test_sans_boucle_tierce_armee_la_question_nest_pas_posee(env):
     env.setenv("OTO_ALERTE_AGENTS_ENABLED", "0")
     env.setenv("OTO_MEDECIN_AGENTS_ENABLED", "0")
     env.setenv("OTO_ALERTES_SLACK_AGENTS_ENABLED", "0")
+    env.setenv("OTO_YOUTUBE_UPLOAD_WORKER_ENABLED", "0")
     assert set(boucles_de_fond.composer()) == _toutes(tiers=False)
 
 
@@ -132,7 +133,8 @@ def test_les_boucles_qui_touchent_un_tiers_le_declarent():
     # Faits de code, pas de goût : l'une envoie des emails, l'autre prélève, la
     # troisième fige dans la page d'un client le lien de l'environnement qui l'a écrite.
     assert {"scheduler", "billing_runner", "transcription_worker", "jev_jobs_worker",
-            "alerte_agents_bloques", "medecin_agents", "alertes_slack_agents"} <= {
+            "alerte_agents_bloques", "medecin_agents", "alertes_slack_agents",
+            "youtube_upload_worker"} <= {
         b.nom for b in boucles_de_fond.BOUCLES if b.tiers}
 
 
