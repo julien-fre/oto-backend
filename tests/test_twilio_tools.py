@@ -295,3 +295,10 @@ def test_un_type_non_vendu_dit_les_types_vendus(client):
     with pytest.raises(McpError) as e:
         _fn("twilio")(op="available_numbers", country="FR", number_type="mobile")
     assert "sells no mobile numbers in FR" in str(e.value) and "local" in str(e.value)
+
+
+
+def test_sans_cle_un_nom_d_expediteur(client, courtier, admin):
+    out = _fn("twilio_act")(op="send_sms", from_="EXEMPLE", to=["+33600000001"], body="RDV demain")
+    assert out["sent"] and courtier["post"][-1] == (
+        "/messages", {"sender_id": "EXEMPLE", "to": "+33600000001", "body": "RDV demain"})

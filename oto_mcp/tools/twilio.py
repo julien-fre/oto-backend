@@ -207,7 +207,12 @@ def register(mcp: FastMCP) -> None:
                        "on the Phone page.")
         if media_urls:
             raise _bad("MMS (`media_urls`) is not available on the platform's numbers.")
-        number = _numero_plateforme(courtier, _need(from_, "from_", op))
+        sender = _need(from_, "from_", op)
+        # A NAME (no leading +) is an alphanumeric sender: SMS only, send-only.
+        if op == "send_sms" and not sender.strip().startswith("+"):
+            number = None
+        else:
+            number = _numero_plateforme(courtier, sender)
         recipients = [_run(lambda r=r: e164(r, "to")) for r in _need(to, "to", op)]
         if op == "call":
             first = _run(lambda: e164(_need(rep, "rep", op), "rep"))
@@ -233,8 +238,9 @@ def register(mcp: FastMCP) -> None:
                                  for i in range(index, len(recipients))]
                 break
             try:
-                m = courtier.post("/messages", {"number_id": number["id"], "to": number_to,
-                                                "body": body})
+                origin = ({"number_id": number["id"]} if number is not None
+                          else {"sender_id": sender.strip()})
+                m = courtier.post("/messages", {**origin, "to": number_to, "body": body})
                 sent.append({"index": index, "to": number_to, "id": m.get("id"),
                              "status": m.get("status"), "segments": m.get("segments")})
             except twilio_courtier.CourtierRefus as e:
@@ -467,8 +473,9 @@ def register(mcp: FastMCP) -> None:
 
         Without its own Twilio account connected, the organization's PLATFORM
         numbers are used (billed in credits): `send_sms` and `call` only, `from_`
-        being one of those numbers (`twilio` op='numbers'); buying and releasing
-        happen on the Phone page.
+        being one of those numbers (`twilio` op='numbers') or, for `send_sms`, a
+        sender NAME (up to 11 letters, recipients in France, Italy or the UK, no
+        replies); buying and releasing happen on the Phone page.
 
         Args:
             op: add_number | update_number | remove_number | call | cancel_call | send_sms.
