@@ -26,7 +26,9 @@ which would answer with an opaque 400):
   (search/list/get); dict {property: value} to WRITE on writes
   (create/update).
 - `associations` = list[str] (object types whose linked ids we want) on
-  op="get"; list[dict] (HubSpot v3 association objects) on op="create".
+  op="get"; list[dict] (HubSpot v3 association objects) on op="create" and
+  op="update" (update: written by the v4 association endpoint, target type in
+  `to_object_type` — `hubspot_associate`).
 
 **`hubspot_list` — the "segments"**. HubSpot lists ARE the segmentation
 mechanism (the docs describe them as serving "record segmentation"), there is no
@@ -71,7 +73,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from ..connectors import verify as connector_verify
-from . import hubspot_merge
+from . import hubspot_associate, hubspot_merge
 from ..auth import hubspot as hubspot_auth
 from .lecture import LECTURE
 from .hubspot_pipelines import (
@@ -477,6 +479,12 @@ def register(mcp: FastMCP) -> None:
                   ids INLINE, so it replaces a separate op="associations" round
                   trip per object.
                 - op="create" : HubSpot v3 association objects (advanced).
+                - op="update" : links an EXISTING record — list of
+                  {"to": {"id": "<target id>"}, "types": [...]} (`types`
+                  optional: omitted = HubSpot's default association), with
+                  `to_object_type` naming the target type (one per call, ≤ 100
+                  targets). `properties` becomes optional. The answer carries
+                  `associations` = {applied, failed}: check `failed`.
             query: op="search" — full-text search.
             filters: op="search" — list of {propertyName, operator, value} combined
                 with AND. Passed to HubSpot VERBATIM — nothing here validates the
@@ -484,7 +492,8 @@ def register(mcp: FastMCP) -> None:
                 GT, GTE, BETWEEN (add "highValue"), IN / NOT_IN (pass "values":
                 [...] instead of "value"), HAS_PROPERTY, NOT_HAS_PROPERTY,
                 CONTAINS_TOKEN, NOT_CONTAINS_TOKEN (wildcards `*`).
-            to_object_type: op="associations" — the associated object type to list.
+            to_object_type: op="associations" — the associated object type to list;
+                op="update" with `associations` — the type of the targets.
             body: op="add_note" — the note content (text/HTML).
             limit: op="search"/"list" — page size (HubSpot caps it at 100).
             after: op="search"/"list" — pagination cursor from a previous response
@@ -548,10 +557,27 @@ def register(mcp: FastMCP) -> None:
                     associations=_assoc_objects(associations, op))
 
             if op == "update":
-                return c.update_object(
-                    _need(object_type, "object_type", op),
-                    _need(object_id, "object_id", op),
-                    _payload(properties, "properties", op))
+                otype = _need(object_type, "object_type", op)
+                oid = _need(object_id, "object_id", op)
+                if associations is None:
+                    return c.update_object(otype, oid,
+                                           _payload(properties, "properties", op))
+                # The v3 PATCH ignores `associations` and still answers 200: they go
+                # to the v4 association endpoint instead (hubspot_associate).
+                try:
+                    targets = hubspot_associate.parse(associations)
+                except ValueError as e:
+                    raise _bad(str(e)) from None
+                to_type = _need(to_object_type, "to_object_type", op)
+                result = (c.update_object(otype, oid,
+                                          _payload(properties, "properties", op))
+                          if properties is not None else {"id": oid})
+                links = hubspot_associate.associate(c, otype, oid, to_type, targets)
+                if properties is None and not links["applied"]:
+                    raise _bad("no association was created, nothing changed: "
+                               + "; ".join(f"{f['to_id']}: {f['error']}"
+                                           for f in links["failed"]))
+                return {**(result or {}), "associations": links}
 
             if op == "delete":
                 return c.delete_object(
