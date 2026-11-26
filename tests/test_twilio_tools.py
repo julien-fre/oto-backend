@@ -188,3 +188,79 @@ def test_sms_le_lot_s_arrete_avant_le_delai(client, admin, monkeypatch):
     assert len(out["sent"]) == 1
     assert [r["index"] for r in out["not_attempted"]] == [1, 2]
     assert T.SMS_TIME_BUDGET_S == 30.0
+
+
+# ── sans clé propre : les numéros Tulina, par le relais du commerce ──────────
+
+@pytest.fixture
+def courtier(monkeypatch):
+    """Aucune clé Twilio pour l'org : le courtier répond à la place de Twilio."""
+    from oto_mcp.access.resolve import CredentialUnavailable
+    from mcp.types import ErrorData
+    from oto_mcp.tools import twilio_courtier as C
+
+    def _absent(provider, account=None):
+        raise CredentialUnavailable(ErrorData(code=-32602, message="no key"))
+
+    monkeypatch.setattr("oto_mcp.access.resolve_credential_fields", _absent)
+    vu = {"get": [], "post": []}
+
+    class Faux:
+        def get(self, tail="", params=None):
+            vu["get"].append((tail, params))
+            if tail == "":
+                return {"numbers": [{"id": 7, "e164": "+33939030001"}]}
+            return {"threads": []}
+
+        def post(self, tail, body):
+            vu["post"].append((tail, body))
+            if body.get("to") == "+33600000009":
+                raise C.CourtierRefus(400, "destination_not_allowed")
+            return {"id": 1, "status": "queued", "segments": 1}
+
+    monkeypatch.setattr(C, "pour_l_appelant", lambda: Faux())
+    return vu
+
+
+def test_sans_cle_les_lectures_passent_par_le_courtier(client, courtier):
+    out = _fn("twilio")(op="numbers")
+    assert out["numbers"][0]["e164"] == "+33939030001"
+    _fn("twilio")(op="messages", from_="+33600000001")
+    assert courtier["get"][-1] == ("/messages", {"peer": "+33600000001"})
+    with pytest.raises(McpError) as e:
+        _fn("twilio")(op="available_numbers", country="FR")
+    assert "Phone page" in str(e.value)
+    client.list_numbers.assert_not_called()
+
+
+def test_sans_cle_sms_et_appel_par_le_courtier(client, courtier, admin):
+    out = _fn("twilio_act")(op="send_sms", from_="+33939030001",
+                            to=["+33600000001", "+33600000009"], body="Bonjour")
+    assert out["via"] == "tulina" and [r["index"] for r in out["sent"]] == [0]
+    assert "not open" in out["failed"][0]["error"]
+    assert courtier["post"][0] == ("/messages", {"number_id": 7, "to": "+33600000001",
+                                                 "body": "Bonjour"})
+    _fn("twilio_act")(op="call", from_="+33939030001", rep="+33600000002", to=["+33600000003"])
+    assert courtier["post"][-1] == ("/calls", {"number_id": 7, "rep": "+33600000002",
+                                               "to": "+33600000003"})
+    with pytest.raises(McpError):
+        _fn("twilio_act")(op="send_sms", from_="+33100000000", to=["+33600000001"], body="x")
+    with pytest.raises(McpError):
+        _fn("twilio_act")(op="add_number", phone_number="+33939030002")
+    client.send_message.assert_not_called()
+    client.create_call.assert_not_called()
+
+
+def test_sans_cle_ni_courtier_le_refus_dit_quoi_faire(monkeypatch):
+    from oto_mcp.access.resolve import CredentialUnavailable
+    from mcp.types import ErrorData
+    from oto_mcp.tools import twilio_courtier as C
+
+    def _absent(provider, account=None):
+        raise CredentialUnavailable(ErrorData(code=-32602, message="no key"))
+
+    monkeypatch.setattr("oto_mcp.access.resolve_credential_fields", _absent)
+    monkeypatch.setattr(C, "pour_l_appelant", lambda: None)
+    with pytest.raises(McpError) as e:
+        _fn("twilio")(op="numbers")
+    assert "connect the org's Twilio account" in str(e.value)

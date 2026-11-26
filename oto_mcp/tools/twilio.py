@@ -20,8 +20,15 @@ messages to that account.
 message to a friend. Nothing here adds an opt-out mention or holds a message to
 business hours; what Twilio or the carriers refuse comes back as their refusal.
 
-Webhooks (inbound calls, voicemail, row write-back) are not wired yet: Twilio logs
-inbound SMS and recordings on the account, read back here.
+**Two ways to reach Twilio, one per org** (decision of 26/11/2026): the org's OWN key,
+called directly; or, without one, the org's TULINA numbers, bought on Tulina's Twilio
+account and billed in credits, reached through the commerce's phone relay
+(`tools/twilio_courtier.py`) — this server never holds the platform's Twilio keys. On
+Tulina numbers an agent reads numbers, SMS threads and the call log, sends SMS and places
+bridged calls; buying, releasing and recordings stay on the Phone page.
+
+Webhooks on the org's own account (inbound calls, voicemail, row write-back) are not wired
+yet: Twilio logs inbound SMS and recordings on the account, read back here.
 
 Calls to the client are written out in full (`_client().list_calls(…)`): this is what
 makes them verifiable by the version-skew probe (`test_tools_client_methods_exist`).
@@ -31,10 +38,14 @@ from __future__ import annotations
 import time
 from typing import Any, List, Literal, Optional
 
+import requests
+
 from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, transit
+from ..access.resolve import CredentialUnavailable
+from . import twilio_courtier
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from .lecture import ACTE, LECTURE
@@ -140,6 +151,104 @@ def register(mcp: FastMCP) -> None:
         return TwilioClient(account_sid=creds.get("account_sid"),
                             auth_token=creds.get("auth_token"))
 
+    def _courtier_ou_none():
+        """None when the org has its OWN Twilio key (the direct path), else the broker
+        for the caller; refused when neither is reachable."""
+        try:
+            access.resolve_credential_fields(_NAME)
+            return None
+        except CredentialUnavailable:
+            courtier = twilio_courtier.pour_l_appelant()
+            if courtier is None:
+                raise _bad("No Twilio account is connected for this organization, and its "
+                           "Tulina numbers are not reachable from here: connect the org's "
+                           "Twilio account, or buy a number on Tulina's Phone page.") from None
+            return courtier
+
+    def _cr(fn):
+        try:
+            return fn()
+        except twilio_courtier.CourtierRefus as e:
+            raise _bad(twilio_courtier.message_de(e)) from None
+        except requests.RequestException as e:
+            raise _bad(f"Tulina phone is unreachable right now ({type(e).__name__}); "
+                       "retry in a moment.") from None
+
+    def _numero_tulina(courtier, from_: str) -> dict:
+        numbers = _cr(lambda: courtier.get()).get("numbers") or []
+        for n in numbers:
+            if n.get("e164") == from_:
+                return n
+        owned = ", ".join(n.get("e164") or "" for n in numbers) or "none"
+        raise _bad(f"`from_` must be one of the organization's Tulina numbers ({owned}).")
+
+    def _read_courtier(courtier, op, sid, to, from_, **ignored):
+        if op not in ("numbers", "messages", "calls"):
+            raise _bad(f"op='{op}' is not available on the organization's Tulina numbers: "
+                       "agents read `numbers`, `messages` and `calls`; buying, releasing and "
+                       "recordings are on Tulina's Phone page.")
+        if sid:
+            raise _bad("On Tulina numbers, `sid` is not used: filter `messages` with `to` or "
+                       "`from_`.")
+        if op == "numbers":
+            return _cr(lambda: courtier.get())
+        if op == "calls":
+            return _cr(lambda: courtier.get("/calls"))
+        peer = to or from_
+        return _cr(lambda: courtier.get("/messages", {"peer": peer} if peer else None))
+
+    def _act_courtier(courtier, op, *, rep, to, from_, body, media_urls, dry_run):
+        if op not in ("send_sms", "call"):
+            raise _bad(f"op='{op}' is not available on the organization's Tulina numbers: "
+                       "an agent sends SMS and places calls; numbers are bought and released "
+                       "on Tulina's Phone page.")
+        if media_urls:
+            raise _bad("MMS (`media_urls`) is not available on Tulina numbers.")
+        number = _numero_tulina(courtier, _need(from_, "from_", op))
+        recipients = [_run(lambda r=r: e164(r, "to")) for r in _need(to, "to", op)]
+        if op == "call":
+            first = _run(lambda: e164(_need(rep, "rep", op), "rep"))
+            if len(recipients) != 1:
+                raise _bad("op='call' dials ONE contact: pass `to` as a single-number list.")
+            if dry_run:
+                return {"dry_run": True, "would": "call", "rings_first": first,
+                        "then_dials": recipients[0], "caller_id": from_, "via": "tulina"}
+            return _cr(lambda: courtier.post("/calls", {"number_id": number["id"],
+                                                        "rep": first, "to": recipients[0]}))
+        if not body:
+            raise _bad("op='send_sms' requires `body` on Tulina numbers.")
+        if len(recipients) > SMS_BATCH_MAX:
+            raise _bad(f"op='send_sms': at most {SMS_BATCH_MAX} recipients per call.")
+        if dry_run:
+            return {"dry_run": True, "would": "send", "from": from_, "to": recipients,
+                    "characters": len(body), "via": "tulina"}
+        sent, failed, not_attempted = [], [], []
+        started = time.monotonic()
+        for index, number_to in enumerate(recipients):
+            if time.monotonic() - started > SMS_TIME_BUDGET_S:
+                not_attempted = [{"index": i, "to": recipients[i]}
+                                 for i in range(index, len(recipients))]
+                break
+            try:
+                m = courtier.post("/messages", {"number_id": number["id"], "to": number_to,
+                                                "body": body})
+                sent.append({"index": index, "to": number_to, "id": m.get("id"),
+                             "status": m.get("status"), "segments": m.get("segments")})
+            except twilio_courtier.CourtierRefus as e:
+                if e.status in (401, 402, 403, 503):
+                    raise _bad(twilio_courtier.message_de(e)) from None
+                failed.append({"index": index, "to": number_to,
+                               "error": twilio_courtier.message_de(e)})
+            except requests.RequestException as e:
+                failed.append({"index": index, "to": number_to,
+                               "error": f"unreachable ({type(e).__name__})"})
+        out = {"total": len(recipients), "sent": sent, "failed": failed, "via": "tulina"}
+        if not_attempted:
+            out["not_attempted"] = not_attempted
+            out["warning"] = (f"Stopped after {SMS_TIME_BUDGET_S:.0f} s to stay inside the "
+                              "call timeout: send `not_attempted` again in a new call.")
+        return out
+
     def _run(fn):
         try:
             return fn()
@@ -205,6 +314,11 @@ def register(mcp: FastMCP) -> None:
         Numbers are E.164 (+33612345678). Lists drop API links by default;
         `full=true` returns raw records.
 
+        Without its own Twilio account connected, the organization's TULINA
+        numbers are read instead (bought on Tulina's Phone page, billed in
+        credits): only `numbers`, `messages` (filtered by `to` or `from_`) and
+        `calls` are served there.
+
         Args:
             op: account | numbers | number | available_numbers | calls |
                 recordings | recording_audio | messages | message | next_page.
@@ -224,6 +338,9 @@ def register(mcp: FastMCP) -> None:
             page_size: lists — 1-1000 (default 50).
             full: raw records instead of the trimmed view.
         """
+        courtier = _courtier_ou_none()
+        if courtier is not None:
+            return _read_courtier(courtier, op, sid, to, from_)
         avail = dict(country=country, number_type=number_type, contains=contains,
                      sms_enabled=sms_enabled, voice_enabled=voice_enabled)
         filters = dict(to=to, from_=from_, status=status, date_after=date_after,
@@ -335,6 +452,11 @@ def register(mcp: FastMCP) -> None:
         `dry_run=true`: same validation, nothing sent to Twilio; returns what
         would be done.
 
+        Without its own Twilio account connected, the organization's TULINA
+        numbers are used (billed in credits): `send_sms` and `call` only, `from_`
+        being one of those numbers (`twilio` op='numbers'); buying and releasing
+        happen on Tulina's Phone page.
+
         Args:
             op: add_number | update_number | remove_number | call | cancel_call | send_sms.
             sid: update_number / remove_number (PN…), cancel_call (CA…).
@@ -355,6 +477,10 @@ def register(mcp: FastMCP) -> None:
             timeout: call — seconds to ring each leg (5-600, default 30).
             dry_run: validate only, send nothing.
         """
+        courtier = _courtier_ou_none()
+        if courtier is not None:
+            return _act_courtier(courtier, op, rep=rep, to=to, from_=from_, body=body,
+                                 media_urls=media_urls, dry_run=dry_run)
         num_args = dict(phone_number=phone_number, friendly_name=friendly_name,
                         bundle_sid=bundle_sid, address_sid=address_sid,
                         voice_url=voice_url, sms_url=sms_url)
