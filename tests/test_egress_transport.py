@@ -425,7 +425,9 @@ def test_l_echange_partage_n_utilise_la_session_que_si_on_la_donne(monkeypatch):
 @pytest.mark.parametrize("connecteur,fields,config,controles", [
     ("lighton", {"api_key": "k", "base_url": "https://lighton.exemple.test"}, None, 1),
     ("salesforce", {"client_id": "c", "client_secret": "s", "refresh_token": "r",
-                    "login_url": "https://acme.my.exemple.test"}, None, 1),
+                    # oto-core >= v1.250.0 refuse d'abord un domaine hors Salesforce :
+                    # un vrai suffixe, résolu « public » au contrôle puis interne.
+                    "login_url": "https://acme.my.salesforce.com"}, None, 1),
     ("wordpress", {"site_url": "https://blog.exemple.test", "username": "u",
                    "application_password": "p"}, None, 1),
     ("threecx", {"base_url": "https://pbx.exemple.test", "auth_mode": "api_client",
