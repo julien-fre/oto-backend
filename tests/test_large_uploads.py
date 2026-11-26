@@ -324,3 +324,60 @@ def test_extraction_ne_telecharge_pas_un_gros_fichier(monkeypatch):
     assert statut == file_extract.UNSUPPORTED
     assert ecrits == [(5, {"status": file_extract.UNSUPPORTED,
                            "detail": "too large to read"})]
+
+
+def test_cloture_reprise_si_la_base_tombe_juste_apres_la_fermeture(s3, monde, monkeypatch):
+    payload, _ = _ouvrir()
+    t = payload["target"]
+    s3.poser_partie(t["upload_id"], 1, MP4)
+    consommer = __import__("oto_mcp.db", fromlist=["x"]).consume_upload_token
+
+    def base_tombe(jti):
+        raise RuntimeError("base injoignable")
+
+    monkeypatch.setattr("oto_mcp.db.consume_upload_token", base_tombe)
+    with pytest.raises(RuntimeError):
+        large_uploads.terminer(payload)
+    assert t["key"] in s3.objets and t["upload_id"] not in s3.depots   # déjà fermé
+    # la base revient : le MÊME lien range le fichier, sans dépôt à fermer
+    monkeypatch.setattr("oto_mcp.db.consume_upload_token", consommer)
+    s3.head_object = lambda *, Bucket, Key: {"ContentLength": len(s3.objets[Key]["Body"])}
+    accuse = large_uploads.terminer(payload)
+    assert accuse["bytes"] == len(MP4) and "parts" not in accuse
+    assert len(monde["fichiers"]) == 1
+
+
+def test_cloture_apres_abandon_refusee(s3, monde):
+    payload, _ = _ouvrir()
+    s3.abort_multipart_upload(Bucket="b", Key=payload["target"]["key"],
+                              UploadId=payload["target"]["upload_id"])
+    s3.head_object = lambda *, Bucket, Key: (_ for _ in ()).throw(
+        ClientError({"Error": {"Code": "404"}}, "HeadObject"))
+    with pytest.raises(upload_tokens.UploadError) as e:
+        large_uploads.terminer(payload)
+    assert e.value.code == "token_already_used" and not monde["fichiers"]
+
+
+def test_une_signature_reconnue_fait_foi_avant_le_balisage(s3, monde):
+    payload, _ = _ouvrir(filename="livre.epub", content_type="application/epub+zip")
+    t = payload["target"]
+    s3.poser_partie(t["upload_id"], 1, b"PK\x03\x04" + b"<?xml version='1.0'?>" * 10)
+    assert large_uploads.terminer(payload)["ok"] is True
+    assert t["key"] not in s3.supprimes
+
+
+def test_tar_sans_signature_servi_neutre():
+    assert media_store.type_servi_gros("application/x-tar").attachment is True
+
+
+def test_le_mode_d_emploi_shell_se_lit(s3, monde, monkeypatch):
+    from oto_mcp.capabilities import uploads as cap
+    monkeypatch.setattr("oto_mcp.config.public_base_url", lambda: "https://mcp.exemple")
+
+    class Ctx:
+        sub, org_id = "sub-a", 3
+
+    hint = cap._upload_url(Ctx(), cap.UploadUrlInput(
+        target="project_file", project_id=7, filename="film.mp4", large=True))["hint"]
+    assert "-H 'Content-Type:'" in hint and '"$(curl -sf "$B/part/$n")"' in hint
+    assert 'dd if="$F" bs=1M skip=$(( (n-1)*5 )) count=5' in hint

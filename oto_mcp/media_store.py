@@ -770,16 +770,18 @@ def type_servi_gros(declare: str | None) -> TypeServi:
     passif = (base.startswith(("video/", "audio/"))
               or base in {"image/png", "image/jpeg", "image/gif", "image/webp",
                           "image/heic", "image/avif", "application/pdf",
-                          "application/gzip", "application/x-tar"}
+                          "application/gzip"}
               or base in _FAMILLE_ZIP or base in _FAMILLE_OLE)
     if passif and re.fullmatch(r"[a-z0-9.+-]+/[a-z0-9.+-]+", base):
         return TypeServi(base, attachment=False)
     return TypeServi(_NEUTRE, attachment=True)
 
 
-def debut_actif(data: bytes) -> bool:
-    """Le début d'un fichier porte-t-il du balisage qu'un navigateur interprète ?"""
-    return _balisage_actif(data)
+def debut_actif(data: bytes, declare: str) -> bool:
+    """Le début d'un fichier, sans signature de format reconnue, porte-t-il du balisage
+    qu'un navigateur interprète ? Une signature fait foi d'abord (#562) : un zip, un
+    EPUB ou un MP4 peut porter du XML sans être une page."""
+    return _signature(data, declare) is None and _balisage_actif(data)
 
 
 def origines_de_depot() -> list[str]:

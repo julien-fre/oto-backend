@@ -155,31 +155,42 @@ def terminer(payload: dict) -> dict:
     sub, target = payload["sub"], payload["target"]
     juger(payload)
     key, upload_id = target["key"], target["upload_id"]
+    nb_parties = None
     try:
         parties = media_store.parties_recues(key, upload_id)
     except media_store.MediaError as e:
-        raise upload_tokens.UploadError(
-            409 if e.code == "upload_not_found" else e.status,
-            "token_already_used" if e.code == "upload_not_found" else e.code, str(e))
-    total = _juger_parties(parties, int(target["part_size"]), int(target["max_bytes"]))
-    # Usage unique : consommé APRÈS les refus réparables (une partie manquante se renvoie
-    # avec le même lien), AVANT d'écrire — deux clôtures concurrentes n'en rangent qu'une.
+        if e.code != "upload_not_found":
+            raise upload_tokens.UploadError(e.status, e.code, str(e))
+        # Le dépôt n'existe plus : déjà clos (une clôture précédente a échoué APRÈS la
+        # fermeture — reprise ici), ou abandonné (rien à ranger). L'objet le dit.
+        try:
+            total = media_store.taille_objet(key)
+        except media_store.MediaError:
+            raise upload_tokens.UploadError(409, "token_already_used") from None
+    else:
+        total = _juger_parties(parties, int(target["part_size"]), int(target["max_bytes"]))
+        nb_parties = len(parties)
+        # FERMER d'abord, consommer ensuite : une panne passagère entre les deux laisse
+        # un objet clos que la clôture suivante range (branche ci-dessus) — l'inverse
+        # laissait un dépôt de 50 Go que plus aucun lien ne pouvait clore.
+        try:
+            media_store.clore_multipart(key, upload_id, parties)
+        except media_store.MediaError as e:
+            raise upload_tokens.UploadError(e.status, e.code, str(e))
+    # Usage unique : deux clôtures concurrentes ne rangent qu'une ligne.
     if not db.consume_upload_token(payload["jti"]):
         raise upload_tokens.UploadError(409, "token_already_used")
-    try:
-        media_store.clore_multipart(key, upload_id, parties)
-    except media_store.MediaError as e:
-        raise upload_tokens.UploadError(e.status, e.code, str(e))
     servi = target["served_type"]
     if servi != "application/octet-stream":
-        # #562 : un type passif déclaré ne couvre pas un contenu actif. Rien ne se
-        # renomme sur un objet de plusieurs Go : il est retiré, et le refus le dit.
+        # #562 : un type passif déclaré ne couvre pas un contenu actif. Une signature
+        # de format reconnue fait foi (un zip ou un EPUB porte du XML) ; sans elle, un
+        # début de page web est RETIRÉ — rien ne se renomme sur un objet de plusieurs Go.
         try:
             debut = media_store.lire_debut(key)
         except media_store.MediaError as e:
             media_store.delete_by_key(key)
             raise upload_tokens.UploadError(e.status, e.code, str(e))
-        if media_store.debut_actif(debut):
+        if media_store.debut_actif(debut, servi):
             media_store.delete_by_key(key)
             raise upload_tokens.UploadError(
                 400, "active_content",
@@ -194,7 +205,7 @@ def terminer(payload: dict) -> dict:
     db.log_project_activity(pid, sub, "project.file_add", target.get("title") or filename)
     return {"ok": True, "kind": "project_file",
             **redaction.champs_autorises(row, "filename"), "bytes": total,
-            "parts": len(parties)}
+            **({"parts": nb_parties} if nb_parties is not None else {})}
 
 
 def abandonner(payload: dict) -> dict:
