@@ -21,10 +21,10 @@ message to a friend. Nothing here adds an opt-out mention or holds a message to
 business hours; what Twilio or the carriers refuse comes back as their refusal.
 
 **Two ways to reach Twilio, one per org** (decision of 26/11/2026): the org's OWN key,
-called directly; or, without one, the org's TULINA numbers, bought on Tulina's Twilio
+called directly; or, without one, the org's PLATFORM numbers, bought on the platform's Twilio
 account and billed in credits, reached through the commerce's phone relay
 (`tools/twilio_courtier.py`) — this server never holds the platform's Twilio keys. On
-Tulina numbers an agent reads numbers, SMS threads and the call log, sends SMS and places
+the platform's numbers an agent reads numbers, SMS threads and the call log, sends SMS and places
 bridged calls; buying, releasing and recordings stay on the Phone page.
 
 Webhooks on the org's own account (inbound calls, voicemail, row write-back) are not wired
@@ -154,15 +154,18 @@ def register(mcp: FastMCP) -> None:
     def _courtier_ou_none():
         """None when the org has its OWN Twilio key (the direct path), else the broker
         for the caller; refused when neither is reachable."""
+        from ..access import resolve as _resolve
         try:
-            access.resolve_credential_fields(_NAME)
+            # A probe: its failure is the normal path to the broker, not a broken
+            # connector — no monitoring event (`emit_on_failure=False`).
+            _resolve.resolve_credential(_NAME, want="byo", emit_on_failure=False)
             return None
         except CredentialUnavailable:
             courtier = twilio_courtier.pour_l_appelant()
             if courtier is None:
                 raise _bad("No Twilio account is connected for this organization, and its "
-                           "Tulina numbers are not reachable from here: connect the org's "
-                           "Twilio account, or buy a number on Tulina's Phone page.") from None
+                           "the platform's numbers are not reachable from here: connect the org's "
+                           "Twilio account, or buy a number on the Phone page.") from None
             return courtier
 
     def _cr(fn):
@@ -171,24 +174,24 @@ def register(mcp: FastMCP) -> None:
         except twilio_courtier.CourtierRefus as e:
             raise _bad(twilio_courtier.message_de(e)) from None
         except requests.RequestException as e:
-            raise _bad(f"Tulina phone is unreachable right now ({type(e).__name__}); "
+            raise _bad(f"The platform's phone is unreachable right now ({type(e).__name__}); "
                        "retry in a moment.") from None
 
-    def _numero_tulina(courtier, from_: str) -> dict:
+    def _numero_plateforme(courtier, from_: str) -> dict:
         numbers = _cr(lambda: courtier.get()).get("numbers") or []
         for n in numbers:
             if n.get("e164") == from_:
                 return n
         owned = ", ".join(n.get("e164") or "" for n in numbers) or "none"
-        raise _bad(f"`from_` must be one of the organization's Tulina numbers ({owned}).")
+        raise _bad(f"`from_` must be one of the organization's numbers bought from the platform ({owned}).")
 
     def _read_courtier(courtier, op, sid, to, from_, **ignored):
         if op not in ("numbers", "messages", "calls"):
-            raise _bad(f"op='{op}' is not available on the organization's Tulina numbers: "
+            raise _bad(f"op='{op}' is not available on the organization's numbers bought from the platform: "
                        "agents read `numbers`, `messages` and `calls`; buying, releasing and "
-                       "recordings are on Tulina's Phone page.")
+                       "recordings are on the Phone page.")
         if sid:
-            raise _bad("On Tulina numbers, `sid` is not used: filter `messages` with `to` or "
+            raise _bad("On the platform's numbers, `sid` is not used: filter `messages` with `to` or "
                        "`from_`.")
         if op == "numbers":
             return _cr(lambda: courtier.get())
@@ -199,12 +202,12 @@ def register(mcp: FastMCP) -> None:
 
     def _act_courtier(courtier, op, *, rep, to, from_, body, media_urls, dry_run):
         if op not in ("send_sms", "call"):
-            raise _bad(f"op='{op}' is not available on the organization's Tulina numbers: "
+            raise _bad(f"op='{op}' is not available on the organization's numbers bought from the platform: "
                        "an agent sends SMS and places calls; numbers are bought and released "
-                       "on Tulina's Phone page.")
+                       "on the Phone page.")
         if media_urls:
-            raise _bad("MMS (`media_urls`) is not available on Tulina numbers.")
-        number = _numero_tulina(courtier, _need(from_, "from_", op))
+            raise _bad("MMS (`media_urls`) is not available on the platform's numbers.")
+        number = _numero_plateforme(courtier, _need(from_, "from_", op))
         recipients = [_run(lambda r=r: e164(r, "to")) for r in _need(to, "to", op)]
         if op == "call":
             first = _run(lambda: e164(_need(rep, "rep", op), "rep"))
@@ -212,16 +215,16 @@ def register(mcp: FastMCP) -> None:
                 raise _bad("op='call' dials ONE contact: pass `to` as a single-number list.")
             if dry_run:
                 return {"dry_run": True, "would": "call", "rings_first": first,
-                        "then_dials": recipients[0], "caller_id": from_, "via": "tulina"}
+                        "then_dials": recipients[0], "caller_id": from_, "via": "platform"}
             return _cr(lambda: courtier.post("/calls", {"number_id": number["id"],
                                                         "rep": first, "to": recipients[0]}))
         if not body:
-            raise _bad("op='send_sms' requires `body` on Tulina numbers.")
+            raise _bad("op='send_sms' requires `body` on the platform's numbers.")
         if len(recipients) > SMS_BATCH_MAX:
             raise _bad(f"op='send_sms': at most {SMS_BATCH_MAX} recipients per call.")
         if dry_run:
             return {"dry_run": True, "would": "send", "from": from_, "to": recipients,
-                    "characters": len(body), "via": "tulina"}
+                    "characters": len(body), "via": "platform"}
         sent, failed, not_attempted = [], [], []
         started = time.monotonic()
         for index, number_to in enumerate(recipients):
@@ -242,7 +245,7 @@ def register(mcp: FastMCP) -> None:
             except requests.RequestException as e:
                 failed.append({"index": index, "to": number_to,
                                "error": f"unreachable ({type(e).__name__})"})
-        out = {"total": len(recipients), "sent": sent, "failed": failed, "via": "tulina"}
+        out = {"total": len(recipients), "sent": sent, "failed": failed, "via": "platform"}
         if not_attempted:
             out["not_attempted"] = not_attempted
             out["warning"] = (f"Stopped after {SMS_TIME_BUDGET_S:.0f} s to stay inside the "
@@ -314,8 +317,8 @@ def register(mcp: FastMCP) -> None:
         Numbers are E.164 (+33612345678). Lists drop API links by default;
         `full=true` returns raw records.
 
-        Without its own Twilio account connected, the organization's TULINA
-        numbers are read instead (bought on Tulina's Phone page, billed in
+        Without its own Twilio account connected, the organization's PLATFORM
+        numbers are read instead (bought on the Phone page, billed in
         credits): only `numbers`, `messages` (filtered by `to` or `from_`) and
         `calls` are served there.
 
@@ -452,10 +455,10 @@ def register(mcp: FastMCP) -> None:
         `dry_run=true`: same validation, nothing sent to Twilio; returns what
         would be done.
 
-        Without its own Twilio account connected, the organization's TULINA
+        Without its own Twilio account connected, the organization's PLATFORM
         numbers are used (billed in credits): `send_sms` and `call` only, `from_`
         being one of those numbers (`twilio` op='numbers'); buying and releasing
-        happen on Tulina's Phone page.
+        happen on the Phone page.
 
         Args:
             op: add_number | update_number | remove_number | call | cancel_call | send_sms.

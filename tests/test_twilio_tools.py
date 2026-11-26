@@ -33,6 +33,8 @@ def client(monkeypatch):
     monkeypatch.setattr("oto.tools.twilio.TwilioClient", fabrique)
     monkeypatch.setattr("oto_mcp.access.resolve_credential_fields",
                         lambda provider, account=None: dict(_CREDS))
+    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential",
+                        lambda provider, **kw: MagicMock(fields=dict(_CREDS)))
     inst.built = built
     return inst
 
@@ -190,7 +192,7 @@ def test_sms_le_lot_s_arrete_avant_le_delai(client, admin, monkeypatch):
     assert T.SMS_TIME_BUDGET_S == 30.0
 
 
-# ── sans clé propre : les numéros Tulina, par le relais du commerce ──────────
+# ── sans clé propre : les numéros de la plateforme, par le relais du commerce ──────────
 
 @pytest.fixture
 def courtier(monkeypatch):
@@ -203,6 +205,8 @@ def courtier(monkeypatch):
         raise CredentialUnavailable(ErrorData(code=-32602, message="no key"))
 
     monkeypatch.setattr("oto_mcp.access.resolve_credential_fields", _absent)
+    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential",
+                        lambda provider, **kw: _absent(provider))
     vu = {"get": [], "post": []}
 
     class Faux:
@@ -236,7 +240,7 @@ def test_sans_cle_les_lectures_passent_par_le_courtier(client, courtier):
 def test_sans_cle_sms_et_appel_par_le_courtier(client, courtier, admin):
     out = _fn("twilio_act")(op="send_sms", from_="+33939030001",
                             to=["+33600000001", "+33600000009"], body="Bonjour")
-    assert out["via"] == "tulina" and [r["index"] for r in out["sent"]] == [0]
+    assert out["via"] == "platform" and [r["index"] for r in out["sent"]] == [0]
     assert "not open" in out["failed"][0]["error"]
     assert courtier["post"][0] == ("/messages", {"number_id": 7, "to": "+33600000001",
                                                  "body": "Bonjour"})
@@ -260,7 +264,24 @@ def test_sans_cle_ni_courtier_le_refus_dit_quoi_faire(monkeypatch):
         raise CredentialUnavailable(ErrorData(code=-32602, message="no key"))
 
     monkeypatch.setattr("oto_mcp.access.resolve_credential_fields", _absent)
+    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential",
+                        lambda provider, **kw: _absent(provider))
     monkeypatch.setattr(C, "pour_l_appelant", lambda: None)
     with pytest.raises(McpError) as e:
         _fn("twilio")(op="numbers")
     assert "connect the org's Twilio account" in str(e.value)
+
+
+
+def test_le_courtier_reste_au_tenant_primaire(monkeypatch):
+    from oto_mcp.tools import twilio_courtier as C
+    monkeypatch.setenv("OTO_COMMERCE_RELAY_URL", "https://commerce/service/oto")
+    monkeypatch.setenv("OTO_COMMERCE_RELAY_TOKEN", "t")
+    monkeypatch.setattr("oto_mcp.auth.hooks.current_user_sub_from_token", lambda: "sub-a")
+    monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 42)
+    monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: False)
+    monkeypatch.setattr(C, "_du_tenant_primaire", lambda org: False)
+    assert C.pour_l_appelant() is None
+    monkeypatch.setattr(C, "_du_tenant_primaire", lambda org: True)
+    c = C.pour_l_appelant()
+    assert (c.org_id, c.sub, c.role) == (42, "sub-a", "org_member")

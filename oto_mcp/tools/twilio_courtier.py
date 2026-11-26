@@ -1,7 +1,8 @@
-"""Twilio through the BROKER: the org's Tulina numbers, reached through the commerce.
+"""Twilio through the BROKER: the org's numbers bought from the platform, reached through
+the instance's commerce.
 
 An org either connects its own Twilio key (`tools/twilio.py`, the client called here
-directly) or uses the numbers it bought on Tulina's own Twilio account. Those numbers,
+directly) or uses the numbers it bought on the platform's own Twilio account. Those numbers,
 their billing in credits and the platform's Twilio keys live in the COMMERCE (decision
 of 26/11/2026: agents go through it, this service never holds a copy of the platform's
 Twilio keys). This module is the agent's way there: the commerce's phone relay, called
@@ -9,7 +10,8 @@ with the relay's token for the person this server vouches for.
 
 **Config, no default** (`OTO_COMMERCE_RELAY_URL`, `OTO_COMMERCE_RELAY_TOKEN`, the same
 pair as the credits relay): unset = no broker, and a tool call without the org's own key
-is refused with what to do.
+is refused with what to do. **Primary tenant only**, like the credits relay: the org of a
+hosted tenant is not billed by this instance's commerce.
 
 **The contract** (`/service/oto/orgs/{org_id}/phone…` on the commerce):
 
@@ -91,6 +93,15 @@ def config() -> "tuple[str, str] | None":
     return url, token
 
 
+def _du_tenant_primaire(org_id: int) -> bool:
+    from .. import tenancy
+    from ..db import tenants
+    try:
+        return tenants.org_tenant_slug(org_id) == tenancy.primary_slug()
+    except tenancy.TenantPrimaireNonDeclare:
+        return False
+
+
 def pour_l_appelant() -> Optional[Courtier]:
     """The broker for the caller in their current org, or None (not configured, no
     caller, no org)."""
@@ -101,17 +112,17 @@ def pour_l_appelant() -> Optional[Courtier]:
     from ..auth.hooks import current_user_sub_from_token
     sub = current_user_sub_from_token()
     org_id = access.current_org(sub) if sub else None
-    if not sub or not org_id:
+    if not sub or not org_id or not _du_tenant_primaire(int(org_id)):
         return None
     role = "org_admin" if roles.is_org_admin(sub, int(org_id)) else "org_member"
     return Courtier(url=cfg[0], token=cfg[1], org_id=int(org_id), sub=sub, role=role)
 
 
 MESSAGES = {
-    "destination_not_allowed": "this destination is not open on Tulina numbers (no rate for it)",
+    "destination_not_allowed": "this destination is not open on the platform's numbers (no rate for it)",
     "credits_blocked": "the organization is out of credits",
-    "not_found": "that number is not one of the organization's Tulina numbers",
-    "not_configured": "Tulina's phone is not connected to Twilio yet",
+    "not_found": "that number is not one of the organization's numbers bought from the platform",
+    "not_configured": "the platform's phone is not connected to Twilio yet",
     "empty_body": "the message is empty",
     "body_too_long": "the message is longer than 1600 characters",
 }
@@ -119,4 +130,4 @@ MESSAGES = {
 
 def message_de(e: CourtierRefus) -> str:
     base = MESSAGES.get(e.code, f"refused ({e.code})")
-    return f"Tulina phone: {base}." + (f" Twilio: {e.detail}" if e.detail else "")
+    return f"Phone: {base}." + (f" Twilio: {e.detail}" if e.detail else "")
