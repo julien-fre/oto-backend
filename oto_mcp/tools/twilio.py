@@ -371,10 +371,20 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, page_size=page_size)
             return _view(_run(lambda: _client().get_number(_need(sid, "sid", op))), full)
         if op == "available_numbers":
-            return _view(_run(lambda: _client().search_available_numbers(
-                _need(country, "country", op), number_type or "local", contains=contains,
-                sms_enabled=sms_enabled, voice_enabled=voice_enabled,
-                page_size=page_size)), full)
+            code, kind = _need(country, "country", op), number_type or "local"
+            try:
+                return _view(_client().search_available_numbers(
+                    code, kind, contains=contains, sms_enabled=sms_enabled,
+                    voice_enabled=voice_enabled, page_size=page_size), full)
+            except UpstreamHTTPError as e:
+                if e.status_code != 404:
+                    raise _bad(_upstream_message(e))
+                # Twilio answers 404 for a type it does not sell there: say which it does.
+                kinds = _run(lambda: _client().available_number_types(code))
+                raise _bad(f"Twilio sells no {kind} numbers in {code.upper()} to this account; "
+                           f"types it sells there: {', '.join(kinds) or 'none'}.")
+            except ValueError as e:
+                raise _bad(str(e))
         if op == "calls" and sid:
             _refuse_ignored(op, page_size=page_size, **filters)
             return _view(_run(lambda: _client().get_call(sid)), full)

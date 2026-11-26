@@ -285,3 +285,13 @@ def test_le_courtier_reste_au_tenant_primaire(monkeypatch):
     monkeypatch.setattr(C, "_du_tenant_primaire", lambda org: True)
     c = C.pour_l_appelant()
     assert (c.org_id, c.sub, c.role) == (42, "sub-a", "org_member")
+
+
+
+def test_un_type_non_vendu_dit_les_types_vendus(client):
+    from oto.tools.common.errors import UpstreamHTTPError
+    client.search_available_numbers.side_effect = UpstreamHTTPError(404, {"code": 20404})
+    client.available_number_types.return_value = ["local"]
+    with pytest.raises(McpError) as e:
+        _fn("twilio")(op="available_numbers", country="FR", number_type="mobile")
+    assert "sells no mobile numbers in FR" in str(e.value) and "local" in str(e.value)
