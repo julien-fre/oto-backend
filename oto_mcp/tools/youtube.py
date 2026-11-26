@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import requests
 from fastmcp import FastMCP
+from starlette.concurrency import run_in_threadpool
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access, file_source
@@ -55,7 +56,7 @@ _DEFAULT_METRICS = ("views,estimatedMinutesWatched,averageViewDuration,"
                     "subscribersGained,subscribersLost,likes,comments")
 
 _OPS = ("accounts", "channel", "videos", "video", "playlists", "playlist_items",
-        "comments", "replies", "analytics", "categories", "upload_status")
+        "comments", "replies", "analytics", "categories", "job_status")
 _ACT_OPS = ("update_video", "upload_video", "set_thumbnail", "reply", "set_moderation",
             "delete_comment", "add_to_playlist")
 
@@ -72,7 +73,7 @@ _ARGS = {
     "analytics": {"start_date", "end_date", "metrics", "dimensions", "filters", "sort",
                   "max_results"},
     "categories": {"region_code"},
-    "upload_status": {"job_id"},
+    "job_status": {"job_id"},
     "update_video": {"video_id", "title", "description", "tags", "category_id",
                      "default_language", "privacy_status", "publish_at", "embeddable",
                      "license", "public_stats_viewable", "made_for_kids",
@@ -124,7 +125,7 @@ def _client_for_user(account: Optional[str] = None):
 
 async def _client(account: Optional[str] = None) -> YouTubeClient:
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+        return await asyncio.wait_for(run_in_threadpool(_client_for_user, account),
                                       timeout=_TOKEN_TIMEOUT_S)
     except asyncio.TimeoutError:
         raise _bad(f"Google did not respond within {_TOKEN_TIMEOUT_S}s "
@@ -135,7 +136,7 @@ async def _run(fn: Callable[[], Any]) -> Any:
     from oto.tools.google.youtube import YouTubeError
 
     try:
-        return await asyncio.to_thread(fn)
+        return await run_in_threadpool(fn)
     except YouTubeError as e:
         raise _api_error(e)
     except ValueError as e:
@@ -214,7 +215,7 @@ def _video(v: dict, full: bool = False) -> dict:
         out.update({
             "description": sn.get("description"), "tags": sn.get("tags") or [],
             "category_id": sn.get("categoryId"), "default_language": sn.get("defaultLanguage"),
-            "thumbnail": _thumb(sn), "upload_status": st.get("uploadStatus"),
+            "thumbnail": _thumb(sn), "job_status": st.get("uploadStatus"),
             "embeddable": st.get("embeddable"), "license": st.get("license"),
             "made_for_kids": st.get("madeForKids"),
         })
@@ -313,12 +314,17 @@ def _mettre_en_file(row: dict, meta: dict, account: Optional[str],
         notify_subscribers=bool(notify_subscribers))
     return {"queued": True, **youtube_upload_worker.etat_public(job),
             "note": ("A big file: oto sends it to YouTube in the background (a few GB "
-                     "take minutes to hours). Follow it with youtube op=upload_status "
+                     "take minutes to hours). Follow it with youtube op=job_status "
                      f"job_id={job['id']}; it ends with the video_id. Private unless "
                      "privacy_status says otherwise.")}
 
 
-def _upload_status(job_id: int) -> dict:
+def _comptes() -> list:
+    sub = access.current_user_sub_or_raise()
+    return google_oauth.reachable_accounts(sub, service=_SERVICE)
+
+
+def _job_status(job_id: int) -> dict:
     from .. import db, youtube_upload_worker
     sub = access.current_user_sub_or_raise()
     job = db.youtube_uploads.lire(int(job_id), sub)
@@ -333,7 +339,7 @@ def register(mcp: FastMCP) -> None:
     async def youtube(
         op: Literal["accounts", "channel", "videos", "video", "playlists",
                     "playlist_items", "comments", "replies", "analytics",
-                    "categories", "upload_status"] = "channel",
+                    "categories", "job_status"] = "channel",
         video_id: Optional[str] = None,
         video_ids: Optional[list[str]] = None,
         playlist_id: Optional[str] = None,
@@ -380,7 +386,7 @@ def register(mcp: FastMCP) -> None:
           (with `sort="-views"` and `max_results`), `country`, `trafficSourceType`,
           `deviceType`; `filters` e.g. `video==VIDEO_ID`. Returns {columns, rows}.
         - categories: assignable video category ids for `region_code` (default US).
-        - upload_status: where the upload `job_id` stands (from youtube_act
+        - job_status: where the upload `job_id` stands (from youtube_act
           op=upload_video on a big project file): status pending|running|done|failed,
           progress %, then `video_id` and its Studio link, or the `error`.
 
@@ -402,7 +408,7 @@ def register(mcp: FastMCP) -> None:
             region_code: ISO country code (op categories).
             max_results: page size (videos/playlists ≤ 50, comments ≤ 100).
             page_token: `next_page_token` of the previous page.
-            job_id: an upload job (op upload_status).
+            job_id: an upload job (op job_status).
             account: email of the Google account to use — same choice as `_account`.
         """
         if op not in _OPS:
@@ -415,13 +421,11 @@ def register(mcp: FastMCP) -> None:
             sort=sort, region_code=region_code, max_results=max_results,
             page_token=page_token, job_id=job_id))
 
-        if op == "upload_status":
-            return await asyncio.to_thread(_upload_status, _need(job_id, "job_id", op))
+        if op == "job_status":
+            return await run_in_threadpool(_job_status, _need(job_id, "job_id", op))
 
         if op == "accounts":
-            sub = access.current_user_sub_or_raise()
-            accounts = await asyncio.to_thread(
-                google_oauth.reachable_accounts, sub, service=_SERVICE)
+            accounts = await run_in_threadpool(_comptes)
             return {"accounts": [{"email": a.get("google_email"),
                                   "is_default": a.get("is_default", False),
                                   "shared": a.get("shared")} for a in accounts]}
@@ -569,7 +573,7 @@ def register(mcp: FastMCP) -> None:
         - upload_video: upload `video` (a file oto can reach, same shapes as `image`;
           ≤ 100 MB — or a PROJECT FILE of any size, up to 256 GB: a big video is sent in
           the background, the answer gives a `job_id` to follow with youtube
-          op=upload_status) as a NEW video of the channel, with `title` (required) and the same
+          op=job_status) as a NEW video of the channel, with `title` (required) and the same
           metadata fields as update_video. PRIVATE unless `privacy_status` says
           otherwise; `publish_at` schedules it (stays private until then). Publishing it
           public reaches the audience: confirm with the person first. 100 uploads a day
@@ -652,12 +656,12 @@ def register(mcp: FastMCP) -> None:
             meta.update(title=name, privacy_status=privacy_status or "private",
                         category_id=category_id or "22", made_for_kids=bool(made_for_kids))
             if isinstance(src, dict) and src.get("kind") == "project_file":
-                gros = await asyncio.to_thread(_gros_fichier, src)
+                gros = await run_in_threadpool(_gros_fichier, src)
                 if gros is not None:
-                    return await asyncio.to_thread(
+                    return await run_in_threadpool(
                         _mettre_en_file, gros, meta, account, notify_subscribers)
             try:
-                rf = await asyncio.to_thread(file_source.resolve, src,
+                rf = await run_in_threadpool(file_source.resolve, src,
                                              max_bytes=_VIDEO_MAX_BYTES)
             except file_source.FileSourceError as e:
                 raise _bad(f"the video file cannot be read: {e} — nothing was uploaded "
@@ -675,7 +679,7 @@ def register(mcp: FastMCP) -> None:
             vid = _need(video_id, "video_id", op)
             src = _need(image, "image", op)
             try:
-                rf = await asyncio.to_thread(file_source.resolve, src,
+                rf = await run_in_threadpool(file_source.resolve, src,
                                              max_bytes=_THUMB_MAX_BYTES)
             except file_source.FileSourceError as e:
                 raise _bad(f"the thumbnail image cannot be read: {e} — nothing was uploaded.")

@@ -10,7 +10,7 @@ base, aucun Google) :
 - une session oubliée par YouTube (404) est rouverte depuis le début ;
 - un refus 4xx est terminal, une panne passagère est reportée, au plus `MAX_ESSAIS` ;
 - l'accès au projet et l'identité sont rejugés à chaque réclamation ;
-- `youtube op=upload_status` ne rend jamais la session.
+- `youtube op=job_status` ne rend jamais la session.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class _YouTube:
         self.ouvertures.append((total, mime, kw))
         return f"https://upload.exemple/session/{len(self.ouvertures)}"
 
-    def video_upload_status(self, session, total):
+    def video_job_status(self, session, total):
         self.etats.append(session)
         if isinstance(self.statut, Exception):
             raise self.statut
@@ -258,7 +258,7 @@ def appel(monkeypatch):
 def test_un_gros_fichier_de_projet_part_en_fond(appel):
     out = _tool("youtube_act")(op="upload_video", title="Film",
                                video={"kind": "project_file", "project_id": 7, "file_id": 41})
-    assert out["queued"] is True and out["job_id"] == 12 and "upload_status" in out["note"]
+    assert out["queued"] is True and out["job_id"] == 12 and "job_status" in out["note"]
     (cree,) = appel["crees"]
     assert cree["account"] == "chaine@exemple.test" and cree["org_id"] == 3
     assert cree["total_bytes"] == 3 * 1024 ** 3 and cree["mime"] == "video/quicktime"
@@ -274,11 +274,74 @@ def test_publish_at_sans_prive_refuse_avant_la_file(appel):
     assert appel["crees"] == []
 
 
-def test_upload_status(appel):
+def test_job_status(appel):
     from oto_mcp.mcp_errors import McpError
-    out = _tool("youtube")(op="upload_status", job_id=12)
+    out = _tool("youtube")(op="job_status", job_id=12)
     assert out["progress"] == 25.0 and "session_url_enc" not in str(out)
     with pytest.raises(McpError, match="no upload job"):
-        _tool("youtube")(op="upload_status", job_id=13)
+        _tool("youtube")(op="job_status", job_id=13)
     with pytest.raises(McpError, match="does not take"):
-        _tool("youtube")(op="upload_status", job_id=12, video_id="v1")
+        _tool("youtube")(op="job_status", job_id=12, video_id="v1")
+
+
+# --- le client réel d'oto-core et la résolution du compte hors appel -----------------
+
+@pytest.mark.exige_pin_oto_core
+def test_oto_core_porte_l_envoi_par_morceaux():
+    """Le worker pilote l'envoi lui-même : sans ces trois appels (connectors#306), chaque
+    travail mourrait en `AttributeError` après `MAX_ESSAIS` — ce test le dit avant."""
+    from oto.tools.google.youtube import YouTubeClient
+    for nom in ("start_video_upload", "send_video_chunk", "video_job_status"):
+        assert callable(getattr(YouTubeClient, nom, None)), nom
+
+
+def test_client_resolu_sous_le_contexte_du_depot(monkeypatch):
+    """Hors de tout appel : l'org et le projet du dépôt sont reposés pendant la
+    résolution du compte Google, puis retirés."""
+    from oto_mcp import session_org
+    from oto_mcp.auth import google as google_oauth
+    vu = {}
+
+    class Creds:
+        token = "ya29.jeton"
+
+    def credentials_for(sub, account=None, service=None):
+        vu.update(sub=sub, account=account, service=service,
+                  org=session_org.current_call_org(),
+                  projet=session_org.current_call_project())
+        return Creds()
+
+    monkeypatch.setattr(google_oauth, "credentials_for", credentials_for)
+    c = W._client(_job(MIB))
+    assert vu == {"sub": "sub-a", "account": "chaine@exemple.test", "service": "youtube",
+                  "org": 3, "projet": 7}
+    assert c._token == "ya29.jeton"
+    assert session_org.current_call_org() is None
+    assert session_org.current_call_project() is None
+
+
+def test_compte_google_retire_est_terminal(monkeypatch):
+    from oto_mcp.auth import google as google_oauth
+    monkeypatch.setattr(google_oauth, "credentials_for", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("The Google account has not yet authorized YouTube")))
+    with pytest.raises(W._Terminal, match="authorized YouTube"):
+        W._client(_job(MIB))
+
+
+def test_jeton_expire_en_cours_de_morceau_renvoye_une_fois(monde, monkeypatch):
+    from oto.tools.google.youtube import YouTubeError
+    total = MIB
+    clients = []
+
+    class Expire(_YouTube):
+        def send_video_chunk(self, *a, **k):
+            raise YouTubeError(401, {"error": {"message": "expired"}})
+
+    def client(job):
+        c = Expire(total) if not clients else _YouTube(total)
+        clients.append(c)
+        return c
+
+    monkeypatch.setattr(W, "_client", client)
+    W.mener(_job(total))
+    assert len(clients) == 2 and monde["fini"] == "vid-1"

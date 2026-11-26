@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS youtube_upload_jobs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- `sub` : la fusion de comptes (`migrate_sub`) repointe ses lignes par cette colonne.
+CREATE INDEX IF NOT EXISTS idx_youtube_upload_jobs_sub ON youtube_upload_jobs(sub);
 -- Partiel : la population que le worker regarde à chaque tour.
 CREATE INDEX IF NOT EXISTS idx_youtube_upload_jobs_ouverts
     ON youtube_upload_jobs(created_at) WHERE status IN ('pending', 'running');

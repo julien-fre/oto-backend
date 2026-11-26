@@ -19,5 +19,6 @@ lease_until TIMESTAMPTZ,
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_youtube_upload_jobs_sub ON youtube_upload_jobs(sub);
 CREATE INDEX IF NOT EXISTS idx_youtube_upload_jobs_ouverts
 ON youtube_upload_jobs(created_at) WHERE status IN ('pending', 'running');

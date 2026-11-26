@@ -10,7 +10,7 @@ stockage, `media_store.lire_plage`) : la mémoire ne tient jamais qu'un morceau.
 ouverture, et chaque morceau accepté note le prochain octet que YOUTUBE attend
 (`next_offset`, jamais notre propre compte). Un processus arrêté en cours (bascule
 bleu/vert, redémarrage) laisse un bail (`lease_until`) qui échoit : un autre processus
-réclame le travail, demande à YouTube où il en est (`video_upload_status`) et repart de
+réclame le travail, demande à YouTube où il en est (`video_job_status`) et repart de
 là. Rien n'est renvoyé deux fois, rien n'est perdu.
 
 **Hors de tout appel.** Le travail porte le contexte figé au dépôt (`sub`, `org_id`,
@@ -21,7 +21,7 @@ cours de route. L'identité repasse par la garde (`garde_identite`), la lecture 
 par `ownership.can_access` — à chaque réclamation.
 
 **Échecs.** Un refus de YouTube (4xx : quota du jour, compte non vérifié, métadonnée
-refusée) est TERMINAL, avec la raison lisible par `youtube op=upload_status`. Une panne
+refusée) est TERMINAL, avec la raison lisible par `youtube op=job_status`. Une panne
 passagère (5xx, réseau, stockage) se reprend plus tard (`reporter`, délai croissant),
 au plus `MAX_ESSAIS` fois. Une session que YouTube ne connaît plus (404/410, ~une
 semaine) est rouverte depuis le début.
@@ -122,7 +122,7 @@ def mener(job: dict) -> None:
     offset = 0
     try:
         if session:
-            etat = client.video_upload_status(session, total)
+            etat = client.video_job_status(session, total)
             if etat["done"]:
                 return _fini(job, etat["video"])
             offset = etat["next_offset"]
@@ -146,7 +146,15 @@ def mener(job: dict) -> None:
         data = media_store.lire_plage(job["s3_key"], offset, fin)
         if len(data) != fin - offset + 1:
             raise _Terminal(f"the stored file is shorter than expected ({total} bytes).")
-        out = client.send_video_chunk(session, data, offset, total, mime)
+        try:
+            out = client.send_video_chunk(session, data, offset, total, mime)
+        except YouTubeError as e:
+            if e.status_code != 401:
+                raise
+            # Le jeton d'accès a expiré en cours de morceau : on le redemande et on
+            # renvoie CE morceau, une fois — un second 401 remonte (reporté).
+            client, pris_a = _client(job), time.monotonic()
+            out = client.send_video_chunk(session, data, offset, total, mime)
         if out["done"]:
             return _fini(job, out["video"])
         offset = out["next_offset"]
@@ -217,7 +225,7 @@ async def run_youtube_upload_loop(interval: int = _POLL_S) -> None:
 
 
 def etat_public(job: dict) -> dict:
-    """Ce que `youtube op=upload_status` rend d'un travail — jamais la session."""
+    """Ce que `youtube op=job_status` rend d'un travail — jamais la session."""
     total = int(job["total_bytes"]) or 1
     out = {"job_id": job["id"], "status": job["status"],
            "progress": round(100 * int(job["next_offset"] or 0) / total, 1),

@@ -75,10 +75,12 @@ def poser_session(job_id: int, session_url_enc: str) -> None:
 
 def avancer(job_id: int, next_offset: int, bail_s: int) -> bool:
     """Note le prochain octet attendu par YouTube et prolonge le bail. `False` si le
-    travail n'est plus `running` (annulé, ou fichier supprimé entre-temps)."""
+    travail n'est plus `running` (annulé, ou fichier supprimé entre-temps). Un morceau
+    accepté REMET les essais à zéro : `MAX_ESSAIS` compte les pannes d'affilée, pas les
+    reprises d'une mise en ligne de plusieurs heures (déploiements, jetons expirés)."""
     with _connect() as conn:
         row = conn.execute(
-            "UPDATE youtube_upload_jobs SET next_offset = %s, "
+            "UPDATE youtube_upload_jobs SET next_offset = %s, attempts = 0, "
             "lease_until = NOW() + make_interval(secs => %s), updated_at = NOW() "
             "WHERE id = %s AND status = 'running' RETURNING id",
             (next_offset, bail_s, job_id)).fetchone()

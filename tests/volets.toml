@@ -598,6 +598,15 @@ sources = [
 tests = ["tests/**/test_transcri*.py"]
 
 [[volet]]
+nom = "mises en ligne youtube"
+sources = [
+  "oto_mcp/youtube_upload_worker.py",
+  "oto_mcp/db/youtube_uploads.py",
+  "oto_mcp/db/schema/youtube.py",
+]
+tests = ["tests/test_youtube*.py"]
+
+[[volet]]
 nom = "export de périmètre"
 sources = ["oto_mcp/export_perimetre/**", "oto_mcp/tenant_migration.py"]
 tests = ["tests/export_perimetre/test_*.py", "tests/**/test_export*.py", "tests/**/test_migrate*.py"]
