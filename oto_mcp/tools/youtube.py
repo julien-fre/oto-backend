@@ -55,7 +55,7 @@ _DEFAULT_METRICS = ("views,estimatedMinutesWatched,averageViewDuration,"
                     "subscribersGained,subscribersLost,likes,comments")
 
 _OPS = ("accounts", "channel", "videos", "video", "playlists", "playlist_items",
-        "comments", "replies", "analytics", "categories")
+        "comments", "replies", "analytics", "categories", "upload_status")
 _ACT_OPS = ("update_video", "upload_video", "set_thumbnail", "reply", "set_moderation",
             "delete_comment", "add_to_playlist")
 
@@ -72,6 +72,7 @@ _ARGS = {
     "analytics": {"start_date", "end_date", "metrics", "dimensions", "filters", "sort",
                   "max_results"},
     "categories": {"region_code"},
+    "upload_status": {"job_id"},
     "update_video": {"video_id", "title", "description", "tags", "category_id",
                      "default_language", "privacy_status", "publish_at", "embeddable",
                      "license", "public_stats_viewable", "made_for_kids",
@@ -268,13 +269,71 @@ def _video_mime(data: bytes, name: str, declared: str) -> str:
     return "application/octet-stream"
 
 
+# --- a big project file: uploaded in the background (`youtube_upload_worker`) -------------
+
+def _gros_fichier(src: dict) -> Optional[dict]:
+    """The project file `src` when it is too big to go through memory, else None."""
+    try:
+        row = file_source.fichier_de_projet(src)
+    except file_source.FileSourceError as e:
+        raise _bad(f"the video file cannot be read: {e} — nothing was uploaded.")
+    return row if int(row.get("size_bytes") or 0) > _VIDEO_MAX_BYTES else None
+
+
+def _mettre_en_file(row: dict, meta: dict, account: Optional[str],
+                    notify_subscribers: bool) -> dict:
+    """Queue the upload of a big project file. Checked NOW, while the call's context
+    exists: the YouTube account (resolved, then pinned on the job), the metadata."""
+    from .. import db, youtube_upload_worker
+    from ..mcp_errors import McpError as _McpError
+
+    sub = access.current_user_sub_or_raise()
+    if meta.get("publish_at") and meta.get("privacy_status") != "private":
+        raise _bad("publish_at needs privacy_status 'private' (a scheduled video)")
+    if not str(meta.get("title") or "").strip():
+        raise _bad("op='upload_video' requires `title`")
+    try:
+        google_oauth.credentials_for(sub, account=account, service=_SERVICE)
+        rc = access.resolve_credential(_SERVICE, want="byo", sub=sub, account=account)
+    except RuntimeError as e:
+        raise _bad(str(e))
+    except _McpError:
+        raise
+    except Exception as e:  # CompteIntrouvable / CredentialUnavailable: named refusal
+        raise _bad(f"no YouTube account to upload with ({type(e).__name__}).") from None
+    name = row.get("filename") or "video"
+    mime = (row.get("mime") or "").split(";")[0].strip()
+    if not mime.startswith("video/"):
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        mime = _VIDEO_EXT.get(ext, "application/octet-stream")
+    job = db.youtube_uploads.creer(
+        project_id=int(row["project_id"]), file_id=int(row["id"]), sub=sub,
+        org_id=access.current_org(sub), account=rc.account or None,
+        total_bytes=int(row["size_bytes"]), mime=mime, meta=meta,
+        notify_subscribers=bool(notify_subscribers))
+    return {"queued": True, **youtube_upload_worker.etat_public(job),
+            "note": ("A big file: oto sends it to YouTube in the background (a few GB "
+                     "take minutes to hours). Follow it with youtube op=upload_status "
+                     f"job_id={job['id']}; it ends with the video_id. Private unless "
+                     "privacy_status says otherwise.")}
+
+
+def _upload_status(job_id: int) -> dict:
+    from .. import db, youtube_upload_worker
+    sub = access.current_user_sub_or_raise()
+    job = db.youtube_uploads.lire(int(job_id), sub)
+    if job is None:
+        raise _bad(f"no upload job {job_id} of yours.")
+    return youtube_upload_worker.etat_public(job)
+
+
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="youtube", annotations=LECTURE)
     async def youtube(
         op: Literal["accounts", "channel", "videos", "video", "playlists",
                     "playlist_items", "comments", "replies", "analytics",
-                    "categories"] = "channel",
+                    "categories", "upload_status"] = "channel",
         video_id: Optional[str] = None,
         video_ids: Optional[list[str]] = None,
         playlist_id: Optional[str] = None,
@@ -291,6 +350,7 @@ def register(mcp: FastMCP) -> None:
         region_code: Optional[str] = None,
         max_results: Optional[int] = None,
         page_token: Optional[str] = None,
+        job_id: Optional[int] = None,
         account: Optional[str] = None,
     ) -> dict:
         """Read a YouTube channel like YouTube Studio: its videos (private and scheduled
@@ -320,6 +380,9 @@ def register(mcp: FastMCP) -> None:
           (with `sort="-views"` and `max_results`), `country`, `trafficSourceType`,
           `deviceType`; `filters` e.g. `video==VIDEO_ID`. Returns {columns, rows}.
         - categories: assignable video category ids for `region_code` (default US).
+        - upload_status: where the upload `job_id` stands (from youtube_act
+          op=upload_video on a big project file): status pending|running|done|failed,
+          progress %, then `video_id` and its Studio link, or the `error`.
 
         Args:
             op: what to read.
@@ -339,6 +402,7 @@ def register(mcp: FastMCP) -> None:
             region_code: ISO country code (op categories).
             max_results: page size (videos/playlists ≤ 50, comments ≤ 100).
             page_token: `next_page_token` of the previous page.
+            job_id: an upload job (op upload_status).
             account: email of the Google account to use — same choice as `_account`.
         """
         if op not in _OPS:
@@ -349,7 +413,10 @@ def register(mcp: FastMCP) -> None:
             search_terms=search_terms, order=order, start_date=start_date,
             end_date=end_date, metrics=metrics, dimensions=dimensions, filters=filters,
             sort=sort, region_code=region_code, max_results=max_results,
-            page_token=page_token))
+            page_token=page_token, job_id=job_id))
+
+        if op == "upload_status":
+            return await asyncio.to_thread(_upload_status, _need(job_id, "job_id", op))
 
         if op == "accounts":
             sub = access.current_user_sub_or_raise()
@@ -500,7 +567,9 @@ def register(mcp: FastMCP) -> None:
           `publish_at` (RFC 3339, e.g. 2026-12-01T09:00:00Z) schedules a PRIVATE video.
           Does NOT change the thumbnail.
         - upload_video: upload `video` (a file oto can reach, same shapes as `image`;
-          ≤ 100 MB) as a NEW video of the channel, with `title` (required) and the same
+          ≤ 100 MB — or a PROJECT FILE of any size, up to 256 GB: a big video is sent in
+          the background, the answer gives a `job_id` to follow with youtube
+          op=upload_status) as a NEW video of the channel, with `title` (required) and the same
           metadata fields as update_video. PRIVATE unless `privacy_status` says
           otherwise; `publish_at` schedules it (stays private until then). Publishing it
           public reaches the audience: confirm with the person first. 100 uploads a day
@@ -520,7 +589,8 @@ def register(mcp: FastMCP) -> None:
         Args:
             op: what to change.
             video_id: the video (update_video, set_thumbnail, add_to_playlist).
-            video: the video file reference, ≤ 100 MB (upload_video).
+            video: the video file reference, ≤ 100 MB, or a project file of any size
+                (upload_video).
             title: (new) title, ≤ 100 characters (update_video, upload_video).
             description: new description, ≤ 5,000 bytes (update_video).
             tags: the full new tag list — replaces the current one (update_video).
@@ -578,6 +648,14 @@ def register(mcp: FastMCP) -> None:
         if op == "upload_video":
             src = _need(video, "video", op)
             name = _need(title, "title", op)
+            meta = {k: v for k, v in fields.items() if k != "public_stats_viewable"}
+            meta.update(title=name, privacy_status=privacy_status or "private",
+                        category_id=category_id or "22", made_for_kids=bool(made_for_kids))
+            if isinstance(src, dict) and src.get("kind") == "project_file":
+                gros = await asyncio.to_thread(_gros_fichier, src)
+                if gros is not None:
+                    return await asyncio.to_thread(
+                        _mettre_en_file, gros, meta, account, notify_subscribers)
             try:
                 rf = await asyncio.to_thread(file_source.resolve, src,
                                              max_bytes=_VIDEO_MAX_BYTES)
@@ -585,9 +663,6 @@ def register(mcp: FastMCP) -> None:
                 raise _bad(f"the video file cannot be read: {e} — nothing was uploaded "
                            f"(at most {_VIDEO_MAX_BYTES // (1024 * 1024)} MB through oto).")
             mime = _video_mime(rf.data, rf.filename, rf.mime)
-            meta = {k: v for k, v in fields.items() if k != "public_stats_viewable"}
-            meta.update(title=name, privacy_status=privacy_status or "private",
-                        category_id=category_id or "22", made_for_kids=bool(made_for_kids))
             c = await _client(account)
             created = await _run(lambda: c.upload_video(
                 rf.data, mime, notify_subscribers=notify_subscribers, **meta))

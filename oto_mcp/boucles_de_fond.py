@@ -123,6 +123,11 @@ def _transcription() -> Fonction:
     return transcription_worker.run_transcription_loop
 
 
+def _youtube_uploads() -> Fonction:
+    from . import youtube_upload_worker
+    return youtube_upload_worker.run_youtube_upload_loop
+
+
 def _jev_jobs() -> Fonction:
     from . import jev_jobs_worker
     return jev_jobs_worker.run_jev_jobs_loop
@@ -230,6 +235,12 @@ BOUCLES: tuple[Boucle, ...] = (
     # le doublon, pas la divergence : seule la prod draine.
     Boucle(nom="jev_jobs_worker", tiers=True,
            armee=_interrupteur("OTO_JEV_JOBS_WORKER_ENABLED"), fonction=_jev_jobs),
+    # Mises en ligne YouTube d'un gros fichier de projet (`youtube_upload_worker`) :
+    # publie sur la chaîne d'un client, un TIERS. Bail en base (`BAIL_S`) : un travail
+    # n'est mené que par un processus à la fois, et reprend après un redémarrage.
+    Boucle(nom="youtube_upload_worker", tiers=True,
+           armee=_interrupteur("OTO_YOUTUBE_UPLOAD_WORKER_ENABLED"),
+           fonction=_youtube_uploads),
     # Échéances du budget d'unités (`credits_echeances.py`) : règle au montant réservé
     # les réservations jamais réglées. N'écrit qu'en base ; deux processus sur la même
     # échéance, un seul la règle (état `open` dans l'écriture) : `tiers=False`.

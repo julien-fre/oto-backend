@@ -248,6 +248,9 @@ def _resolve(monkeypatch, data, name="clip.bin", mime="application/octet-stream"
 
 def test_upload_video_prive_par_defaut_et_reprenable(google, monkeypatch):
     seen = _resolve(monkeypatch, MP4)
+    # un petit fichier de projet passe par la mémoire, pas par la file de fond
+    monkeypatch.setattr("oto_mcp.file_source.fichier_de_projet",
+                        lambda src: {"id": 9, "project_id": 1, "size_bytes": len(MP4)})
     session = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1"
 
     def h(r):
