@@ -128,7 +128,7 @@ def test_dry_run_n_agit_jamais(client, admin):
     assert out["changes"] == {"sms_url": {"from": "https://a", "to": "https://b"}}
     act(op="remove_number", sid="PN1", dry_run=True)
     act(op="call", rep="+33600000001", to=["+33600000002"], from_="+33939030001", dry_run=True)
-    out = act(op="send_sms", from_="TULINA", to=["+33600000002"], body="Salut", dry_run=True)
+    out = act(op="send_sms", from_="MYSHOP", to=["+33600000002"], body="Salut", dry_run=True)
     assert out["to"] == ["+33600000002"]
     for m in ("buy_number", "update_number", "release_number", "create_call", "send_message"):
         getattr(client, m).assert_not_called()
@@ -175,3 +175,16 @@ def test_sonde(monkeypatch):
     inst.get_account.side_effect = None
     inst.get_account.return_value = {"status": "active"}
     T._verify(dict(_CREDS))
+
+
+def test_sms_le_lot_s_arrete_avant_le_delai(client, admin, monkeypatch):
+    from oto_mcp.tools import twilio as T
+
+    horloge = iter([0.0, 0.0, 31.0])
+    monkeypatch.setattr(T, "time", MagicMock(monotonic=lambda: next(horloge, 99.0)))
+    client.send_message.return_value = {"sid": "SM1", "status": "queued"}
+    out = _fn("twilio_act")(op="send_sms", from_="+33939030001",
+                            to=["+33600000001", "+33600000002", "+33600000003"], body="x")
+    assert len(out["sent"]) == 1
+    assert [r["index"] for r in out["not_attempted"]] == [1, 2]
+    assert T.SMS_TIME_BUDGET_S == 30.0

@@ -28,6 +28,7 @@ makes them verifiable by the version-skew probe (`test_tools_client_methods_exis
 """
 from __future__ import annotations
 
+import time
 from typing import Any, List, Literal, Optional
 
 from fastmcp import FastMCP
@@ -42,6 +43,9 @@ _NAME = "twilio"
 
 #: Recipients one `send_sms` call may carry: one POST each, well inside the invoke timeout.
 SMS_BATCH_MAX = 50
+#: Seconds a batch may spend sending before it stops and hands back the rest: the
+#: invoke path times out at 45 s, and a timeout the caller retries would send twice.
+SMS_TIME_BUDGET_S = 30.0
 
 #: Keys dropped from every read by default: API links and sub-resource maps that repeat
 #: the SID, never what an agent chooses on.
@@ -127,7 +131,7 @@ def _caller_is_org_admin() -> bool:
 
 def register(mcp: FastMCP) -> None:
     from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.twilio import TwilioClient, bridge_twiml
+    from oto.tools.twilio import TwilioClient, bridge_twiml, e164
 
     connector_verify.register(_NAME, _verify)
 
@@ -325,7 +329,8 @@ def register(mcp: FastMCP) -> None:
           one: such a message cannot be replied to. BILLED per segment (160
           characters, 70 with accents outside GSM-7 or emojis). Returns one
           receipt line per recipient; one refused recipient does not stop the
-          others.
+          others. A batch that runs past 30 s stops and lists the rest under
+          `not_attempted`: send those again, never the whole batch.
 
         `dry_run=true`: same validation, nothing sent to Twilio; returns what
         would be done.
@@ -431,13 +436,17 @@ def register(mcp: FastMCP) -> None:
             if len(recipients) > SMS_BATCH_MAX:
                 raise _bad(f"op='send_sms': at most {SMS_BATCH_MAX} recipients per call.")
             if dry_run:
-                from oto.tools.twilio._api._common import e164
                 checked = [_run(lambda r=r: e164(r, "to")) for r in recipients]
                 return {"dry_run": True, "would": "send", "from": sender, "to": checked,
                         "characters": len(body or "")}
             client = _client()
-            sent, failed = [], []
+            sent, failed, not_attempted = [], [], []
+            started = time.monotonic()
             for index, number in enumerate(recipients):
+                if time.monotonic() - started > SMS_TIME_BUDGET_S:
+                    not_attempted = [{"index": i, "to": recipients[i]}
+                                     for i in range(index, len(recipients))]
+                    break
                 try:
                     m = client.send_message(number, body=body, from_=sender,
                                             media_urls=media_urls)
@@ -451,6 +460,11 @@ def register(mcp: FastMCP) -> None:
                                    "error": _upstream_message(e)})
                 except ValueError as e:
                     failed.append({"index": index, "to": number, "error": str(e)})
-            return {"total": len(recipients), "sent": sent, "failed": failed}
+            out = {"total": len(recipients), "sent": sent, "failed": failed}
+            if not_attempted:
+                out["not_attempted"] = not_attempted
+                out["warning"] = (f"Stopped after {SMS_TIME_BUDGET_S:.0f} s to stay inside the "
+                                  "call timeout: send `not_attempted` again in a new call.")
+            return out
 
         raise _bad(f"invalid `op`: {op!r}.")
