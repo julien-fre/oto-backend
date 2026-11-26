@@ -567,9 +567,7 @@ CAPABILITIES += [
             DeclaredError(400, "bad_ndjson", "an NDJSON line is not an object"),
             DeclaredError(400, "bad_row",
                           "a row was refused: `details` gives the row and `resume_from`"),
-            DeclaredError(400, "large_needs_project_file",
-                  "`large=true` ne vaut que pour `target=project_file`"),
-    DeclaredError(400, "upsert_without_key",
+            DeclaredError(400, "upsert_without_key",
                           "`upsert=true` on a table with no business key and no `key`"),
             DeclaredError(409, "business_key_exists",
                           "without `upsert=true`, rows of the file share a key value, or "

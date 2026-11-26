@@ -39,7 +39,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from .. import db, geste, upload_tokens
 from ..capabilities._types import ContratDeRoute, DeclaredError
-from .base import _json, _json_error, _locale_from_accept_language
+from .base import _file, _json, _json_error, _locale_from_accept_language
 from .upload_page import SCRIPT_UPLOAD, upload_page_html
 
 
@@ -219,8 +219,8 @@ async def large_part(request: Request) -> Response:
                                       int(request.path_params["n"]))
     except upload_tokens.UploadError as e:
         return _json_error(request, e.status, e.code, e.message or None)
-    return Response(url, media_type="text/plain",
-                    headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    return _file(request, url, media_type="text/plain",
+                 headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 async def large_complete(request: Request) -> JSONResponse:
