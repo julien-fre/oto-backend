@@ -169,9 +169,19 @@ ROLES = """
 -- (`oto_apps op=set_role`). Il RESSERRE ce que le manifeste ouvre à ce lecteur
 -- (tableaux, champs, valeurs, ajouts, agents, fichiers) — jamais plus. NULL = le rôle
 -- par défaut du manifeste (`default_role`). Sur le partage même : il part avec lui
--- (retrait, échéance), suit la fusion de comptes et l'export comme lui. Colonne AJOUTÉE
+-- (retrait, échéance — un partage échu puis repartagé repart du rôle par défaut, comme
+-- un partage neuf), suit la fusion de comptes et l'export comme lui. Colonne AJOUTÉE
 -- (révision `20261127_1200_app_roles`) : le fragment `grants.GRANTS` a déjà été joué.
 ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS app_role TEXT;
+-- L'IDENTITÉ d'un partage (`docs/apps.md` § Accès par l'app) : un numéro jamais repris,
+-- tiré à sa pose (`db.grant_resource`). Changer son rôle ou son échéance tant qu'il est
+-- vivant le garde ; le reposer après son échéance, ou après un retrait, en tire un
+-- neuf. Ce qui ne vaut que sous CE partage (`app_table_access.share_id`) ne revit donc
+-- jamais sous un autre. NULL = un partage d'avant la colonne, numéroté à sa prochaine
+-- pose ou au premier accès par l'app ouvert sous lui. Nullable sans défaut : catalogue
+-- seul (un `DEFAULT nextval` réécrirait la table).
+CREATE SEQUENCE IF NOT EXISTS resource_grants_share_id_seq;
+ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS share_id BIGINT;
 """
 
 ACCES_PAR_L_APP = """
@@ -181,13 +191,16 @@ ACCES_PAR_L_APP = """
 -- part ailleurs : aucune lecture de `resource_grants` ne voit cette table, ni les
 -- outils `data_*`, ni la face REST des tableaux, ni l'écran Tableaux. Posé par qui
 -- gouverne l'app ET le tableau (`oto_apps op=grant_through_app`). Ne vaut que tant que
--- le même principal tient un partage VIVANT de l'app : il part avec lui.
+-- le même principal tient, VIVANT, le partage de l'app sous lequel il a été ouvert
+-- (`share_id` = `resource_grants.share_id`) : il part avec lui, et ne revient pas avec
+-- un partage reposé (après retrait, échéance, transfert…) — il se rouvre.
 CREATE TABLE IF NOT EXISTS app_table_access (
     app_id BIGINT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
     principal_type TEXT NOT NULL CHECK (principal_type IN ('user', 'group', 'org')),
     principal_id TEXT NOT NULL,
     permission TEXT NOT NULL CHECK (permission IN ('read', 'write')),
+    share_id BIGINT NOT NULL,
     granted_by TEXT,
     granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (app_id, ns_id, principal_type, principal_id)

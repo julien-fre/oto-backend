@@ -689,10 +689,12 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
                 if not ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, ns):
                     skipped.append({"table": alias, "reason": "you can't share this table"})
                     continue
-                db.apps.grant_through_app(int(row["id"]), int(ns), inp.principal_type,
-                                          str(inp.principal_id),
-                                          "write" if (t.get("set") or t.get("add")) else "read",
-                                          sub)
+                # Sous le partage vivant de l'app (son identité) : il a pu partir depuis
+                # la lecture de `vivants`, et rien ne s'écrit alors.
+                _require(db.apps.grant_through_app(
+                    int(row["id"]), int(ns), inp.principal_type, str(inp.principal_id),
+                    "write" if (t.get("set") or t.get("add")) else "read", sub),
+                    "not_shared", "This app isn't shared with them: share it first.", 404)
     if inp.op == "set_role":
         # Changer le rôle de qui tient des tableaux PAR L'APP, c'est changer ce qu'il en
         # voit : il faut pouvoir partager chacun de ces tableaux.

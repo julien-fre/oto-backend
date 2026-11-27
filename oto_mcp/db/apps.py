@@ -632,12 +632,16 @@ def app_roles_of(app_id: str, principals: list[tuple[str, str]]) -> list[tuple[s
 
 def set_app_role(app_id: str, principal_type: str, principal_id: str,
                  role: Optional[str]) -> bool:
-    """Pose (ou retire, `role` None) le rôle d'app du partage de ce principal. Faux = ce
-    principal n'a aucun partage de l'app : un rôle ne se pose que sur un partage."""
+    """Pose (ou retire, `role` None) le rôle d'app du partage VIVANT de ce principal.
+    Faux = ce principal n'en a aucun : un rôle ne se pose que sur un partage vivant (un
+    partage échu repris repart du rôle par défaut, `db.grant_resource`)."""
+    from ._partage_vivant import PARTAGE_VIVANT
+
     with _connect() as conn:
         row = conn.execute(
             "UPDATE resource_grants SET app_role = %s WHERE resource_type = 'app' "
-            "AND resource_id = %s AND principal_type = %s AND principal_id = %s RETURNING 1",
+            "AND resource_id = %s AND principal_type = %s AND principal_id = %s "
+            f"AND {PARTAGE_VIVANT} RETURNING 1",
             (role, str(app_id), principal_type, str(principal_id)),
         ).fetchone()
     return row is not None
@@ -655,13 +659,24 @@ def app_role_grants(app_id: str) -> list[dict]:
         ).fetchall()
 
 
+def _sous_son_partage() -> str:
+    """La jointure qui fait VALOIR une ligne `app_table_access a` : le même principal
+    tient, vivant, le partage de l'app sous lequel elle a été ouverte (`share_id`). Un
+    partage reposé — après retrait, échéance, transfert — porte une autre identité :
+    ce qui avait été ouvert sous l'ancien ne revit pas (`docs/apps.md` § Accès par l'app)."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+
+    return ("JOIN resource_grants g ON g.resource_type = 'app' "
+            "  AND g.resource_id = a.app_id::text AND g.principal_type = a.principal_type "
+            "  AND g.principal_id = a.principal_id AND g.share_id = a.share_id "
+            f"  AND {PARTAGE_VIVANT_G} ")
+
+
 def through_app_access(app_id: int, ns_id: int,
                        principals: list[tuple[str, str]]) -> Optional[str]:
     """Le droit que l'un de ces principals tient sur le tableau À TRAVERS cette app
-    (`app_table_access`) : `write` > `read`, None = aucun. Ne compte que si le MÊME
-    principal tient un partage VIVANT de l'app — l'accès part avec ce partage."""
-    from ._partage_vivant import PARTAGE_VIVANT_G
-
+    (`app_table_access`) : `write` > `read`, None = aucun. Ne compte que sous le partage
+    VIVANT de l'app qui l'a vu ouvrir (`_sous_son_partage`)."""
     if not principals:
         return None
     with _connect() as conn:
@@ -669,9 +684,7 @@ def through_app_access(app_id: int, ns_id: int,
             "SELECT max(a.permission) AS p FROM app_table_access a "
             "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
             "  ON a.principal_type = pr.t AND a.principal_id = pr.i "
-            "JOIN resource_grants g ON g.resource_type = 'app' "
-            "  AND g.resource_id = a.app_id::text AND g.principal_type = a.principal_type "
-            f"  AND g.principal_id = a.principal_id AND {PARTAGE_VIVANT_G} "
+            + _sous_son_partage() +
             "WHERE a.app_id = %s AND a.ns_id = %s",
             ([p[0] for p in principals], [str(p[1]) for p in principals], int(app_id),
              int(ns_id)),
@@ -680,15 +693,30 @@ def through_app_access(app_id: int, ns_id: int,
 
 
 def grant_through_app(app_id: int, ns_id: int, principal_type: str, principal_id: str,
-                      permission: str, by: str) -> None:
+                      permission: str, by: str) -> bool:
+    """Ouvre le tableau à ce principal à travers l'app, SOUS son partage vivant de l'app
+    (son `share_id`, numéroté ici s'il date d'avant la colonne). Faux = aucun partage
+    vivant : rien n'est écrit. Rouvrir sous un partage reposé lie la ligne au neuf."""
+    from ._partage_vivant import PARTAGE_VIVANT
+
+    cle = (str(app_id), principal_type, str(principal_id))
     with _connect() as conn:
-        conn.execute(
-            "INSERT INTO app_table_access (app_id, ns_id, principal_type, principal_id, "
-            "permission, granted_by) VALUES (%s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (app_id, ns_id, principal_type, principal_id) DO UPDATE SET "
-            "permission = EXCLUDED.permission, granted_by = EXCLUDED.granted_by, "
-            "granted_at = NOW()",
-            (int(app_id), int(ns_id), principal_type, str(principal_id), permission, by))
+        with conn.transaction():
+            conn.execute(
+                "UPDATE resource_grants SET share_id = nextval('resource_grants_share_id_seq') "
+                "WHERE resource_type = 'app' AND resource_id = %s AND principal_type = %s "
+                f"AND principal_id = %s AND share_id IS NULL AND {PARTAGE_VIVANT}", cle)
+            cur = conn.execute(
+                "INSERT INTO app_table_access (app_id, ns_id, principal_type, principal_id, "
+                "permission, share_id, granted_by) "
+                "SELECT %s, %s, principal_type, principal_id, %s, share_id, %s "
+                "FROM resource_grants WHERE resource_type = 'app' AND resource_id = %s "
+                f"AND principal_type = %s AND principal_id = %s AND {PARTAGE_VIVANT} "
+                "ON CONFLICT (app_id, ns_id, principal_type, principal_id) DO UPDATE SET "
+                "permission = EXCLUDED.permission, share_id = EXCLUDED.share_id, "
+                "granted_by = EXCLUDED.granted_by, granted_at = NOW()",
+                (int(app_id), int(ns_id), permission, by, *cle))
+            return cur.rowcount > 0
 
 
 def revoke_through_app(app_id: int, principal_type: str, principal_id: str) -> int:
@@ -700,11 +728,12 @@ def revoke_through_app(app_id: int, principal_type: str, principal_id: str) -> i
 
 
 def through_app_of_table(ns_id: int) -> list[dict]:
-    """Chaque accès par une app posé sur ce tableau, avec l'app (pour son gérant)."""
+    """Chaque accès par une app qui VAUT sur ce tableau, avec l'app (pour son gérant)."""
     with _connect() as conn:
         return conn.execute(
             "SELECT a.app_id, ap.title AS app_title, a.principal_type, a.principal_id, "
             "a.permission FROM app_table_access a JOIN apps ap ON ap.id = a.app_id "
+            + _sous_son_partage() +
             "WHERE a.ns_id = %s ORDER BY a.app_id, a.principal_type, a.principal_id",
             (int(ns_id),),
         ).fetchall()
@@ -721,11 +750,14 @@ def revoke_through_app_tables(app_id: int, principal_type: str, principal_id: st
 
 
 def through_app_of(app_id: int) -> list[dict]:
-    """Chaque accès par l'app posé sur cette app (pour `op=roles`)."""
+    """Chaque accès par l'app qui VAUT sur cette app (pour `op=roles`) : une ligne restée
+    d'un partage disparu ne s'y montre pas — elle ne rend rien."""
     with _connect() as conn:
         return conn.execute(
-            "SELECT ns_id, principal_type, principal_id, permission FROM app_table_access "
-            "WHERE app_id = %s ORDER BY principal_type, principal_id, ns_id", (int(app_id),),
+            "SELECT a.ns_id, a.principal_type, a.principal_id, a.permission "
+            "FROM app_table_access a " + _sous_son_partage() +
+            "WHERE a.app_id = %s ORDER BY a.principal_type, a.principal_id, a.ns_id",
+            (int(app_id),),
         ).fetchall()
 
 

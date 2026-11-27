@@ -10,17 +10,28 @@ des rôles que le manifeste d'une app déclare (`manifest.roles`) ; NULL = le r�
 défaut du manifeste, LU comme tel (rien n'est recopié : l'état de toutes les lignes
 d'avant, et de tous les partages qui ne sont pas d'une app).
 
-**Verrous.** Un `AccessExclusiveLock` bref sur `resource_grants` (colonne nullable sans
+Et l'IDENTITÉ d'un partage (`resource_grants.share_id`, séquence
+`resource_grants_share_id_seq`) : un numéro jamais repris, tiré à la pose par
+`db.grant_resource`, gardé tant que le partage vit, neuf quand il est reposé après échéance
+ou retrait. `app_table_access.share_id` lie l'accès par l'app au partage sous lequel il a
+été ouvert : un partage reposé ne le fait pas revivre. NULL pour les partages d'avant —
+numérotés à leur prochaine pose, ou au premier accès par l'app ouvert sous eux ; rien
+n'est recopié.
+
+**Verrous.** Un `AccessExclusiveLock` bref sur `resource_grants` (colonnes nullables sans
 défaut : catalogue seul, aucune réécriture). `lock_timeout` 5 s : la table est lue à
 chaque jugement d'accès ; un échec net, qu'on rejoue, plutôt qu'une attente qui
 bloquerait ces lectures derrière elle.
 
-**Ordre avec le code : indifférent.** Le démarrage pose la colonne avant de servir ;
-l'ancien code l'ignore (ses `INSERT … ON CONFLICT` ne la nomment pas : un repartage
-la garde). Une app d'avant ne déclare aucun rôle : rien ne change pour elle.
+**Ordre avec le code : le nouveau après la révision.** Le démarrage pose les colonnes
+avant de servir (le nouveau `grant_resource` écrit `share_id`) ; l'ancien code les ignore
+(ses `INSERT … ON CONFLICT` ne les nomment pas : un partage qu'il pose reste sans
+identité, numéroté plus tard). Une app d'avant ne déclare aucun rôle : rien ne change
+pour elle.
 
-Retour arrière : retire la colonne (chaque lecteur revient au rôle par défaut de l'app)
-et la table (les accès par l'app se perdent : ces lecteurs ne lisent plus ces tableaux).
+Retour arrière : retire la table (les accès par l'app se perdent : ces lecteurs ne
+lisent plus ces tableaux), puis les colonnes (chaque lecteur revient au rôle par défaut
+de l'app) et la séquence.
 
 Révision : 20261127_1200_app_roles
 Précédente : 20261125_1700_responsables
@@ -48,4 +59,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(_ATTENTE_MAX)
     op.execute("DROP TABLE IF EXISTS app_table_access")
+    op.execute("ALTER TABLE resource_grants DROP COLUMN IF EXISTS share_id")
+    op.execute("DROP SEQUENCE IF EXISTS resource_grants_share_id_seq")
     op.execute("ALTER TABLE resource_grants DROP COLUMN IF EXISTS app_role")

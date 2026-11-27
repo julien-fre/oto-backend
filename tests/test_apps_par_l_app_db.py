@@ -423,3 +423,190 @@ def test_par_les_routes_rest_l_app_sert_et_les_tableaux_refusent(monde):
     r = c.post(f"/api/me/apps/{m['app']}/call", json={**corps, "consent": r.json()["consent"]})
     assert r.status_code == 200, r.text
     assert r.json().get("through_app") is True
+
+
+# ── Un accès lié au partage qui l'a vu ouvrir : il ne revit pas sous un autre ────────
+
+def _partager(m, s, role="contributor", **kw):
+    from oto_mcp.capabilities import resources as R
+    from oto_mcp.capabilities.resources_v2 import ResourceInputV2
+    R._resources(_ctx(m, m["auteur"]), ResourceInputV2(
+        op="share", resource_type="app", resource_id=str(m["app"]), audience="person",
+        email=f"{s}@example.test", role=role, **kw))
+
+
+def _echoir(m, ptype, pid):
+    from oto_mcp import db
+    with db._connect() as conn:
+        conn.execute("UPDATE resource_grants SET expires_at = NOW() - interval '1 day' "
+                     "WHERE resource_type = 'app' AND resource_id = %s "
+                     "AND principal_type = %s AND principal_id = %s",
+                     (str(m["app"]), ptype, str(pid)))
+
+
+def _lignes(m):
+    from oto_mcp import db
+    with db._connect() as conn:
+        return conn.execute("SELECT principal_type, principal_id FROM app_table_access "
+                            "WHERE app_id = %s", (m["app"],)).fetchall()
+
+
+def _par_l_app_liste(m):
+    """Ce que listent `op=roles` (par partage) et le tableau (`through_app`)."""
+    from oto_mcp.capabilities import resources as R
+    from oto_mcp.capabilities.resources_v2 import ResourceInputV2
+    roles = _apps(m, m["auteur"], op="roles")
+    par_partage = {g["principal_id"]: g["through_app"] for g in roles["grants"]}
+    tableau = R._resources(_ctx(m, m["auteur"]), ResourceInputV2(
+        op="get", resource_type="datastore_namespace", resource_id=str(m["ns_id"])))
+    return par_partage, tableau.get("through_app") or []
+
+
+def test_retrait_puis_repartage_ne_rouvre_rien(monde):
+    from oto_mcp import ownership
+    m = monde
+    _ouvrir(m)
+    ownership.revoke("app", str(m["app"]), "user", m["partenaire"])
+    assert _lignes(m) == []                      # parti avec le partage
+    _partager(m, m["partenaire"])
+    _refus(_lire, m, m["partenaire"])
+
+
+def test_echeance_puis_repartage_ne_rouvre_rien(monde):
+    """Aucun événement à l'échéance : la ligne reste — c'est l'identité du partage
+    repris qui l'éteint."""
+    m = monde
+    _ouvrir(m)
+    _apps(m, m["auteur"], op="set_role", principal_type="user", principal_id=m["partenaire"],
+          role="reader")
+    _echoir(m, "user", m["partenaire"])
+    _refus(_lire, m, m["partenaire"])
+    _partager(m, m["partenaire"])
+    _refus(_lire, m, m["partenaire"])
+    par_partage, tableau = _par_l_app_liste(m)
+    assert par_partage[m["partenaire"]] == [] and tableau == []
+    # Partage neuf : le rôle d'app posé sur l'ancien n'a pas suivi non plus.
+    roles = _apps(m, m["auteur"], op="roles")
+    assert {g["principal_id"]: g["app_role"] for g in roles["grants"]}[m["partenaire"]] is None
+    # Rouvert sous le partage neuf : il vaut de nouveau.
+    _ouvrir(m)
+    assert _lire(m, m["partenaire"])["rows"]
+
+
+def test_changer_le_role_du_partage_vivant_garde_l_acces(monde):
+    """Voir → Utiliser, une échéance posée : le MÊME partage, l'accès et le rôle d'app
+    restent."""
+    m = monde
+    _ouvrir(m)
+    _apps(m, m["auteur"], op="set_role", principal_type="user", principal_id=m["partenaire"],
+          role="reader")
+    _partager(m, m["partenaire"], role="viewer", ttl_days=30)
+    _partager(m, m["partenaire"], role="contributor")
+    rows = _lire(m, m["partenaire"])["rows"]
+    assert set(rows[0]) & {"name", "status", "notes"} == {"name"}     # rôle `reader` gardé
+    par_partage, tableau = _par_l_app_liste(m)
+    assert par_partage[m["partenaire"]] == [{"table": "fiches", "permission": "write"}]
+    assert [a["principal_id"] for a in tableau] == [m["partenaire"]]
+
+
+def test_un_role_ne_se_pose_pas_sur_un_partage_echu(monde):
+    m = monde
+    _echoir(m, "user", m["partenaire"])
+    e = _refus(_apps, m, m["auteur"], op="set_role", principal_type="user",
+               principal_id=m["partenaire"], role="reader")
+    assert e.code == "not_shared"
+
+
+def test_partage_d_org_par_defaut_retire_puis_repose(monde):
+    """Le partage d'org par défaut (marqué) est un partage comme un autre : son retrait
+    emporte ce qui avait été ouvert à l'org, son retour ne le rend pas."""
+    from oto_mcp import db, ownership
+    m = monde
+    ownership.revoke("app", str(m["app"]), "user", m["partenaire"])
+    ownership.grant("app", str(m["app"]), "org", str(m["org_p"]), role="contributor",
+                    granted_by=db.MARQUE_PARTAGE_PAR_DEFAUT)
+    _apps(m, m["auteur"], op="grant_through_app", principal_type="org",
+          principal_id=str(m["org_p"]))
+    assert _lire(m, m["partenaire"])["rows"]
+    ownership.revoke("app", str(m["app"]), "org", str(m["org_p"]))
+    assert _lignes(m) == []
+    ownership.grant("app", str(m["app"]), "org", str(m["org_p"]), role="contributor",
+                    granted_by=db.MARQUE_PARTAGE_PAR_DEFAUT)
+    _refus(_lire, m, m["partenaire"])
+
+
+def test_transfert_aller_retour_ne_rouvre_rien(monde):
+    """Le partenaire devient propriétaire (son partage tombe, l'accès avec), puis l'app
+    revient à l'auteur : le partage `write` que le transfert lui rend est neuf."""
+    from oto_mcp import ownership
+    m = monde
+    _ouvrir(m)
+    ownership.transfer("app", str(m["app"]), "user", m["partenaire"])
+    assert _lignes(m) == []
+    ownership.transfer("app", str(m["app"]), "user", m["auteur"])
+    assert ownership.can_access(m["partenaire"], "app", str(m["app"]), "read")
+    _refus(_lire, m, m["partenaire"])
+
+
+def test_transfert_garde_l_acces_des_autres(monde):
+    """L'app passe à son org : les AUTRES partages restent, leur accès aussi (toujours
+    borné par l'auteur du manifeste, qui peut partager le tableau)."""
+    from oto_mcp import ownership
+    m = monde
+    _ouvrir(m)
+    ownership.transfer("app", str(m["app"]), "org", str(m["org"]))
+    assert _lire(m, m["partenaire"])["rows"]
+
+
+def test_equipe_supprimee_emporte_son_acces_par_l_app(monde):
+    from oto_mcp import db, group_store, ownership
+    m = monde
+    ownership.revoke("app", str(m["app"]), "user", m["partenaire"])
+    g = group_store.create_group(m["org_p"], f"eq_{uuid.uuid4().hex[:6]}",
+                                 created_by=m["partenaire"])
+    group_store.add_group_member(g, m["partenaire"])
+    db.grant_resource("app", str(m["app"]), "group", str(g), role="contributor",
+                      granted_by=m["auteur"])
+    _apps(m, m["auteur"], op="grant_through_app", principal_type="group",
+          principal_id=str(g))
+    assert _lire(m, m["partenaire"])["rows"]
+    group_store.delete_group(g)
+    assert _lignes(m) == []
+    _refus(_lire, m, m["partenaire"])
+
+
+def test_une_ligne_sans_son_partage_ne_vaut_rien(monde):
+    """Le cœur, sans passer par aucun chemin de retrait : une ligne liée à une AUTRE
+    identité que celle du partage vivant — ce que laisserait un chemin oublié."""
+    from oto_mcp import db
+    m = monde
+    _ouvrir(m)
+    with db._connect() as conn:
+        conn.execute("UPDATE app_table_access SET share_id = share_id + 1000000 "
+                     "WHERE app_id = %s", (m["app"],))
+    _refus(_lire, m, m["partenaire"])
+    assert _par_l_app_liste(m)[1] == []
+
+
+def test_un_partage_d_avant_l_identite_est_numerote_a_l_ouverture(monde):
+    from oto_mcp import db
+    m = monde
+    with db._connect() as conn:
+        conn.execute("UPDATE resource_grants SET share_id = NULL WHERE resource_type = 'app' "
+                     "AND resource_id = %s", (str(m["app"]),))
+    _ouvrir(m)
+    assert _lire(m, m["partenaire"])["rows"]
+
+
+def test_la_fusion_de_comptes_garde_partage_et_acces_ensemble(monde):
+    from oto_mcp import db
+    from oto_mcp.capabilities import apps_appel as C
+    from oto_mcp.capabilities._types import ResolvedCtx
+    m = monde
+    _ouvrir(m)
+    neuf = f"neuf_{uuid.uuid4().hex[:6]}"
+    db.upsert_user(neuf, email=f"{neuf}@example.test")
+    assert db.migrate_sub(m["partenaire"], neuf, operator_source="test") is True
+    out = C._call(ResolvedCtx(sub=neuf, org_id=m["org_p"], channel="rest"),
+                  C.AppCallInput(app_id=m["app"], action="read_rows", table="fiches"))
+    assert out["rows"][0]["name"] == "Acme"

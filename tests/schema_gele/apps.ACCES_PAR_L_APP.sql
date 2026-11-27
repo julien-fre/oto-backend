@@ -4,6 +4,7 @@ ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
 principal_type TEXT NOT NULL CHECK (principal_type IN ('user', 'group', 'org')),
 principal_id TEXT NOT NULL,
 permission TEXT NOT NULL CHECK (permission IN ('read', 'write')),
+share_id BIGINT NOT NULL,
 granted_by TEXT,
 granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 PRIMARY KEY (app_id, ns_id, principal_type, principal_id)

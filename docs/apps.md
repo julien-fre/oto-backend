@@ -98,7 +98,11 @@ qu'un rôle existe. Chaque rôle **resserre** le manifeste, jamais plus :
 GOUVERNE l'app (`oto_apps op=set_role`, `principal_type`, `principal_id`, `role` ;
 sans `role` = retour au défaut ; 404 `not_shared` sans partage, 400 `unknown_role` pour
 un rôle que ni l'app publiée ni son brouillon ne déclare), lu par `op=roles`. Il part
-avec le partage (retrait, échéance) et suit la fusion de comptes comme lui. Nominatif
+avec le partage (retrait, échéance) et suit la fusion de comptes comme lui ; un partage
+échu puis repris est un partage NEUF et repart du `default_role` (`db.grant_resource`),
+comme après un retrait — ni plus étroit ni plus large par principe : ce que choisit qui
+repartage, pas un reste. Changer le rôle de PARTAGE (Voir → Utiliser) ou l'échéance
+d'un partage vivant le garde. Un rôle ne se pose que sur un partage vivant. Nominatif
 d'abord, puis équipe, puis org ; à type égal, le premier dans l'ordre du manifeste.
 Sans rôle posé, ou un rôle que le manifeste ne déclare plus : `default_role` — jamais
 le manifeste entier. **Qui peut modifier l'app n'est borné par aucun rôle** (il
@@ -130,7 +134,7 @@ par défaut tous ceux que l'app déclare), `op=revoke_through_app` pour le retir
 
 - **Poser = partager le tableau** : qui gouverne l'app ET peut partager chaque tableau
   (`can_govern`) ; un tableau qu'il ne peut partager est sauté et nommé (`skipped`).
-  Seulement à un principal qui tient un partage de l'app (404 `not_shared`).
+  Seulement à un principal qui tient un partage VIVANT de l'app (404 `not_shared`).
 - **Droit** : `write` si l'app écrit dans ce tableau (`set` ou `add`), sinon `read` ; à
   l'appel, `write` retombe à `read` si le manifeste resserré au rôle n'y écrit plus.
 - **Ne vaut que dans l'appel de CETTE app** : `apps_appel._par_l_app` ouvre une portée
@@ -140,8 +144,31 @@ par défaut tous ceux que l'app déclare), `op=revoke_through_app` pour le retir
   REST des tableaux, écran Tableaux, recherche, une autre app — rien. Le reste de
   l'appel est jugé comme avant (manifeste, rôle, auteur ∩ lecteur, consentement) ;
   l'historique des lignes garde le lecteur.
-- **Part avec le partage de l'app** : l'accès ne compte que si le MÊME principal tient
-  un partage VIVANT de l'app (retrait, échéance).
+- **Part avec le partage de l'app, et ne revient pas avec un autre.** L'accès est lié
+  à l'IDENTITÉ du partage sous lequel il a été ouvert (`share_id` : un numéro jamais
+  repris, tiré par `db.grant_resource`, posé aussi sur `app_table_access`) et ne compte
+  que tant que le MÊME principal tient CE partage, vivant (`db.apps._sous_son_partage`).
+  Un partage vivant garde son identité quand on change son rôle (Voir → Utiliser,
+  Manage) ou son échéance : l'accès reste. Un partage reposé en a une neuve — après un
+  retrait, une échéance passée (il n'y a pas d'événement : la ligne échue reste, et la
+  reprise par `ON CONFLICT` change l'identité), un transfert qui fait du principal le
+  propriétaire puis l'en retire, un lien d'invitation, un partage d'org par défaut
+  (`partage_par_defaut` : changer le réglage ne retire aucun partage ; retirer celui
+  d'une org est un retrait ordinaire) — : **rien de ce qui avait été ouvert ne revit,
+  il se rouvre** (`grant_through_app`). Deux gardes, la seconde de propreté : la
+  liaison (aucun chemin qui termine un partage ne peut l'oublier, puisqu'elle ne
+  dépend d'aucun) et le retrait des lignes avec le partage au point unique
+  `db.revoke_resource_grant` (`oto_resource op=unshare` et sa cascade, `ownership.revoke`,
+  le nouveau propriétaire d'un `transfer`) et avec une équipe supprimée
+  (`group_store.delete_group`). Les listes (`op=roles`, `through_app` du tableau) ne
+  montrent que les accès qui valent. Une app supprimée emporte les siens (FK) ; une
+  équipe ou une org n'a jamais son numéro repris. La fusion de comptes déplace partage
+  et accès ensemble (même identité) ; si les deux comptes tenaient la même ligne, celle
+  du survivant reste, et ne vaut que sous SON partage. Un transfert de l'app laisse
+  aux AUTRES principaux leur partage, donc leur accès — toujours borné par l'auteur
+  du manifeste, qui doit pouvoir partager le tableau. Un partage d'avant `share_id`
+  (NULL) est numéroté au premier accès ouvert sous lui ; une ligne sans partage
+  numéroté ne vaut rien.
 - **Un agent lancé depuis l'app en hérite, en LECTURE** (`apps_appel._droit_du_run`) :
   le run d'un travail sur lequel le lecteur a brûlé un consentement `start_agent` de
   cette app (`app_consents.job_id`, travail de la requête `verrou_org`) lit ce que ce
