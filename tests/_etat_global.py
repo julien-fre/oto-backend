@@ -81,8 +81,9 @@ def _lecteurs_lies() -> tuple:
 
 def modules_qui_lient_le_lecteur() -> list[str]:
     """Les modules d'`oto_mcp` qui lient le lecteur d'identité à leur import
-    (`from …auth.hooks import current_user_sub_from_token`), lus dans le source par l'AST,
-    sans rien importer."""
+    (`from …auth.hooks import current_user_sub_from_token` au NIVEAU MODULE), lus dans le
+    source par l'AST, sans rien importer. Un import fait dans une fonction ne lie rien au
+    module : il relit `auth.hooks` à chaque appel."""
     import ast
     import pathlib
     racine = pathlib.Path(__file__).resolve().parent.parent
@@ -90,7 +91,7 @@ def modules_qui_lient_le_lecteur() -> list[str]:
     for chemin in sorted((racine / "oto_mcp").rglob("*.py")):
         arbre = ast.parse(chemin.read_text(encoding="utf-8"), filename=str(chemin))
         if any(isinstance(n, ast.ImportFrom) and (n.module or "").endswith("hooks")
-               and any(a.name == _LECTEUR for a in n.names) for n in ast.walk(arbre)):
+               and any(a.name == _LECTEUR for a in n.names) for n in arbre.body):
             partie = chemin.relative_to(racine).with_suffix("").parts
             noms.append(".".join(partie[:-1] if partie[-1] == "__init__" else partie))
     return noms
