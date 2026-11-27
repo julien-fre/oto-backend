@@ -454,6 +454,35 @@ jetons                 # à blanc : par connecteur, les clés et leur nombre de 
 jetons --appliquer     # écrit ; relancer à blanc ensuite : « aucune » partout
 ```
 
+### Ranger les clés Qonto au format deux champs — `oto-mcp maintenance qonto-deux-champs`
+
+Le connecteur `qonto` a deux champs : `login` dans `meta.login`, la clé secrète seule dans
+le chiffré. Des lignes d'avant portent la paire `login:clé` dans le chiffré
+(`tools/qonto.py:_authorization` la lit encore, ce qui suit le dernier `:`). La commande
+parcourt toutes les lignes `qonto` (toutes entités, tous comptes), les déchiffre par le
+coffre et rend des **comptes, jamais une valeur, un login ni un identifiant de ligne** :
+total, déjà au format, à convertir, et parmi elles `meta.login` absent, égal au préfixe,
+**différent** (jamais converties), préfixe vide, clé vide (jamais converties),
+indéchiffrables. **À blanc par défaut** ; `--appliquer` réécrit chaque ligne convertible
+dans sa propre transaction, relue et rejugée sous `FOR UPDATE`, par l'entonnoir du coffre
+(`_upsert` : même AAD, `version` + 1, `set_by` gardé) : la clé seule au chiffré,
+`meta.login` = le préfixe, le reste de `meta` intact ; il ajoute « converties » et
+« erreurs » (une ligne en erreur reste intacte, les autres passent). Sorties : 0 fait,
+2 erreur. Idempotente. Le retrait de la lecture de l'ancien format vient APRÈS (#1906).
+Depuis le commit, comme `orphelins` (même extraction de l'arbre) :
+
+```bash
+qonto() {
+  sudo systemd-run --pipe --wait --quiet --collect -p WorkingDirectory="$T" \
+    -p Environment=PYTHONPATH="$T" \
+    -p EnvironmentFile=/opt/oto-mcp/.env -p EnvironmentFile=/etc/oto-mcp/lanceur-prod.env \
+    -p LoadCredential=scw:/etc/oto-mcp/scw.key \
+    "$T/.venv/bin/python" "$T/deploy/lanceur_secrets.py" maintenance qonto-deux-champs "$@"
+}
+qonto                 # à blanc : les comptes
+qonto --appliquer     # écrit ; relancer à blanc ensuite : « à convertir » = les refusées
+```
+
 ### Sceller les secrets d'application — `oto-mcp maintenance secrets-d-application`
 
 Les secrets de l'application OAuth de l'instance (`client_secret`, `app_secret`,
