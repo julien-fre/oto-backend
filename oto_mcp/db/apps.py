@@ -611,24 +611,38 @@ def file_of(app_id: int, sub: str, file_id: int) -> Optional[dict]:
         ).fetchone()
 
 
-def app_roles_of(app_id: str, principals: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Les rôles d'app (`resource_grants.app_role`) que ces principals tiennent sur l'app,
-    par partage VIVANT : `[(principal_type, app_role)]`, rôle posé seulement
-    (`capabilities/apps_roles.role_du_lecteur`). UNE requête pour tous les principals."""
+def app_shares_of(app_id: str, principals: list[tuple[str, str]]) -> list[dict]:
+    """Chaque partage VIVANT de l'app que tiennent ces principals, rôle posé ou non :
+    `[{principal_type, principal_id, app_role, app_scope}]`
+    (`capabilities/apps_roles.choix_du_lecteur` : le rôle ET le périmètre de lignes du
+    partage retenu). UNE requête pour tous les principals."""
     from ._partage_vivant import PARTAGE_VIVANT_G
 
     if not principals:
         return []
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT g.principal_type, g.app_role FROM resource_grants g "
+        return conn.execute(
+            "SELECT g.principal_type, g.principal_id, g.app_role, g.app_scope "
+            "FROM resource_grants g "
             "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
             "  ON g.principal_type = pr.t AND g.principal_id = pr.i "
             "WHERE g.resource_type = 'app' AND g.resource_id = %s "
-            f"AND g.app_role IS NOT NULL AND {PARTAGE_VIVANT_G}",
+            f"AND {PARTAGE_VIVANT_G} ORDER BY g.principal_type, g.principal_id",
             ([p[0] for p in principals], [str(p[1]) for p in principals], str(app_id)),
         ).fetchall()
-    return [(r["principal_type"], r["app_role"]) for r in rows]
+
+
+def set_app_scope(app_id: str, principal_type: str, principal_id: str,
+                  scope: Optional[dict]) -> bool:
+    """Pose (ou retire, `scope` None) le périmètre de lignes du partage de ce principal
+    (`{numéro de tableau: {champ: valeur}}`). Faux = aucun partage de l'app."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE resource_grants SET app_scope = %s WHERE resource_type = 'app' "
+            "AND resource_id = %s AND principal_type = %s AND principal_id = %s RETURNING 1",
+            (Jsonb(scope) if scope else None, str(app_id), principal_type, str(principal_id)),
+        ).fetchone()
+    return row is not None
 
 
 def set_app_role(app_id: str, principal_type: str, principal_id: str,
@@ -654,7 +668,7 @@ def app_role_grants(app_id: str) -> list[dict]:
 
     with _connect() as conn:
         return conn.execute(
-            "SELECT principal_type, principal_id, role, app_role, expires_at "
+            "SELECT principal_type, principal_id, role, app_role, app_scope, expires_at "
             "FROM resource_grants WHERE resource_type = 'app' AND resource_id = %s "
             f"AND {PARTAGE_VIVANT} ORDER BY principal_type, principal_id", (str(app_id),),
         ).fetchall()

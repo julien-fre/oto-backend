@@ -62,14 +62,15 @@ MAX_PROJECTS = 200
 _THUMB_KEYS = {"image", "color", "emoji", "design"}
 _ECRITURES = frozenset({"create", "update", "patch", "archive", "unarchive", "restore",
                         "file", "unfile", "publish", "delete_draft", "set_drafts",
-                        "set_role", "grant_through_app", "revoke_through_app"})
+                        "set_role", "set_scope", "grant_through_app", "revoke_through_app"})
 
 
 class AppInput(BaseModel):
     op: Literal["list", "get", "create", "update", "patch", "archive", "unarchive",
                 "revisions", "revision", "restore", "validate", "file", "unfile",
                 "read_file", "put_file", "publish", "delete_draft", "set_drafts",
-                "roles", "set_role", "grant_through_app", "revoke_through_app", "reads"]
+                "roles", "set_role", "set_scope", "grant_through_app", "revoke_through_app",
+                "reads"]
     project_id: Optional[int] = Field(
         default=None, description="create: also file the new app in this project. "
         "file / unfile: the project. list: only the apps filed in it.")
@@ -130,6 +131,9 @@ class AppInput(BaseModel):
     role: Optional[str] = Field(
         default=None, description="set_role: one of the roles the app's manifest declares "
         "(`manifest.roles`); omit it to give them back the app's `default_role`.")
+    scope: Optional[dict] = Field(
+        default=None, description="set_scope: the rows they see in the app, per table — "
+        "`{table: {field: value}}`; omit it to remove their scope.")
 
 
 class AppCard(BaseModel):
@@ -476,13 +480,14 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
 
     row = _app_or_404(sub, inp.app_id,
                       "read" if inp.op in ("get", "revisions", "read_file", "put_file",
-                                           "roles", "set_role", "grant_through_app",
-                                           "revoke_through_app") else "write")
+                                           "roles", "set_role", "set_scope",
+                                           "grant_through_app", "revoke_through_app")
+                      else "write")
     # L'org de l'APP, en plus de celle de l'appel (gardée par l'adaptateur) : l'app d'une
     # org suspendue se ferme à tous, invités d'une autre org compris.
     org_suspension.exiger(org_de_l_app(row))
 
-    if inp.op in ("roles", "set_role", "grant_through_app", "revoke_through_app"):
+    if inp.op in ("roles", "set_role", "set_scope", "grant_through_app", "revoke_through_app"):
         return _roles(sub, row, inp)
 
     if inp.op == "get":
@@ -725,7 +730,7 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
              "Only who manages this app chooses its people's roles.", 403)
     manifest = row.get("manifest") or {}
     skipped = None
-    if inp.op in ("set_role", "grant_through_app", "revoke_through_app"):
+    if inp.op in ("set_role", "set_scope", "grant_through_app", "revoke_through_app"):
         _require(inp.principal_type is not None and bool(inp.principal_id), "missing_principal",
                  "`principal_type` and `principal_id` name who the app is shared with.")
     if inp.op in ("grant_through_app", "revoke_through_app"):
@@ -783,6 +788,8 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
                                       str(inp.principal_id), inp.role),
                  "not_shared", "This app isn't shared with them: share it first, then set "
                  "their role.", 404)
+    if inp.op == "set_scope":
+        _poser_perimetre(sub, row, inp)
     from .apps_roles import ordre
     roles = manifest.get("roles") or {}
     alias_de = {str(t.get("table")): a for a, t in (manifest.get("tables") or {}).items()}
@@ -796,9 +803,69 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
             "default_role": manifest.get("default_role"),
             "grants": [{"principal_type": g["principal_type"], "principal_id": g["principal_id"],
                         "share_role": g["role"], "app_role": g["app_role"],
+                        "scope": {alias_de.get(ns, ns): v
+                                  for ns, v in (g.get("app_scope") or {}).items()} or None,
                         "expires_at": g["expires_at"],
                         "through_app": par_l_app.get((g["principal_type"], g["principal_id"]), [])}
                        for g in db.apps.app_role_grants(str(row["id"]))]}
+
+
+def _poser_perimetre(sub: str, row: dict, inp: AppInput) -> None:
+    """`op=set_scope` : le PÉRIMÈTRE DE LIGNES d'un partage (`resource_grants.app_scope`,
+    `docs/apps.md` § Périmètre de lignes) — `{tableau: {champ: valeur}}`, rangé par
+    NUMÉRO de tableau. Le poser, c'est choisir quelles lignes d'un tableau ce lecteur
+    voit ; le retirer ou le changer, c'est lui en ouvrir d'autres : il faut pouvoir
+    PARTAGER chaque tableau du périmètre posé ET de celui qu'il remplace. Chaque champ
+    est une colonne déclarée d'un type qu'une égalité compare ; chaque valeur un
+    scalaire non vide (une égalité sur le vide verrait les lignes de personne)."""
+    from ..datastore.core import make_store
+    from .apps_roles import TYPES_DE_PERIMETRE, _valeur_de_perimetre
+
+    brouillon = db.app_versions.draft(int(row["id"]))
+    declares = {**(((brouillon or {}).get("manifest") or {}).get("tables") or {}),
+                **((row.get("manifest") or {}).get("tables") or {})}
+    numeros = {str(t.get("table")) for t in declares.values() if isinstance(t, dict)}
+    raw = inp.scope or {}
+    _require(isinstance(raw, dict), "invalid_scope", "`scope` maps a table to {field: value}.")
+    neuf: dict[str, dict] = {}
+    problemes: list[str] = []
+    for nom, champs in raw.items():
+        t = declares.get(nom)
+        ns = str(t.get("table")) if isinstance(t, dict) else (nom if nom in numeros else None)
+        if ns is None or not ns.isdigit():
+            problemes.append(f"{nom}: this app declares no such table.")
+            continue
+        if not isinstance(champs, dict) or not champs:
+            problemes.append(f"{nom}: a scope maps a field to a value.")
+            continue
+        _require(ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, ns), "forbidden",
+                 "Only who can share these tables chooses which of their rows someone "
+                 "sees.", 403)
+        schema = make_store(sub).get_schema(ns) or {}
+        types = {f.get("key"): f.get("type") for f in schema.get("fields") or []
+                 if isinstance(f, dict)}
+        for champ, v in champs.items():
+            if champ not in types:
+                problemes.append(f"{nom}.{champ}: the table declares no such field.")
+            elif types[champ] not in TYPES_DE_PERIMETRE:
+                problemes.append(f"{nom}.{champ}: a scope can't use a {types[champ]} column.")
+            elif not _valeur_de_perimetre(v):
+                problemes.append(f"{nom}.{champ}: the value must be a non-empty text, "
+                                 "number or boolean.")
+        neuf.setdefault(ns, {}).update(champs)
+    _require(not problemes, "invalid_scope", "; ".join(problemes))
+    ancien = next((g.get("app_scope") or {} for g in db.apps.app_role_grants(str(row["id"]))
+                   if (g["principal_type"], g["principal_id"])
+                   == (inp.principal_type, str(inp.principal_id))), None)
+    _require(ancien is not None, "not_shared",
+             "This app isn't shared with them: share it first, then set their scope.", 404)
+    touches = set(neuf) | set(ancien)
+    _require(all(ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, ns)
+                 for ns in touches), "forbidden",
+             "Only who can share these tables chooses which of their rows someone sees.", 403)
+    _require(db.apps.set_app_scope(str(row["id"]), inp.principal_type, str(inp.principal_id),
+                                   neuf or None),
+             "not_shared", "This app isn't shared with them: share it first.", 404)
 
 
 def _thumb_of(inp: AppInput) -> Any:
@@ -909,7 +976,8 @@ def description_app(liens: bool) -> str:
             "existing app, optional `html`: the problems a create would refuse, nothing "
             "written).\n"
             "Roles: the manifest may declare `roles` {name: {label, tables?: {table: true | "
-            "{fields?, set?, add?}}, agents?: [names], files?, sections?: [names]}} and a "
+            "{fields?, set?, add?}}, rows?: {table: {field: \"$email\" | \"$share\"}}, "
+            "agents?: [names], files?, sections?: [names]}} and a "
             "required `default_role`; each role only NARROWS the manifest (a key it omits "
             "keeps the manifest's). A viewer who can't edit the app gets the role set on "
             "their share (op=set_role `app_id`, `principal_type`, `principal_id`, `role`; "
@@ -919,7 +987,11 @@ def description_app(liens: bool) -> str:
             "access to its tables elsewhere: op=grant_through_app (`app_id`, "
             "`principal_type`, `principal_id`, optional `tables`; you must be able to share "
             "each table) — they then read and write those tables only inside this app, as "
-            "their role allows; op=revoke_through_app removes it. op=reads (`app_id`, "
+            "their role allows; op=revoke_through_app removes it. `rows` keeps a viewer to "
+            "rows matching their verified email or their share's value (op=set_scope, "
+            "same principal, `scope` {table: {field: value}}, which also limits alone; "
+            "share each table); unresolved = no rows. "
+            "op=reads (`app_id`, "
             "optional `tables`, `days` ≤ 180, default 30): who read what through the app, "
             "per day — counts of row reads, aggregates and rows served, and whether "
             "through their own access, the app's, or an agent run (managers; a table's "

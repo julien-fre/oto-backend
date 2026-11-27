@@ -182,6 +182,15 @@ ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS app_role TEXT;
 -- seul (un `DEFAULT nextval` réécrirait la table).
 CREATE SEQUENCE IF NOT EXISTS resource_grants_share_id_seq;
 ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS share_id BIGINT;
+-- Le PÉRIMÈTRE DE LIGNES d'un partage d'app (`docs/apps.md` § Périmètre de lignes) :
+-- `{"<numéro du tableau>": {"<champ>": <valeur>}}`, posé par qui gouverne l'app ET
+-- peut partager chaque tableau nommé (`oto_apps op=set_scope`). Dans l'appel de l'app,
+-- ce lecteur ne voit, n'écrit et n'ajoute que les lignes dont chaque champ porte sa
+-- valeur ; c'est aussi la valeur que lit un rôle qui déclare `rows: {…: "$share"}`.
+-- NULL = aucun périmètre posé. Rangé par NUMÉRO de tableau, jamais par le nom que lui
+-- donne le manifeste : un renommage ne l'éteint pas. Part avec le partage, suit la
+-- fusion de comptes comme lui (UPDATE de `principal_id`).
+ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS app_scope JSONB;
 """
 
 ACCES_PAR_L_APP = """

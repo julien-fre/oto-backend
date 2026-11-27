@@ -5,11 +5,13 @@ sur l'existant hors les FK vers `apps` et `user_datastores`, un `ShareRowExclusi
 bref) ; et le journal des lectures d'app, la table `app_reads` (fragment `LECTURES`,
 même forme : neuve, vide, FK vers `apps` et `user_datastores`).
 
-Une colonne NEUVE, nullable, sans défaut — le DDL est le fragment
-`db/schema/apps.py::ROLES`, exécuté tel quel (`ADD COLUMN IF NOT EXISTS`). La clé d'un
-des rôles que le manifeste d'une app déclare (`manifest.roles`) ; NULL = le rôle par
-défaut du manifeste, LU comme tel (rien n'est recopié : l'état de toutes les lignes
-d'avant, et de tous les partages qui ne sont pas d'une app).
+Deux colonnes NEUVES, nullables, sans défaut — le DDL est le fragment
+`db/schema/apps.py::ROLES`, exécuté tel quel (`ADD COLUMN IF NOT EXISTS`). `app_role` :
+la clé d'un des rôles que le manifeste d'une app déclare (`manifest.roles`) ; NULL = le
+rôle par défaut du manifeste, LU comme tel (rien n'est recopié : l'état de toutes les
+lignes d'avant, et de tous les partages qui ne sont pas d'une app). `app_scope` (JSONB)
+: le périmètre de lignes du partage (`docs/apps.md` § Périmètre de lignes) ; NULL =
+aucun.
 
 Et l'IDENTITÉ d'un partage (`resource_grants.share_id`, séquence
 `resource_grants_share_id_seq`) : un numéro jamais repris, tiré à la pose par
@@ -33,7 +35,8 @@ pour elle.
 Retour arrière : retire le journal des lectures (ses compteurs se perdent ; l'ancien code
 n'y écrit pas), la table des accès (les accès par l'app se perdent : ces lecteurs ne
 lisent plus ces tableaux), puis les colonnes (chaque lecteur revient au rôle par défaut
-de l'app) et la séquence.
+de l'app ; un périmètre de lignes posé sur un partage se perd — ⚠️ ce lecteur verrait
+alors TOUTES les lignes que son rôle ouvre : retirer d'abord son partage) et la séquence.
 
 Révision : 20261127_1200_app_roles
 Précédente : 20261125_1700_responsables
@@ -65,4 +68,5 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS app_table_access")
     op.execute("ALTER TABLE resource_grants DROP COLUMN IF EXISTS share_id")
     op.execute("DROP SEQUENCE IF EXISTS resource_grants_share_id_seq")
+    op.execute("ALTER TABLE resource_grants DROP COLUMN IF EXISTS app_scope")
     op.execute("ALTER TABLE resource_grants DROP COLUMN IF EXISTS app_role")

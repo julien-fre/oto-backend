@@ -560,7 +560,9 @@ def grant_resource(
             "                 THEN resource_grants.expires_at END, "
             # À droite, `resource_grants` est la ligne d'AVANT : vivante, elle garde son
             # identité (numérotée si elle n'en avait pas) et son rôle d'app ; échue, la
-            # pose est un partage neuf.
+            # pose est un partage neuf. Le PÉRIMÈTRE DE LIGNES (`app_scope`) reste, lui,
+            # dans les deux cas : il ne fait que restreindre, et le perdre élargirait ce
+            # que ce lecteur voit (`docs/apps.md` § Périmètre de lignes).
             f"share_id = CASE WHEN {vivant} "
             "                THEN COALESCE(resource_grants.share_id, EXCLUDED.share_id) "
             "                ELSE EXCLUDED.share_id END, "
