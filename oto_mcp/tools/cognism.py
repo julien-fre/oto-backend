@@ -104,6 +104,37 @@ def _target(op: str) -> str:
     return op
 
 
+HIRING_EVENTS_KEPT = 5
+
+
+def _trim_one(holder, keep: int) -> None:
+    events = holder.get("hiringEvent") if isinstance(holder, dict) else None
+    if isinstance(events, list) and len(events) > keep:
+        holder["hiringEvent"] = events[:keep]
+        holder["hiringEvent_total"] = len(events)
+
+
+def trim_hiring_events(result, keep: Optional[int]):
+    """Cut each redeemed record's job-posting events to `keep` (None = untouched).
+
+    A redeem answers `{"total", "result": [records]}`. A hiring company's events
+    (`account.hiringEvent` on a contact, `hiringEvent` on an account) can run to
+    hundreds of entries, written by the client as ONE line that no reader can page —
+    the email and phone the credit paid for end up out of reach. Only that list is
+    cut, and `hiringEvent_total` says how long it was; any other shape passes as is.
+    """
+    if keep is None or not isinstance(result, dict):
+        return result
+    records = result.get("result")
+    if not isinstance(records, list):
+        return result
+    for rec in records:
+        if isinstance(rec, dict):
+            _trim_one(rec, keep)
+            _trim_one(rec.get("account"), keep)
+    return result
+
+
 def register(mcp: FastMCP) -> None:
     from oto.tools.cognism.client import CognismClient
 
@@ -205,6 +236,7 @@ def register(mcp: FastMCP) -> None:
         ids: Optional[list[str]] = None,
         redeem_ids: Optional[list[str]] = None,
         merge_phones_and_locations: bool = False,
+        max_hiring_events: Optional[int] = HIRING_EVENTS_KEPT,
     ) -> dict:
         """⚠️ SPENDS CREDITS. Reveal the full record of matches previously found
         with `cognism_search` — searching is free, THIS call is billed (Cognism).
@@ -228,21 +260,31 @@ def register(mcp: FastMCP) -> None:
                 supported by Cognism.
             merge_phones_and_locations: merge the phones/locations arrays in the
                 response.
+            max_hiring_events: the company's job-posting events kept per record
+                (`account.hiringEvent` on a contact, `hiringEvent` on an
+                account), default 5 — a hiring company carries
+                hundreds, enough to bury the email and phone this call paid for.
+                The full count stays next to it (`hiringEvent_total`). `None` =
+                keep them all.
         """
         target = _target(op)
+        if max_hiring_events is not None and max_hiring_events < 0:
+            raise _bad("max_hiring_events must be >= 0, or None to keep them all")
         if not ids and not redeem_ids:
             raise _bad(f"cognism_redeem(op='{target}') requires `ids` or "
                        "`redeem_ids` — this call consumes credits, nothing is "
                        "guessed. Both come from a previous `cognism_search`.")
         if target == "contact":
-            return _run(lambda c: c.redeem_contacts(
+            result = _run(lambda c: c.redeem_contacts(
                 ids=ids, redeem_ids=redeem_ids,
                 merge_phones_and_locations=merge_phones_and_locations,
             ))
-        return _run(lambda c: c.redeem_accounts(
-            ids=ids, redeem_ids=redeem_ids,
-            merge_phones_and_locations=merge_phones_and_locations,
-        ))
+        else:
+            result = _run(lambda c: c.redeem_accounts(
+                ids=ids, redeem_ids=redeem_ids,
+                merge_phones_and_locations=merge_phones_and_locations,
+            ))
+        return trim_hiring_events(result, max_hiring_events)
 
     @mcp.tool()
     def cognism_enrich_contact(

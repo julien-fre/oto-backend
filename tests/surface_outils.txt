@@ -167,7 +167,7 @@ cognism_enrich_account	-	2480f8a43cb4c2d6
 cognism_enrich_contact	-	e6ad9562c119c145
 cognism_entitlement	account contact	0836884a07dcae6a
 cognism_filter_values	-	8a197fb8821e5d1f
-cognism_redeem	account contact	4faca235a21b467f
+cognism_redeem	account contact	28c4fe55e0a918e1
 cognism_search	account contact	b78d5ef6baaa3556
 compliance	check_mutual_termination screen_asset_freeze	5025aba9fe01a8f3
 crisp	conversation conversation_meta conversations helpdesk helpdesk_content helpdesk_entry helpdesk_locales helpdesk_metadata helpdesk_pages helpdesk_tree inbox inboxes messages people person person_conversations person_data search_conversations search_people website	a06f342b70caec3f
