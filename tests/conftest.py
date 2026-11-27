@@ -107,6 +107,15 @@ def _0_etat_global_rendu(request: pytest.FixtureRequest) -> Iterator[None]:
             + "\n  ".join(ecarts), pytrace=False)
 
 
+# ── Le lecteur d'identité lié d'avance, pour toute la session (#1111) ───────────────
+# Complète la garde ci-dessus : sans cela, le premier import d'un module pendant le patch
+# d'`auth.hooks` lui laissait le faux lecteur, et la garde rougissait au gré de l'ordre
+# du worker (`tests/_etat_global.py::lier_les_lecteurs_d_avance`).
+@pytest.fixture(autouse=True, scope="session")
+def _lecteurs_d_identite_lies_d_avance() -> None:
+    _etat_global.lier_les_lecteurs_d_avance()
+
+
 # ── L'adresse publique de l'instance, gréée pour toute la suite ──────────────
 # Le code refuse de fabriquer une adresse qu'il n'a pas : `config.public_base_url()`
 # lève au lieu de retomber sur un domaine (redirection OAuth, rappel de paiement, jeton
