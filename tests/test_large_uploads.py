@@ -14,6 +14,7 @@ Sur le VRAI `media_store` (seul le client S3 est faux, il tient l'état multipar
 from __future__ import annotations
 
 import io
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from botocore.exceptions import ClientError
@@ -153,12 +154,19 @@ def test_parcours_complet_deux_parties(s3, monde):
     assert "op=upload_part" in url and "n=2" in url
     s3.poser_partie(t["upload_id"], 1, MP4 + b"\x00" * (5 * MIB - len(MP4)))
     s3.poser_partie(t["upload_id"], 2, b"fin")
+    avant = datetime.now(timezone.utc)
     accuse = large_uploads.terminer(payload)
+    echeance = accuse.pop("expires_at")
+    assert "14 days" in accuse.pop("notice")
     assert accuse == {"ok": True, "kind": "project_file", "filename": "film.mp4",
                       "bytes": 5 * MIB + 3, "parts": 2}
     assert s3.objets[t["key"]]["Body"][:len(MP4)] == MP4
     (row,) = monde["fichiers"]
     assert row["size_bytes"] == 5 * MIB + 3 and row["mime"] == "video/mp4"
+    # Rangé avec son échéance : 14 jours après le dépôt, dite dans l'accusé.
+    assert timedelta(days=14) - timedelta(minutes=1) < row["expires_at"] - avant \
+        < timedelta(days=14, minutes=1)
+    assert datetime.fromisoformat(echeance) == row["expires_at"].replace(microsecond=0)
     # usage unique : une seconde clôture est refusée
     with pytest.raises(upload_tokens.UploadError) as e:
         large_uploads.terminer(payload)
@@ -381,3 +389,41 @@ def test_le_mode_d_emploi_shell_se_lit(s3, monde, monkeypatch):
         target="project_file", project_id=7, filename="film.mp4", large=True))["hint"]
     assert "-H 'Content-Type:'" in hint and '"$(curl -sf "$B/part/$n")"' in hint
     assert 'dd if="$F" bs=1M skip=$(( (n-1)*5 )) count=5' in hint
+
+
+def test_duree_de_garde_reglable_et_bornee(monkeypatch):
+    monkeypatch.setenv("OTO_MCP_LARGE_UPLOAD_KEEP_DAYS", "3")
+    assert large_uploads.keep_days() == 3
+    assert "3 days" in large_uploads.retention_notice()
+    assert "3 jours" in large_uploads.retention_notice("fr")
+    assert "kept 3 days" in large_uploads.libelle({"filename": "f.mp4"})
+    monkeypatch.setenv("OTO_MCP_LARGE_UPLOAD_KEEP_DAYS", "0")
+    assert large_uploads.keep_days() == 1
+    monkeypatch.delenv("OTO_MCP_LARGE_UPLOAD_KEEP_DAYS")
+    assert large_uploads.keep_days() == 14
+
+
+def test_page_d_upload_dit_la_duree_de_garde():
+    from oto_mcp.api.upload_page import upload_page_html
+    html = upload_page_html("fichier", "fr", part_size=5 * MIB,
+                            notice=large_uploads.retention_notice("fr"))
+    # Avant le dépôt ET dans l'accusé affiché après.
+    assert html.count("gardés 14 jours") == 2
+    assert 'class="avis"' not in upload_page_html("fichier", "fr")
+
+
+def test_fichiers_echus_retire_objet_puis_ligne(monkeypatch):
+    from oto_mcp import fichiers_echus
+    ordre = []
+    monkeypatch.setattr("oto_mcp.db.project_files_expired", lambda n: [
+        {"id": 5, "project_id": 7, "s3_key": "project-files/7/x/film.mp4",
+         "filename": "film.mp4", "title": None}])
+    monkeypatch.setattr("oto_mcp.media_store.delete_by_key",
+                        lambda k: ordre.append(("objet", k)))
+    monkeypatch.setattr("oto_mcp.db.delete_project_file",
+                        lambda i: ordre.append(("ligne", i)) or {"project_id": 7})
+    monkeypatch.setattr("oto_mcp.db.log_project_activity",
+                        lambda pid, sub, action, detail: ordre.append((action, detail)))
+    assert fichiers_echus.purger() == 1
+    assert ordre == [("objet", "project-files/7/x/film.mp4"), ("ligne", 5),
+                     ("project.file_expired", "film.mp4")]

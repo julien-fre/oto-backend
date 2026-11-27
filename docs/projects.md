@@ -275,6 +275,17 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > l'origine du backend). Un dépôt jamais clos est abandonné par le cycle de vie du seau
 > (2 jours). L'extraction de texte saute un fichier au-delà de `max_bytes()`
 > (`unsupported`, sans le télécharger).
+>
+> **Un gros fichier est un TRANSIT, pas une archive : il est gardé 14 jours après son
+> dépôt, puis supprimé automatiquement** (`OTO_MCP_LARGE_UPLOAD_KEEP_DAYS`, 1 à 365).
+> La clôture pose `project_files.expires_at` (révision `20261127_1000_file_expiry`, NULL =
+> gardé sans limite, tout autre fichier) ; la boucle `fichiers_echus` (horaire,
+> `OTO_FILES_EXPIRY_ENABLED`) retire l'objet PUIS la ligne et l'écrit au journal du projet
+> (`project.file_expired`). La durée est DITE partout où le fichier se dépose : la réponse
+> d'`oto_upload_url` (`kept_days`, `notice`, et la consigne de le dire à l'utilisateur), la
+> page d'upload (avant et après le dépôt), l'accusé de clôture (`expires_at`, `notice`), et
+> `expires_at` dans les listes de fichiers (`oto_project_files`, REST). La copie d'un projet
+> garde la même échéance. Le versionnement du seau garde un objet retiré 30 jours.
 
 > **Désigner un fichier du projet au lieu de le transporter (ADR 0074, étape 1).**
 > `file_source.resolve` (le résolveur « fichier côté oto » des outils qui prennent une

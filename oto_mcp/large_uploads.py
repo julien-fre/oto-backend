@@ -20,6 +20,12 @@ mémoire d'un serveur mono-boucle. Ici, les octets ne passent JAMAIS par le back
    jamais clos est abandonné par la règle de cycle de vie du seau à 2 jours
    (`infra/scaleway/media-versioning.sh`).
 
+5. **Échéance** : un gros fichier est un TRANSIT (le montrer, le relayer vers YouTube ou
+   une autre plateforme), pas une archive. Il est rangé avec une échéance
+   (`project_files.expires_at`, `keep_days()` : 14 jours par défaut), dite à chaque
+   surface — la réponse d'`oto_upload_url`, la page d'upload, l'accusé, les listes de
+   fichiers. Passée, `fichiers_echus` retire l'objet et la ligne.
+
 À chaque étape, l'identité scellée repasse par la garde (`garde_identite`) et l'écriture
 du projet est REJUGÉE (`upload_tokens.check_target_access`) : un jeton de 24 h ne survit
 pas à un accès retiré.
@@ -32,6 +38,7 @@ clôture, et à chaque partie demandée (`n × PART_SIZE`).
 from __future__ import annotations
 
 import mimetypes
+from datetime import datetime, timedelta, timezone
 import os
 import secrets
 from typing import Optional
@@ -65,6 +72,24 @@ def ttl() -> int:
     jamais au-delà — la table d'usage unique oublie un jeton consommé après un jour."""
     raw = os.environ.get("OTO_MCP_LARGE_UPLOAD_TTL_S")
     return max(600, min(int(raw) if raw else 86400, 86400))
+
+
+def keep_days() -> int:
+    """Combien de jours un gros fichier reste dans le projet après son dépôt : 14 par
+    défaut. Passé ce délai, `fichiers_echus` le retire (objet et ligne) — un gros fichier
+    est un TRANSIT (montrer, relayer vers une plateforme), pas une archive."""
+    raw = os.environ.get("OTO_MCP_LARGE_UPLOAD_KEEP_DAYS")
+    return max(1, min(int(raw) if raw else 14, 365))
+
+
+def retention_notice(lang: str = "en") -> str:
+    """La phrase dite à l'utilisateur partout où le gros fichier se dépose."""
+    j = keep_days()
+    if lang == "fr":
+        return (f"Les gros fichiers sont gardés {j} jours après le dépôt, puis supprimés "
+                "automatiquement. Télécharge-le ou envoie-le ailleurs avant.")
+    return (f"Large files are kept for {j} days after the upload, then deleted "
+            "automatically. Download it or send it on before then.")
 
 
 #: Une URL de partie vit une heure : une partie de 100 Mio passe largement.
@@ -199,12 +224,16 @@ def terminer(payload: dict) -> dict:
                 "store it as a download.")
     pid = int(target["project_id"])
     filename = target.get("filename") or "file"
+    echeance = datetime.now(timezone.utc) + timedelta(days=keep_days())
     row = db.add_project_file(pid, key, filename, mime=servi, size_bytes=total,
                               title=target.get("title"),
-                              description=target.get("description"), created_by=sub)
+                              description=target.get("description"), created_by=sub,
+                              expires_at=echeance)
     db.log_project_activity(pid, sub, "project.file_add", target.get("title") or filename)
     return {"ok": True, "kind": "project_file",
             **redaction.champs_autorises(row, "filename"), "bytes": total,
+            "expires_at": echeance.replace(microsecond=0).isoformat(),
+            "notice": retention_notice(),
             **({"parts": nb_parties} if nb_parties is not None else {})}
 
 
@@ -221,6 +250,8 @@ def abandonner(payload: dict) -> dict:
 def libelle(target: dict, lang: str = "en") -> str:
     """Libellé de la page d'upload (servie sans authentification) : le nom seul."""
     gio = max_bytes() / (1024 * _MIB)
+    j = keep_days()
     if lang == "fr":
-        return f"fichier « {target.get('filename')} » (jusqu’à {gio:.0f} Go)"
-    return f"file “{target.get('filename')}” (up to {gio:.0f} GB)"
+        return (f"fichier « {target.get('filename')} » (jusqu’à {gio:.0f} Go, gardé "
+                f"{j} jours)")
+    return f"file “{target.get('filename')}” (up to {gio:.0f} GB, kept {j} days)"

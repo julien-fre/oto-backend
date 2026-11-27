@@ -80,7 +80,8 @@ class UploadUrlInput(BaseModel):
         "answer gives). The bytes go straight to storage in parts, never through oto: "
         "the answer gives `part_size`, `part_url` (GET `…/part/<n>` → the URL to PUT part "
         "n on) and `complete_url` (POST once every part is sent). Valid 24 h, the file "
-        "lands in the project at completion."))
+        "lands in the project at completion. A large file is TEMPORARY: it is deleted "
+        "automatically after `kept_days` (14 by default; `notice` says it) — tell the user."))
 
 
 class UploadUrlOutput(BaseModel):
@@ -112,6 +113,11 @@ class UploadUrlOutput(BaseModel):
         "`large` : `POST` une fois toutes les parties envoyées → l'accusé ; une partie "
         "manquante est nommée, et le même lien la reprend"))
     abort_url: Optional[str] = Field(None, description="`large` : `DELETE` abandonne le dépôt")
+    kept_days: Optional[int] = Field(None, description=(
+        "`large` : jours de garde du fichier après le dépôt ; ensuite il est supprimé "
+        "automatiquement (`expires_at` de l'accusé et des listes de fichiers)"))
+    notice: Optional[str] = Field(None, description=(
+        "`large` : la durée de garde en une phrase, à dire à l'utilisateur"))
 
 
 # Les refus de la frappe. La cible est RE-jugée à la réception (`check_target_access`) :
@@ -298,6 +304,8 @@ def _large_upload_url(ctx: ResolvedCtx, target: dict) -> dict:
         "part_url": f"{base}/part/{{n}}",
         "complete_url": f"{base}/complete",
         "abort_url": base,
+        "kept_days": large_uploads.keep_days(),
+        "notice": large_uploads.retention_notice(),
         "hint": (
             f"Split the file in parts of exactly {taille} bytes ({mio} MiB; the last one "
             "shorter), PUT each one on its own URL, then POST complete. With a shell: "
@@ -309,7 +317,8 @@ def _large_upload_url(ctx: ResolvedCtx, target: dict) -> dict:
             "curl -s -X POST \"$B/complete\"`. A failed part is sent again the same way; "
             "complete names any missing part. Without a shell, hand the URL to the user: "
             "opening it in a browser shows an upload form that does all of it. Valid 24 h, "
-            "single completion; the bytes never pass through oto."),
+            "single completion; the bytes never pass through oto. "
+            f"{large_uploads.retention_notice()} Tell the user."),
         "target": {k: v for k, v in scelle.items() if k not in ("key", "upload_id")},
     }
 
@@ -328,7 +337,8 @@ CAPABILITIES += [
             "`datastore` (CSV or NDJSON rows; `key` designates rows by that column), `doc`, "
             "`project_file`, "
             "`image` (public permanent URL, 2 MB). A big file (a video of several GB): "
-            "`target=project_file, large=true` sends it to storage in parts. With neither a shell nor a user, send "
+            "`target=project_file, large=true` sends it to storage in parts, and it is "
+            "deleted automatically after 14 days by default. With neither a shell nor a user, send "
             "rows inline with `data_write`. The URL is signed, not encrypted: keep "
             "confidential names out of it."
         ),

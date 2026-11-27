@@ -126,6 +126,8 @@ _STYLE_UPLOAD = (
     '--g1:#fcfcfd;--g2:#f9f9fb;--g3:#f0f0f3;--g4:#e8e8ec;--g9:#8b8d98;--g12:#1c2024;'
     '--red:#ce2c31;--green:#218358}'
     '*{box-sizing:border-box}[hidden]{display:none!important}'
+    '.avis{margin:12px 0 0;padding:8px 10px;border-radius:6px;background:#fff7e6;'
+    'border:1px solid #f3d9a4;color:#7a4b00}'
     'body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;'
     'justify-content:center;padding:24px 16px;background:var(--g2);color:var(--g12);'
     'font:13px/18px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;'
@@ -209,7 +211,7 @@ _TEXTES_UPLOAD = {
 
 
 def upload_page_html(label: str | None, lang: str = "en", *,
-                     part_size: int | None = None) -> str:
+                     part_size: int | None = None, notice: str | None = None) -> str:
     """Page d'upload autoportée d'un lien signé (#105, fallback humain). `label` None
     = lien invalide/expiré (message, sans formulaire). Le POST du fichier se fait vers
     la MÊME URL (multipart `file`), en fetch, avec accusé/erreur affiché. `lang` :
@@ -227,10 +229,13 @@ def upload_page_html(label: str | None, lang: str = "en", *,
         safe = _html.escape(label)
         # Gros fichier : la taille des parties, lue par `SCRIPT_UPLOAD_LARGE`.
         ps = f' data-ps="{int(part_size)}"' if part_size is not None else ""
+        avis = f'<p class="avis">{_html.escape(notice)}</p>' if notice else ""
         body = (
             f'<main class="card"><form id="f"{ps}><div class="ic">{_ICONE_DEPOT}</div>'
             f'<h1>{t["title"]}</h1>'
             f'<p>{t["dest"]}{sep} <b>{safe}</b></p>'
+            # La durée de garde d'un gros fichier, dite AVANT le dépôt et après.
+            f'{avis}'
             '<label class="zone" id="zone">'
             f'{_ICONE_DEPOT}<span class="t">{t["drop"]}</span>'
             f'<span class="s">{t["or"]} <u>{t["browse"]}</u></span>'
@@ -240,7 +245,7 @@ def upload_page_html(label: str | None, lang: str = "en", *,
             '<p id="msg" class="msg" role="alert" hidden></p>'
             f'<p class="foot">{t["foot"]}</p></form>'
             f'<div id="ok" hidden><div class="ic ok">{_ICONE_OK}</div>'
-            f'<h1>{t["ok"]}</h1><p>{t["ok_sub"]}</p>'
+            f'<h1>{t["ok"]}</h1><p>{t["ok_sub"]}</p>{avis}'
             '<div class="url" id="url" hidden><code></code>'
             f'<button type="button">{t["copy"]}</button></div></div></main>'
             f'<script>{SCRIPT_UPLOAD if part_size is None else SCRIPT_UPLOAD_LARGE}</script>')

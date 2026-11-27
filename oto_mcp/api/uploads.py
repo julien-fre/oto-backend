@@ -266,7 +266,8 @@ async def large_form(request: Request) -> Response:
         return HTMLResponse(upload_page_html(None, lang), status_code=401, headers=headers)
     return HTMLResponse(
         upload_page_html(large_uploads.libelle(payload["target"], lang), lang,
-                         part_size=int(payload["target"]["part_size"])),
+                         part_size=int(payload["target"]["part_size"]),
+                         notice=large_uploads.retention_notice(lang)),
         headers=headers)
 
 
@@ -281,6 +282,13 @@ class AccuseDeDepot(BaseModel):
     op: Optional[Literal["create", "update"]] = Field(None, description="`doc`")
     chars: Optional[int] = Field(None, description="`doc` : caractères de la page")
     filename: Optional[str] = Field(None, description="`project_file`")
+    expires_at: Optional[str] = Field(None, description=(
+        "`project_file` déposé par parties (`large`) : la date (ISO 8601, UTC) où il est "
+        "supprimé automatiquement"))
+    notice: Optional[str] = Field(None, description=(
+        "`project_file` déposé par parties : la durée de garde, en une phrase à dire à "
+        "l'utilisateur"))
+    parts: Optional[int] = Field(None, description="`project_file` déposé par parties")
     url: Optional[str] = Field(None, description="`image` : l'adresse publique, permanente")
     datastore: Optional[str] = Field(None, description="`datastore` : le tableau chargé")
     inserted: Optional[int] = Field(None, description="`datastore` : lignes créées")

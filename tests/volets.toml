@@ -755,6 +755,7 @@ sources = [
   "oto_mcp/transit.py",
   "oto_mcp/upload_tokens.py",
   "oto_mcp/large_uploads.py",
+  "oto_mcp/fichiers_echus.py",
   "oto_mcp/capabilities/uploads.py",
   "oto_mcp/api/uploads.py",
   "oto_mcp/api/upload_page.py",

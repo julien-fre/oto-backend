@@ -618,6 +618,10 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_MCP_LARGE_UPLOAD_TTL_S", Classe.REGLAGE, "86400",
              "Durée de vie (s) d'un lien de gros fichier — 24 h, au plus 24 h.",
              ('oto_mcp/large_uploads.py:66',)),
+    Variable("OTO_MCP_LARGE_UPLOAD_KEEP_DAYS", Classe.REGLAGE, "14",
+             "Jours de garde d'un gros fichier de projet après son dépôt, puis retrait "
+             "automatique (boucle fichiers_echus) — 14, entre 1 et 365.",
+             ('oto_mcp/large_uploads.py:81',)),
     Variable("OTO_PENNYLANE_FIRM_UPLOAD_MAX_BYTES", Classe.REGLAGE, "104857600",
              "Plafond (octets) d'un fichier relayé vers la GED Pennylane (cabinet) — "
              "100 Mo, PROVISOIRE : à relever après mesure de la limite de Pennylane. "
@@ -846,6 +850,9 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_FILE_EXTRACT_WORKER_ENABLED", Classe.REGLAGE, "1",
              "Boucle de fond : worker d'extraction de fichiers.",
              ("oto_mcp/boucles_de_fond.py:157",)),
+    Variable("OTO_FILES_EXPIRY_ENABLED", Classe.REGLAGE, "1",
+             "Boucle de fond : retrait des fichiers de projet échus.",
+             ("oto_mcp/boucles_de_fond.py:209",)),
     Variable("OTO_RANK_BACKFILL_ENABLED", Classe.REGLAGE, "1",
              "Boucle de fond : backfill de classement.",
              ("oto_mcp/boucles_de_fond.py:161",)),
