@@ -135,6 +135,38 @@ def test_raw_exception_is_internal_and_does_not_echo():
     assert "internal.host" not in info.message
 
 
+def test_cle_que_le_coffre_ne_relit_plus_est_nommee_signal_1465():
+    """Signal 1465 : `oto_call(api_get, _account=…)` répondait « Internal server error. »
+    deux fois, alors que la cause — une enveloppe du coffre qui ne s'ouvrait plus — avait
+    son message, écrit par nous. Servie sous son nom, non rejouable, avec le geste."""
+    from oto_mcp.crypto import EnveloppeIndechiffrable
+    from oto_mcp.error_taxonomy import _is_expected_error
+
+    cause = EnveloppeIndechiffrable("credential indéchiffrable (enveloppe corrompue) — "
+                                    "reconnecte ce connecteur depuis le dashboard")
+    exc = _chained(Exception("Error calling tool 'api_get': "), cause)
+    info = classify(exc)
+    assert info.code == "credential_unreadable" and info.retryable is False
+    assert "indéchiffrable" in info.message and info.message != "Internal server error."
+    assert "set the connector's key again" in info.hint
+    assert jsonrpc_code(info) == INTERNAL_ERROR
+    # Un défaut de NOTRE côté : il reste remonté à Sentry.
+    assert not _is_expected_error(exc)
+
+
+def test_secret_qui_ne_se_deballe_pas_est_nomme():
+    from oto_mcp.credentials_store import SecretUnpackError
+
+    info = classify(SecretUnpackError("credential `api` illisible : le blob multi-champs "
+                                      "stocké n'est pas du JSON (JSONDecodeError)."))
+    assert info.code == "credential_unreadable"
+    assert "credential `api` illisible" in info.message
+
+
+def test_une_runtimeerror_quelconque_reste_interne():
+    assert classify(RuntimeError("OTO_MCP_MASTER_KEY absente")).code == "internal"
+
+
 def test_classify_walks_chain():
     # fastmcp emballe dans un ToolError → on remonte jusqu'à l'amont.
     info = classify(_chained(Exception("Error calling tool 'unipile_inmail_balance'"),

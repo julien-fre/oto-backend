@@ -1142,6 +1142,13 @@ compte nommé —, copiée vers une autre instance) est un cache perdu : journal
 `crypto.unseal` lève alors `crypto.EnveloppeIndechiffrable`, seule erreur que `read_jar` avale (une master
 key absente monte). Le jar n'est jamais rendu à l'agent ni journalisé.
 
+**Une clé que le coffre ne relit plus** (signal 1465) : hors du jar — qui n'est qu'un cache —, une enveloppe
+qui ne s'ouvre pas (`crypto.EnveloppeIndechiffrable`) ou un secret qui ne se déballe pas
+(`credentials_store.SecretUnpackError`) est servi à l'agent sous son nom, code `credential_unreadable`,
+non rejouable, avec son message (écrit par nous, sans secret) et le geste : reposer la clé. Il restait
+« Internal server error. », lu comme une panne et rejoué. Il reste remonté à Sentry : c'est un défaut de
+notre côté (`error_taxonomy._vault_unreadable`).
+
 **Le mode `visitor`** (14/11/2026) : pour un site public sans compte. La carte ne prend que `session`, lu par
 oto-core avec son propre jeu fermé (`login` = `{path, method: "GET", query}`, sans `follow`, sans page de
 login par défaut) : la « connexion » est le GET d'une page d'entrée dont la réponse pose les cookies du
