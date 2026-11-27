@@ -1249,13 +1249,16 @@ def snowflake(vendeur, monkeypatch):
     connector_verify._COUVERTURE.pop("snowflake", None)
 
 
-def test_snowflake_is_inscribed_read_only_with_its_token_and_its_account(snowflake):
+def test_snowflake_is_inscribed_with_its_token_and_its_account(snowflake):
     c = providers.REGISTRY["snowflake"]
     assert (c.namespaces, c.auth_modes, c.secret_kind, c.keyed, c.decrit) == (
         ("snowflake",), frozenset({"byo_user", "byo_org"}), "fields", False, True)
     assert [(f.name, f.secret) for f in c.secret_fields] == [("token", True), ("account", False)]
     assert descriptions.refus_de_montage(descriptions.charger("snowflake")) == []
-    assert set(snowflake) == {"snowflake"} and snowflake["snowflake"].annotations == LECTURE
+    assert set(snowflake) == {"snowflake", "snowflake_act"}
+    assert snowflake["snowflake"].annotations == LECTURE and snowflake["snowflake_act"].annotations == ACTE
+    assert sorted(effets.EFFETS["snowflake_act"]["detruire"].split()) == ["cancel_statement", "execute_statement"]
+    assert "execute_statement" not in snowflake["snowflake"].description
 
 
 def test_snowflake_runs_a_read_on_the_account_with_the_token_type(snowflake, vendeur):
@@ -1295,3 +1298,36 @@ def test_snowflake_a_sql_error_reaches_the_agent_with_snowflakes_message(snowfla
     with pytest.raises(Exception) as e:
         _appel(snowflake["snowflake"], op="run_query", statement="SELECT * FROM NOPE")
     assert "does not exist or not authorized" in str(e.value) and "pat-0" not in str(e.value)
+
+
+def test_snowflake_executes_one_statement_async_on_the_act_side(snowflake, vendeur):
+    vendeur.answers.append((202, {"code": "333334", "statementHandle": "01b2c3d4-0000-1111-0000-00000000abcd",
+                                  "statementStatusUrl": "/api/v2/statements/01b2c3d4-0000-1111-0000-00000000abcd"}))
+    rendu = _appel(snowflake["snowflake_act"], op="execute_statement", statement="UPDATE T SET a = 1 WHERE b = 2",
+                   warehouse="WH")
+    assert "01b2c3d4-0000-1111-0000-00000000abcd" in json.dumps(rendu)
+    envoi = essai.envoyee(vendeur.requests[0])
+    assert envoi["query"] == [("async", "true")] and envoi["body"]["statement"] == "UPDATE T SET a = 1 WHERE b = 2"
+    assert envoi["body"]["parameters"] == {"multi_statement_count": "1", "query_tag": "oto"}
+
+
+@pytest.mark.parametrize("sql", ["UPDATE T SET a = 1 ->> DROP TABLE U",
+                                 "ALTER USER U ADD PROGRAMMATIC ACCESS TOKEN X ROLE_RESTRICTION = 'R'"])
+def test_snowflake_act_refuses_a_chain_and_a_token_before_sending(snowflake, vendeur, sql):
+    with pytest.raises(Exception):
+        _appel(snowflake["snowflake_act"], op="execute_statement", statement=sql)
+    assert vendeur.requests == []
+
+
+def test_snowflake_a_5xx_on_a_write_is_sent_once_and_not_retryable(snowflake, vendeur):
+    vendeur.answers.append((503, {"message": "unavailable"}))
+    with pytest.raises(decrits.RefusNomme) as e:
+        _appel(snowflake["snowflake_act"], op="execute_statement", statement="DELETE FROM T WHERE a = 1")
+    assert len(vendeur.requests) == 1 and e.value.retryable is False
+
+
+def test_snowflake_cancels_a_statement(snowflake, vendeur):
+    vendeur.answers.append((200, {"code": "000604", "message": "SQL execution canceled"}))
+    _appel(snowflake["snowflake_act"], op="cancel_statement", statement_handle="01b2c3d4-0000-1111-0000-00000000abcd")
+    envoi = essai.envoyee(vendeur.requests[0])
+    assert (envoi["method"], envoi["path"]) == ("POST", "/api/v2/statements/01b2c3d4-0000-1111-0000-00000000abcd/cancel")
