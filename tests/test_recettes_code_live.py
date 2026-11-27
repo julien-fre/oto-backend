@@ -51,6 +51,10 @@ def capa(compte, monkeypatch):
     from oto_mcp.capabilities import recipes
     from oto_mcp.capabilities._types import ResolvedCtx
     from oto_mcp.functions import executor
+    # Importé AVANT de patcher `auth.hooks` : `call_context` lie le lecteur d'identité à son
+    # import, et un premier import pendant le patch lui laisserait le faux lecteur (garde #1111).
+    # Selon l'ordre du worker, il était déjà importé ou non : rouge intermittent.
+    from oto_mcp.middleware import call_context  # noqa: F401
     from oto_mcp.tools import datastore as outils_tableaux
     from oto_mcp.tools.lecture import LECTURE
     if not os.environ.get(executor.ENV_DIR):
