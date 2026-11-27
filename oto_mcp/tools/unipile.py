@@ -1700,8 +1700,9 @@ def register(mcp: FastMCP) -> None:
         Args:
             op: person (default) | company | me | posts | comments | reactions |
                 followers | following.
-            identifier: public slug or URN of the member / company. Required
-                except op="me"; optional for followers/following (default = you).
+            identifier: public slug or URN of the member / company; op="posts"
+                also takes a company page's numeric id. Required except op="me";
+                optional for followers/following (default = you).
             sections: op="person" — sections to include ("*" = all), comma
                 separated: experience, education, languages, skills,
                 certifications, volunteer_experience, projects, recommendations,

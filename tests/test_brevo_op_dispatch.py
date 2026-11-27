@@ -31,6 +31,8 @@ DANGEROUS = (
     "import_contacts", "export_contacts", "upsert_contact", "update_contact",
     "create_list", "update_list", "add_to_list", "remove_from_list",
     "create_template", "update_template",
+    # Présentes dans oto-core depuis v1.254.0, jamais servies ici (suppressions dans l'UI).
+    "delete_contact", "delete_list",
 )
 
 
