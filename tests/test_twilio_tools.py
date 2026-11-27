@@ -204,10 +204,17 @@ def courtier(monkeypatch):
     def _absent(provider, account=None):
         raise CredentialUnavailable(ErrorData(code=-32602, message="no key"))
 
+    class Plateforme:
+        is_platform, fields = True, {"account_sid": "AC-plateforme", "auth_token": "relay-t"}
+
+    def _resolve(provider, want="auto", **kw):
+        if want == "byo":
+            _absent(provider)
+        return Plateforme()
+
     monkeypatch.setattr("oto_mcp.access.resolve_credential_fields", _absent)
-    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential",
-                        lambda provider, **kw: _absent(provider))
-    vu = {"get": [], "post": []}
+    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential", _resolve)
+    vu = {"get": [], "post": [], "token": []}
 
     class Faux:
         def get(self, tail="", params=None):
@@ -222,7 +229,7 @@ def courtier(monkeypatch):
                 raise C.CourtierRefus(400, "destination_not_allowed")
             return {"id": 1, "status": "queued", "segments": 1}
 
-    monkeypatch.setattr(C, "pour_l_appelant", lambda: Faux())
+    monkeypatch.setattr(C, "pour_l_appelant", lambda token: vu["token"].append(token) or Faux())
     return vu
 
 
@@ -256,35 +263,54 @@ def test_sans_cle_sms_et_appel_par_le_courtier(client, courtier, admin):
 
 
 def test_sans_cle_ni_courtier_le_refus_dit_quoi_faire(monkeypatch):
+    """No own key and the platform key does not resolve for the org (no key, or the org
+    cut from it, out of credits): refused, and the relay is never reached."""
     from oto_mcp.access.resolve import CredentialUnavailable
     from mcp.types import ErrorData
     from oto_mcp.tools import twilio_courtier as C
 
-    def _absent(provider, account=None):
+    def _absent(provider, account=None, **kw):
         raise CredentialUnavailable(ErrorData(code=-32602, message="no key"))
 
     monkeypatch.setattr("oto_mcp.access.resolve_credential_fields", _absent)
-    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential",
-                        lambda provider, **kw: _absent(provider))
-    monkeypatch.setattr(C, "pour_l_appelant", lambda: None)
+    monkeypatch.setattr("oto_mcp.access.resolve.resolve_credential", _absent)
+    reached = []
+    monkeypatch.setattr(C, "pour_l_appelant", lambda token: reached.append(token))
     with pytest.raises(McpError) as e:
         _fn("twilio")(op="numbers")
-    assert "connect the org's Twilio account" in str(e.value)
+    assert "out of credits" in str(e.value) and reached == []
+
+
+def test_le_relais_est_appele_avec_la_cle_plateforme(courtier):
+    _fn("twilio")(op="numbers")
+    assert courtier["token"] == ["relay-t"]
+
+
+def test_twilio_est_un_connecteur_plateforme_ferme():
+    """Platform key closed (granted per org by the commerce's enrolment), never a free tier."""
+    from oto_mcp import providers
+    c = providers.connector_for_provider("twilio")
+    assert "platform" in c.auth_modes and "byo_org" in c.auth_modes and not c.platform_key_open
+
+
+def test_les_outils_twilio_ne_debitent_rien_cote_oto():
+    from oto_mcp.access.reglement import SANS_DEBIT
+    assert {"twilio", "twilio_act"} <= SANS_DEBIT
 
 
 
 def test_le_courtier_reste_au_tenant_primaire(monkeypatch):
     from oto_mcp.tools import twilio_courtier as C
     monkeypatch.setenv("OTO_COMMERCE_RELAY_URL", "https://commerce/service/oto")
-    monkeypatch.setenv("OTO_COMMERCE_RELAY_TOKEN", "t")
     monkeypatch.setattr("oto_mcp.auth.hooks.current_user_sub_from_token", lambda: "sub-a")
     monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 42)
     monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: False)
     monkeypatch.setattr(C, "_du_tenant_primaire", lambda org: False)
-    assert C.pour_l_appelant() is None
+    assert C.pour_l_appelant("t") is None
     monkeypatch.setattr(C, "_du_tenant_primaire", lambda org: True)
-    c = C.pour_l_appelant()
-    assert (c.org_id, c.sub, c.role) == (42, "sub-a", "org_member")
+    c = C.pour_l_appelant("t")
+    assert (c.org_id, c.sub, c.role, c.token) == (42, "sub-a", "org_member", "t")
+    assert C.pour_l_appelant("") is None
 
 
 

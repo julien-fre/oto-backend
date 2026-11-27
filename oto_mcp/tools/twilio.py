@@ -153,7 +153,9 @@ def register(mcp: FastMCP) -> None:
 
     def _courtier_ou_none():
         """None when the org has its OWN Twilio key (the direct path), else the broker
-        for the caller; refused when neither is reachable."""
+        for the caller, reached with the PLATFORM key (the relay credential, see
+        `providers/twilio.py`); refused when neither resolves — no platform key, or the
+        org's access to it cut (out of credits)."""
         from ..access import resolve as _resolve
         try:
             # A probe: its failure is the normal path to the broker, not a broken
@@ -161,12 +163,20 @@ def register(mcp: FastMCP) -> None:
             _resolve.resolve_credential(_NAME, want="byo", emit_on_failure=False)
             return None
         except CredentialUnavailable:
-            courtier = twilio_courtier.pour_l_appelant()
-            if courtier is None:
-                raise _bad("No Twilio account is connected for this organization, and its "
-                           "the platform's numbers are not reachable from here: connect the org's "
-                           "Twilio account, or buy a number on the Phone page.") from None
-            return courtier
+            pass
+        try:
+            rc = _resolve.resolve_credential(_NAME, want="auto")
+        except CredentialUnavailable as e:
+            raise _bad("No Twilio account is connected for this organization and the "
+                       "platform's numbers are not available to it (paused, or out of "
+                       f"credits): {e}") from None
+        token = (rc.fields or {}).get("auth_token") if rc.is_platform else None
+        courtier = twilio_courtier.pour_l_appelant(token) if token else None
+        if courtier is None:
+            raise _bad("No Twilio account is connected for this organization, and "
+                       "the platform's numbers are not reachable from here: connect the "
+                       "org's Twilio account, or buy a number in Connectors → Twilio.")
+        return courtier
 
     def _cr(fn):
         try:

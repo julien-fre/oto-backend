@@ -18,11 +18,21 @@ from ._model import CredentialField, _c
 # `account_sid` is declared NOT secret: it names the account without exposing the
 # token (same split as `aircall`).
 #
-# Own key of the ORG only for now (`byo_org`): numbers, calls and messages belong to the
-# organization, and Twilio bills them directly. The platform mode (one subaccount per
-# org, billed in credits) comes in its own lot.
+# Two modes, like every connector (Julien, 27/11):
+# - `byo_org`: the ORG's own Twilio account; Twilio bills it directly.
+# - `platform`: the numbers the org bought from the platform, billed in credits by the
+#   instance's commerce, which holds the platform's Twilio account (webhooks, browser
+#   phone, regulatory dossiers, monthly rent) and scopes every call to the org's own
+#   numbers and to the destinations it prices. oto never holds those Twilio keys: the
+#   platform key here is the commerce's PHONE RELAY credential — `account_sid` = the
+#   platform's Twilio account SID (informational, never sent to Twilio), `auth_token` =
+#   the relay token (`tools/twilio_courtier.py`). It is never handed to `TwilioClient`
+#   (`_client()` resolves byo only). A CLOSED key, like the platform's paid keys (AI
+#   Ark, Forager): the commerce's enrolment grants it to every org it bills, and cuts an
+#   org out of credits (`grant:twilio`); resolution then refuses. Not a free tier.
 CONNECTOR = _c(
-    "twilio", ["twilio"], auth_modes={"byo_org"},
+    "twilio", ["twilio"], auth_modes={"byo_org", "platform"},
+    default_quota=0, platform_key_open=False,
     secret_kind="fields",
     credential_fields=(
         CredentialField(

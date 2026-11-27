@@ -8,9 +8,10 @@ of 26/11/2026: agents go through it, this service never holds a copy of the plat
 Twilio keys). This module is the agent's way there: the commerce's phone relay, called
 with the relay's token for the person this server vouches for.
 
-**Config, no default** (`OTO_COMMERCE_RELAY_URL`, `OTO_COMMERCE_RELAY_TOKEN`, the same
-pair as the credits relay): unset = no broker, and a tool call without the org's own key
-is refused with what to do. **Primary tenant only**, like the credits relay: the org of a
+**Config**: the URL is `OTO_COMMERCE_RELAY_URL` (shared with the credits relay); the
+TOKEN is the `twilio` PLATFORM key (its `auth_token` field), resolved per call like every
+platform key, so an org cut from it (out of credits) never reaches the relay. No URL, or
+no platform key = no broker, and a tool call without the org's own key is refused. **Primary tenant only**, like the credits relay: the org of a
 hosted tenant is not billed by this instance's commerce.
 
 **The contract** (`/service/oto/orgs/{org_id}/phone…` on the commerce):
@@ -85,12 +86,9 @@ def _answer(resp) -> Any:
     return body
 
 
-def config() -> "tuple[str, str] | None":
+def relay_url() -> "str | None":
     url = os.environ.get("OTO_COMMERCE_RELAY_URL", "").strip().rstrip("/")
-    token = os.environ.get("OTO_COMMERCE_RELAY_TOKEN", "").strip()
-    if not url or not token:
-        return None
-    return url, token
+    return url or None
 
 
 def _du_tenant_primaire(org_id: int) -> bool:
@@ -102,11 +100,11 @@ def _du_tenant_primaire(org_id: int) -> bool:
         return False
 
 
-def pour_l_appelant() -> Optional[Courtier]:
-    """The broker for the caller in their current org, or None (not configured, no
-    caller, no org)."""
-    cfg = config()
-    if cfg is None:
+def pour_l_appelant(token: str) -> Optional[Courtier]:
+    """The broker for the caller in their current org, reached with `token` (the
+    resolved platform key), or None (no relay URL, no caller, no org)."""
+    url = relay_url()
+    if url is None or not token:
         return None
     from .. import access, roles
     from ..auth.hooks import current_user_sub_from_token
@@ -115,7 +113,7 @@ def pour_l_appelant() -> Optional[Courtier]:
     if not sub or not org_id or not _du_tenant_primaire(int(org_id)):
         return None
     role = "org_admin" if roles.is_org_admin(sub, int(org_id)) else "org_member"
-    return Courtier(url=cfg[0], token=cfg[1], org_id=int(org_id), sub=sub, role=role)
+    return Courtier(url=url, token=token, org_id=int(org_id), sub=sub, role=role)
 
 
 MESSAGES = {
