@@ -11,8 +11,11 @@ from ._model import _decrit
 # reads — SELECT / WITH / SHOW / DESCRIBE / EXPLAIN, one statement per call, values
 # in bindings; a statement still running after the API's 45 s wait, or a further
 # partition of a result, is read by its handle. `snowflake_act` acts —
-# `execute_statement` (any one statement: DML, DDL, COPY, CALL; confirmed, effect
-# `destroy`, always async so its answer is the handle) and `cancel_statement`. A neighbour of `bigquery` by trade
+# `execute_statement` (any one statement: DML, DDL, COPY, CALL; effect `destroy`,
+# always async so its answer is the handle) and `cancel_statement`. Their `confirm`
+# is declared for oto 2; oto 1 has no confirmation step on a direct call today
+# (`tools/effets.py`: nothing refuses on the class yet; recipes refuse `detruire`):
+# the gates are the MCP destructive annotation and the org's switch on the tool. A neighbour of `bigquery` by trade
 # (data warehouse). Served by the GENERIC READER of its description
 # (`tools/decrits.py`): no `tools/snowflake.py`, the library's engine runs the
 # description (auth `bearer`, the token-type header a constant of the description).

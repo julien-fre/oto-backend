@@ -1276,7 +1276,8 @@ def test_snowflake_runs_a_read_on_the_account_with_the_token_type(snowflake, ven
 
 
 @pytest.mark.parametrize("sql", ["DELETE FROM T", "drop table t", "GRANT ROLE R TO USER U", "CALL p()",
-                                 "/* x */ SELECT 1", "SELECT 1 ->> DROP TABLE T", "SHOW TABLES ->> DELETE FROM T"])
+                                 "/* x */ SELECT 1", "SELECT 1 ->> DROP TABLE T", "SHOW TABLES ->> DELETE FROM T",
+                                 "WITH p AS PROCEDURE () RETURNS INT LANGUAGE SQL AS 'BEGIN DELETE FROM T; RETURN 1; END' CALL p()"])
 def test_snowflake_refuses_what_does_not_open_like_a_read_before_sending(snowflake, vendeur, sql):
     with pytest.raises(Exception):
         _appel(snowflake["snowflake"], op="run_query", statement=sql)
@@ -1312,7 +1313,8 @@ def test_snowflake_executes_one_statement_async_on_the_act_side(snowflake, vende
 
 
 @pytest.mark.parametrize("sql", ["UPDATE T SET a = 1 ->> DROP TABLE U",
-                                 "ALTER USER U ADD PROGRAMMATIC ACCESS TOKEN X ROLE_RESTRICTION = 'R'"])
+                                 "ALTER USER U ADD PROGRAMMATIC ACCESS TOKEN X ROLE_RESTRICTION = 'R'",
+                                 "ALTER USER U ADD PAT X", "alter user u rotate pat x"])
 def test_snowflake_act_refuses_a_chain_and_a_token_before_sending(snowflake, vendeur, sql):
     with pytest.raises(Exception):
         _appel(snowflake["snowflake_act"], op="execute_statement", statement=sql)

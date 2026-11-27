@@ -16,7 +16,7 @@ in Snowsight, **your user menu → Settings → Authentication → Programmatic 
 - "top customers in France" → `snowflake(op="run_query", statement="SELECT name, SUM(amount) FROM X.Y.ORDERS WHERE country = ? GROUP BY 1 ORDER BY 2 DESC LIMIT 20", bindings={"1": {"type": "TEXT", "value": "FR"}}, warehouse="COMPUTE_WH")`
 - "a heavy query" → add `async=true`: the answer comes at once with a `statementHandle` (a call never waits past 45 s, and a cut call loses the handle while the query keeps billing)
 - "is it done" (answer code `333334`) → `snowflake(op="get_statement", statement_handle="…")`, again after a few seconds until rows come
-- "mark these accounts churned" → `snowflake_act(op="execute_statement", statement="UPDATE X.Y.ACCOUNTS SET status = 'churned' WHERE …", warehouse="COMPUTE_WH")` — confirmed first, answers the handle at once: read the outcome with `snowflake(op="get_statement", statement_handle="…")`
+- "mark these accounts churned" → `snowflake_act(op="execute_statement", statement="UPDATE X.Y.ACCOUNTS SET status = 'churned' WHERE …", warehouse="COMPUTE_WH")` — runs as soon as it is called (no confirmation step on oto's side today: the MCP client's own approval, and the org's switch on `snowflake_act`, are the gates), answers the handle at once: read the outcome with `snowflake(op="get_statement", statement_handle="…")`
 - "stop that query" → `snowflake_act(op="cancel_statement", statement_handle="…")`
 - "the rest of the result" (several entries in `resultSetMetaData.partitionInfo`) → `snowflake(op="get_statement", statement_handle="…", partition=1)`
 
@@ -29,4 +29,6 @@ in Snowsight, **your user menu → Settings → Authentication → Programmatic 
 - every query carries `query_tag = oto` in your query history
 - ⚠️ **`execute_statement` is not undone** (unless Time Travel keeps the data): read its handle before ever submitting the same statement again; on a 5xx, check first, a statement may have run
 - `execute_statement` takes no bindings: the values are written in the statement, so the confirmation shows them
-- not covered: creating programmatic access tokens (refused: the secret would come back), multi-statement requests, file PUT/GET
+- ⚠️ `snowflake_act` runs ANY single statement the role allows, DDL, GRANT and CALL included: narrow the role, or switch `snowflake_act` off for read-only use
+- refused: ADD or ROTATE of a programmatic access token (`PAT`), the flow operator `->>`, and on the read side `WITH … AS PROCEDURE`; these are guards, the role is the boundary
+- not covered: creating programmatic access tokens, multi-statement requests, file PUT/GET
