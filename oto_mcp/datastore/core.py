@@ -344,7 +344,7 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
             raise DatastoreReadOnly(datastore)
         ns = db.get_datastore_by_id(int(datastore))
         if ns is not None:
-            par_l_app.servi(str(datastore))
+            par_l_app.servi(self.sub, str(datastore))
         return ns
 
     @staticmethod

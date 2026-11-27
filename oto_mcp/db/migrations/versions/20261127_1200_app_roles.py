@@ -2,7 +2,8 @@
 et l'accès à un tableau À TRAVERS une app seulement : la table `app_table_access`
 (fragment `ACCES_PAR_L_APP`, `CREATE TABLE IF NOT EXISTS` — neuve, vide, sans verrou
 sur l'existant hors les FK vers `apps` et `user_datastores`, un `ShareRowExclusiveLock`
-bref).
+bref) ; et le journal des lectures d'app, la table `app_reads` (fragment `LECTURES`,
+même forme : neuve, vide, FK vers `apps` et `user_datastores`).
 
 Une colonne NEUVE, nullable, sans défaut — le DDL est le fragment
 `db/schema/apps.py::ROLES`, exécuté tel quel (`ADD COLUMN IF NOT EXISTS`). La clé d'un
@@ -29,7 +30,8 @@ avant de servir (le nouveau `grant_resource` écrit `share_id`) ; l'ancien code 
 identité, numéroté plus tard). Une app d'avant ne déclare aucun rôle : rien ne change
 pour elle.
 
-Retour arrière : retire la table (les accès par l'app se perdent : ces lecteurs ne
+Retour arrière : retire le journal des lectures (ses compteurs se perdent ; l'ancien code
+n'y écrit pas), la table des accès (les accès par l'app se perdent : ces lecteurs ne
 lisent plus ces tableaux), puis les colonnes (chaque lecteur revient au rôle par défaut
 de l'app) et la séquence.
 
@@ -40,7 +42,7 @@ from __future__ import annotations
 
 from alembic import op
 
-from oto_mcp.db.schema.apps import ACCES_PAR_L_APP, ROLES
+from oto_mcp.db.schema.apps import ACCES_PAR_L_APP, LECTURES, ROLES
 
 revision = "20261127_1200_app_roles"
 down_revision = "20261125_1700_responsables"
@@ -54,10 +56,12 @@ def upgrade() -> None:
     op.execute(_ATTENTE_MAX)
     op.execute(ROLES)
     op.execute(ACCES_PAR_L_APP)
+    op.execute(LECTURES)
 
 
 def downgrade() -> None:
     op.execute(_ATTENTE_MAX)
+    op.execute("DROP TABLE IF EXISTS app_reads")
     op.execute("DROP TABLE IF EXISTS app_table_access")
     op.execute("ALTER TABLE resource_grants DROP COLUMN IF EXISTS share_id")
     op.execute("DROP SEQUENCE IF EXISTS resource_grants_share_id_seq")

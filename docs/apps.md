@@ -299,7 +299,56 @@ et `batch`, un lot de lectures (plus bas).
   `tests/test_apps_appel_lot.py`.
 - **Journal** : l'appel est tracé comme toute requête REST (`tool_calls`, `kind=rest`),
   mais la route y est réduite (`/api/me/apps/:id/call`) : le numéro de l'app et le
-  tableau lu n'y sont pas. Aucun journal d'audit des lectures n'existe à ce jour.
+  tableau lu n'y sont pas. Qui a lu quel tableau par quelle app se lit dans le **journal
+  des lectures** (§ suivant).
+
+### Journal des lectures (`app_reads`)
+
+Le gérant d'un tableau ouvert à un partenaire — par un partage ou À TRAVERS l'app
+seulement (§ Accès par l'app) — doit pouvoir répondre à « qui a lu quoi ». Les gestes ont
+leur journal (`app_consents`) ; les lectures ont celui-ci.
+
+- **Des compteurs, pas une ligne par lecture.** Une app ouvre son écran par huit à quinze
+  lectures et se rafraîchit ; la route en admet 240 par minute et par jeton. Une ligne
+  par **(app, jour UTC, tableau, lecteur, accès)** : `row_reads` (lectures de lignes),
+  `aggregate_reads` (agrégats), `rows_served` (lignes rendues), `first_at` / `last_at`.
+  `access` dit par où le lecteur atteignait le tableau : `own` (son propre partage),
+  `app` (l'accès par l'app seul, `Portee.servis`), `run` (un agent lancé depuis l'app,
+  par cet accès).
+- **Écrit APRÈS l'appel, hors de son emprunt.** Le chemin de lecture reste lecture seule
+  et à UN emprunt au pool (`tests/test_apps_appel_une_connexion.py`) : chaque lecture
+  SERVIE — seule, ou chacune d'un lot — est notée en mémoire pendant l'appel, puis le
+  handler de la route (`apps_appel._call_journalise`) écrit le tout en UNE requête
+  (`db.apps.note_reads`, `INSERT … ON CONFLICT DO UPDATE`, sommée par tableau et accès),
+  sur un second emprunt. Rien n'est tamponné entre deux appels : un processus qui
+  tombe ne perd que l'appel en cours. Une écriture du journal qui échoue est
+  journalisée (Sentry) et la lecture est servie quand même. Une lecture refusée, ou
+  coupée par la borne de durée, n'a rien servi : elle n'est pas notée.
+- **Les runs** : un agent lancé depuis l'app qui lit un tableau par l'accès de l'app
+  (`_droit_du_run`) est noté au point où le store SERT le tableau (`par_l_app.servi`),
+  sous l'app et le lanceur, `access = 'run'` : `row_reads` y compte les **ouvertures**
+  du tableau (une résolution par le store, pas une page), `rows_served` reste 0 — le run
+  lit par les outils de tableau, qui ne remontent pas leur compte. Une ouverture faite
+  dans une portée de connexion partagée (lecture groupée, transaction d'écriture) n'est
+  pas notée, et le dit (journal du processus).
+- **Ce qui n'est PAS noté** : les lectures d'un run par son propre partage du tableau
+  (c'est le journal d'appels, `tool_calls`, qui les porte), les fichiers (`list_files`,
+  `file_url`) et les runs (`agent_runs`, `run_result`) lus par l'app, la lecture que fait
+  le jugement d'un geste, et QUELLES lignes ont été servies : un ensemble d'identifiants
+  borné serait faux dès qu'il déborde, et réécrirait la ligne chaude à chaque lecture.
+  La fusion de deux comptes qui ont lu le même tableau le même jour par la même app
+  garde les compteurs du survivant pour ce jour-là.
+- **Qui le lit** (`oto_apps op=reads`, `days` ≤ 180, 30 par défaut ; session
+  interactive, comme tout `oto_apps`) : qui **gouverne l'app** (propriétaire, admin,
+  Manage) lit toutes ses lignes (`tables` : celles-là) ; qui gouverne un **tableau**
+  seulement lit les lignes de ce tableau — par `app_id`, sans même pouvoir lire l'app,
+  ou sans `app_id`, `tables` = des numéros de tableaux qu'il gouverne, toutes apps
+  confondues. Ne gouverner ni l'app ni aucun de ses tableaux : 404 `unknown_app` (403 à
+  qui lit l'app sans la gérer). Au plus 2 000 lignes, les plus récentes d'abord.
+- **Rétention : 180 jours**, purgés par `oto-mcp maintenance app-reads` (timer
+  quotidien, `all`), jamais au démarrage. L'effacement d'une app ou d'un tableau emporte
+  ses lignes (`ON DELETE CASCADE`) ; une app ne se supprime pas hors l'effacement de son
+  org (on l'archive).
 
 ### Écrire, ajouter, lancer, déposer — l'accord du lecteur, donné hors de l'app (`me.app.consent`, #1386)
 

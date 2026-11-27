@@ -69,7 +69,7 @@ class AppInput(BaseModel):
     op: Literal["list", "get", "create", "update", "patch", "archive", "unarchive",
                 "revisions", "revision", "restore", "validate", "file", "unfile",
                 "read_file", "put_file", "publish", "delete_draft", "set_drafts",
-                "roles", "set_role", "grant_through_app", "revoke_through_app"]
+                "roles", "set_role", "grant_through_app", "revoke_through_app", "reads"]
     project_id: Optional[int] = Field(
         default=None, description="create: also file the new app in this project. "
         "file / unfile: the project. list: only the apps filed in it.")
@@ -122,7 +122,11 @@ class AppInput(BaseModel):
         default=None, description="set_role: their id, as op=roles lists it.")
     tables: Optional[list[str]] = Field(
         default=None, description="grant_through_app: the app's table names to open "
-        "(default: every table it declares).")
+        "(default: every table it declares). reads: only these tables — the app's table "
+        "names, or table NUMBERS; without `app_id`, the numbers of tables you manage.")
+    days: Optional[int] = Field(
+        default=None, ge=1, le=180, description="reads: the last N days (UTC, today "
+        "included), 30 by default, at most 180 (what the journal keeps).")
     role: Optional[str] = Field(
         default=None, description="set_role: one of the roles the app's manifest declares "
         "(`manifest.roles`); omit it to give them back the app's `default_role`.")
@@ -215,6 +219,9 @@ class AppOut(BaseModel):
     grants: Optional[list[dict]] = None
     # grant_through_app : les tableaux de l'app qu'on n'a pas pu ouvrir (pas gérant).
     skipped: Optional[list[dict]] = None
+    # reads : le journal des lectures (`app_reads`), une ligne par app, tableau,
+    # lecteur, accès et jour UTC — `_lectures`.
+    reads: Optional[list[dict]] = None
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -459,6 +466,9 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
                             granted_by=db.MARQUE_PARTAGE_PAR_DEFAUT)
         return {"app": _view(sub, row), **extra}
 
+    if inp.op == "reads":
+        return _lectures(sub, inp)
+
     if inp.op == "revoke_through_app" and inp.app_id is not None and not _can(
             sub, inp.app_id, "read"):
         # Le GÉRANT d'un tableau retire ce qu'une app en ouvre, sans lire l'app.
@@ -627,6 +637,64 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
     changed = _update(sub, row, inp.expected_rev, title=inp.title.strip() if inp.title else None,
                       manifest=manifest, html=inp.html, thumbnail=thumb)
     return {"app": _view(sub, changed), "target": "live", **extra}
+
+
+def _lectures(sub: str, inp: AppInput) -> dict:
+    """Le journal des lectures d'app (`app_reads`, `docs/apps.md` § Journal des
+    lectures), à qui gouverne ce qu'il concerne — et rien d'autre :
+    - avec `app_id`, à qui GOUVERNE l'app (propriétaire, admin, Manage) : toutes ses
+      lectures (`tables` : celles-là) ; à qui ne la gouverne pas, les seules lectures
+      des tableaux qu'il gouverne — sans même lire l'app, comme `revoke_through_app` ;
+    - sans `app_id`, `tables` = des NUMÉROS de tableaux qu'on gouverne : leurs lectures,
+      par toutes les apps."""
+    jours = int(inp.days or 30)
+    gere = lambda ns: ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, str(ns))
+    if inp.app_id is None:
+        _require(bool(inp.tables) and all(str(t).isdigit() for t in inp.tables),
+                 "missing_tables", "Name an app (`app_id`), or tables by number in `tables`.")
+        ns_ids = sorted({int(t) for t in inp.tables})
+        _require(all(gere(n) for n in ns_ids), "forbidden",
+                 "Only who can share these tables reads who read them.", 403)
+        return {"reads": [_ligne_lue(r) for r in db.apps.reads_of_tables(ns_ids, jours)]}
+    app = db.apps.get(int(inp.app_id))
+    if app is not None and ownership.can_govern(sub, APP_RTYPE, str(app["id"])):
+        org_suspension.exiger(org_de_l_app(app))
+        decl = app.get("manifest", {}).get("tables") or {}
+        ns_ids = None
+        if inp.tables:
+            ns_ids = sorted({int(decl[t]["table"]) if t in decl else int(t)
+                             for t in inp.tables if t in decl or str(t).isdigit()})
+        alias = {str(t.get("table")): a for a, t in decl.items() if isinstance(t, dict)}
+        return {"reads": [_ligne_lue(r, alias) for r in
+                          db.apps.reads_of_app(int(app["id"]), jours, ns_ids)]}
+    # Pas gérant de l'app : les lectures des tableaux qu'on gouverne, seules — ceux que
+    # l'app déclare, ou qu'elle a lus. N'en gouverner aucun : le refus d'une app
+    # illisible (rien ne dit qu'elle existe), ou 403 à qui la lit sans la gérer.
+    _require(app is not None, "unknown_app",
+             f"App {inp.app_id} doesn't exist or isn't shared with you.", 404)
+    lignes = db.apps.reads_of_app(int(app["id"]), jours)
+    candidats = {int(r["ns_id"]) for r in lignes} | {
+        int(t["table"]) for t in ((app.get("manifest") or {}).get("tables") or {}).values()
+        if isinstance(t, dict) and str(t.get("table") or "").isdigit()}
+    if inp.tables:
+        candidats &= {int(t) for t in inp.tables if str(t).isdigit()}
+    gouvernes = {n for n in candidats if gere(n)}
+    if not gouvernes:
+        _require(_can(sub, int(app["id"]), "read"), "unknown_app",
+                 f"App {inp.app_id} doesn't exist or isn't shared with you.", 404)
+        raise AuthzDenied(403, "forbidden", "Only who manages this app, or the tables it "
+                          "reads, reads its journal.")
+    return {"reads": [_ligne_lue(r) for r in lignes if int(r["ns_id"]) in gouvernes]}
+
+
+def _ligne_lue(r: dict, alias: Optional[dict] = None) -> dict:
+    return {"app_id": r["app_id"], "app_title": r["app_title"],
+            "table_id": str(r["ns_id"]), "table_name": r["table_name"],
+            **({"table": alias.get(str(r["ns_id"]))} if alias is not None else {}),
+            "sub": r["sub"], "email": r["email"], "access": r["access"],
+            "day": str(r["day"]), "row_reads": r["row_reads"],
+            "aggregate_reads": r["aggregate_reads"], "rows_served": r["rows_served"],
+            "first_at": r["first_at"], "last_at": r["last_at"]}
 
 
 def _retirer_par_le_tableau(sub: str, inp: AppInput) -> dict:
@@ -851,7 +919,12 @@ def description_app(liens: bool) -> str:
             "access to its tables elsewhere: op=grant_through_app (`app_id`, "
             "`principal_type`, `principal_id`, optional `tables`; you must be able to share "
             "each table) — they then read and write those tables only inside this app, as "
-            "their role allows; op=revoke_through_app removes it.\n"
+            "their role allows; op=revoke_through_app removes it. op=reads (`app_id`, "
+            "optional `tables`, `days` ≤ 180, default 30): who read what through the app, "
+            "per day — counts of row reads, aggregates and rows served, and whether "
+            "through their own access, the app's, or an agent run (managers; a table's "
+            "manager sees that table only, also without `app_id` given `tables` by "
+            "number).\n"
             "Drafts: an app with `drafts_enabled` (op=set_drafts `enabled`) keeps its "
             "viewers on the PUBLISHED version — update and patch write its manifest and "
             "HTML to a DRAFT (`target: \"draft\"` in the reply; title and thumbnail stay "

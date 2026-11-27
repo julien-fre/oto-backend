@@ -74,13 +74,21 @@ stocké est déjà normalisé (`apps_manifeste.forme`) et ses tableaux sont des 
 
 **Session interactive seule** (`allow_api_token=False`) : aucun jeton `oto_`,
 délégation d'agent hébergé comprise — un agent n'est jamais le lecteur d'une app.
+
+**Le journal des lectures** (`app_reads`, `docs/apps.md` § Journal des lectures) : chaque
+lecture SERVIE — seule ou d'un lot — est notée pendant l'appel, en mémoire (`_LUES`), puis
+écrite APRÈS lui, hors de son emprunt au pool, en une requête (`_call_journalise`) : le
+chemin de lecture reste lecture seule et à un emprunt. Une écriture du journal qui
+échoue est journalisée (Sentry) ; la lecture est servie quand même.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
+import logging
 import secrets
+from contextvars import ContextVar
 from typing import Any, Literal, Optional
 
 import psycopg
@@ -92,6 +100,8 @@ from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .apps_manifeste import DATES, lisible, org_de_l_app, tableau_de_l_org
 from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 APP_RTYPE = "app"
 MAX_ROWS = 200
@@ -830,6 +840,78 @@ def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
 _LECTURES_D_UN_EMPRUNT = frozenset({"read_rows", "read_aggregate"})
 
 
+# Les lectures SERVIES de l'appel en cours, notées par `_noter_lu` et écrites au journal
+# par `_call_journalise` une fois l'appel rendu. None hors de lui : rien n'est noté.
+_LUES: ContextVar[Optional[list]] = ContextVar("lectures_d_app", default=None)
+
+
+def _noter_lu(app: dict, alias: Optional[str], action: str, out: dict, portee) -> None:
+    lues = _LUES.get()
+    if lues is None:
+        return
+    t = (app["manifest"].get("tables") or {}).get(alias) or {}
+    ns = str(t.get("table") or "")
+    if not ns.isdigit():
+        return
+    lues.append((int(ns), "app" if ns in portee.servis else "own",
+                 action == "read_rows", len(out.get("rows") or ())))
+
+
+def _call_journalise(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
+    """Le handler de la route : l'appel (`_call`), PUIS le journal de ce qu'il a servi —
+    hors de son emprunt au pool, qui reste en lecture seule. Un appel refusé n'a rien
+    servi (une lecture seule refusée lève ; les refus d'un lot ne sont pas notés)."""
+    lues: list = []
+    jeton = _LUES.set(lues)
+    try:
+        out = _call(ctx, inp)
+    finally:
+        _LUES.reset(jeton)
+    if lues:
+        _journaliser(int(inp.app_id), ctx.sub, lues)
+    return out
+
+
+def _journaliser(app_id: int, sub: str, lues: list) -> None:
+    """Somme par `(tableau, accès)` — deux lectures d'un même tableau dans un lot font
+    UNE ligne de la requête — et l'écrit. Jamais un refus de la lecture déjà servie."""
+    sommes: dict[tuple, list] = {}
+    for ns, acces, lignes_lues, n in lues:
+        c = sommes.setdefault((ns, acces), [0, 0, 0])
+        c[0 if lignes_lues else 1] += 1
+        c[2] += n
+    try:
+        db.apps.note_reads(app_id, sub, [(ns, acc, *c) for (ns, acc), c in sommes.items()])
+    except Exception:
+        logger.error("journal des lectures d'app : écriture en échec (app %s), la lecture "
+                     "est servie sans être notée", app_id, exc_info=True)
+
+
+def _noter_run(sub: str, ns: str) -> None:
+    """Un RUN lancé depuis une app vient d'ouvrir ce tableau par l'accès de l'app
+    (`par_l_app.servi`, hors portée d'appel) : une ouverture de plus au journal, sous
+    l'app et le lanceur (`access = 'run'`, sans compte de lignes — le run lit par les
+    outils de tableau). Jamais dans une portée de connexion partagée : une lecture
+    groupée (`reuse_connection`) reste lecture seule, une transaction d'écriture ne
+    s'alourdit pas du journal — l'ouverture n'est alors pas notée, et le dit."""
+    from .. import verrou_org
+
+    v = verrou_org.travail_de_la_requete()
+    if v is None or v.job_id is None or v.sub != sub:
+        return
+    if db.connexion_partagee():
+        logger.warning("journal des lectures d'app : ouverture du tableau %s par un run "
+                       "non notée (connexion partagée)", ns)
+        return
+    try:
+        app_id = db.apps.app_of_run(int(v.job_id), sub)
+        if app_id is not None:
+            db.apps.note_reads(int(app_id), sub, [(int(ns), "run", 1, 0, 0)])
+    except Exception:
+        logger.error("journal des lectures d'app : ouverture par un run non notée "
+                     "(tableau %s)", ns, exc_info=True)
+
+
 def _call(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     if inp.action == "batch":
         return _lot(ctx, inp)
@@ -870,11 +952,12 @@ def _lot(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     with db.reuse_connection():
         app = _app_pour(ctx, inp.app_id, inp.draft, as_role=inp.as_role)
         results = []
-        with _par_l_app(ctx.sub, app):
+        with _par_l_app(ctx.sub, app) as portee:
             for r in reads:
                 try:
                     lu = _lecture_du_lot(inp, r)
                     out = _lire(ctx, app, lu.action, lu.table, lu.options or {})
+                    _noter_lu(app, lu.table, lu.action, out, portee)
                     results.append({"id": r["id"], "ok": True, **out})
                 except AuthzDenied as d:
                     results.append({"id": r["id"], "ok": False, "status": d.status,
@@ -938,6 +1021,8 @@ def _appel(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
                     as_role=inp.as_role)
     with _par_l_app(ctx.sub, app) as portee:
         out = _appel_de(ctx, inp, app)
+        if inp.action in _LECTURES_D_UN_EMPRUNT:
+            _noter_lu(app, inp.table, inp.action, out, portee)
         if (inp.action in GESTES and isinstance(out, dict) and inp.table
                 and str(((app["manifest"].get("tables") or {}).get(inp.table) or {})
                         .get("table")) in portee.servis):
@@ -1147,7 +1232,7 @@ def _lire(ctx: ResolvedCtx, app: dict, action: str, alias: Optional[str], o: dic
 
 CAPABILITIES += [
     Capability(
-        key="me.app.call", handler=_call, Input=AppCallInput, Output=AppCallOut,
+        key="me.app.call", handler=_call_journalise, Input=AppCallInput, Output=AppCallOut,
         authz=ORG_MEMBER,
         description=(
             "What an open app asks, relayed by the front on behalf of its viewer: read "
@@ -1217,7 +1302,7 @@ CAPABILITIES += [
 
 def _enregistrer() -> None:
     from ..datastore import par_l_app
-    par_l_app.enregistrer_run(_droit_du_run)
+    par_l_app.enregistrer_run(_droit_du_run, _noter_run)
 
 
 _enregistrer()
