@@ -46,17 +46,27 @@ class EmptyResultMiddleware(Middleware):
             return result
         # oto#237 : un COMPTAGE demandé rend son nombre, 0 compris — même forme que
         # pour 1, jamais la phrase d'une recherche vide.
-        if _comptage_demande(context.message):
+        if _comptage_demande(context.message) or _lecture_structuree(context.message):
             return result
         return redaction.render_empty(result, getattr(context.message, "name", "") or "")
 
 
-def _comptage_demande(message) -> bool:
-    """L'appel demande-t-il un comptage ? Sous `oto_call` (ADR 0036), c'est la CIBLE
-    et les arguments qu'il lui transmet qui décident, pas le dispatch."""
+def _cible_et_arguments(message) -> tuple[str, dict]:
+    """L'outil VISÉ et ses arguments : sous `oto_call` (ADR 0036), c'est la cible et
+    ce qu'elle reçoit qui décident, pas le dispatch."""
     nom = getattr(message, "name", "") or ""
     args = getattr(message, "arguments", None) or {}
     cible = _cible(nom, args)
     if cible != nom:
         args = args.get("arguments") or {}
-    return redaction.est_un_comptage(cible, args)
+    return cible, args
+
+
+def _comptage_demande(message) -> bool:
+    """L'appel demande-t-il un comptage ?"""
+    return redaction.est_un_comptage(*_cible_et_arguments(message))
+
+
+def _lecture_structuree(message) -> bool:
+    """L'appel lit-il des cellules (`LECTURES_STRUCTUREES`) ? Signal 1471."""
+    return redaction.est_une_lecture_structuree(*_cible_et_arguments(message))
