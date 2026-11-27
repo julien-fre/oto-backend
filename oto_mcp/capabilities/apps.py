@@ -459,6 +459,11 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
                             granted_by=db.MARQUE_PARTAGE_PAR_DEFAUT)
         return {"app": _view(sub, row), **extra}
 
+    if inp.op == "revoke_through_app" and inp.app_id is not None and not _can(
+            sub, inp.app_id, "read"):
+        # Le GÉRANT d'un tableau retire ce qu'une app en ouvre, sans lire l'app.
+        return _retirer_par_le_tableau(sub, inp)
+
     row = _app_or_404(sub, inp.app_id,
                       "read" if inp.op in ("get", "revisions", "read_file", "put_file",
                                            "roles", "set_role", "grant_through_app",
@@ -624,12 +629,30 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
     return {"app": _view(sub, changed), "target": "live", **extra}
 
 
+def _retirer_par_le_tableau(sub: str, inp: AppInput) -> dict:
+    """`revoke_through_app` par qui GOUVERNE les tableaux (`tables` : leurs NUMÉROS, tels
+    que `oto_resource op=get` les liste sous `through_app`), sans droit sur l'app."""
+    _require(inp.principal_type is not None and bool(inp.principal_id), "missing_principal",
+             "`principal_type` and `principal_id` name whose access to remove.")
+    _require(bool(inp.tables) and all(str(t).isdigit() for t in inp.tables), "missing_tables",
+             "Without access to the app, name the tables by number in `tables`.")
+    _require(all(ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, str(t))
+                 for t in inp.tables), "forbidden",
+             "Only who can share these tables removes access to them.", 403)
+    n = db.apps.revoke_through_app_tables(int(inp.app_id), inp.principal_type,
+                                          str(inp.principal_id), [int(t) for t in inp.tables])
+    return {"ok": n > 0}
+
+
 def _roles(sub: str, row: dict, inp: AppInput) -> dict:
     """Les rôles d'app de ses partages (`apps_roles.py`) : les lire, en poser un. Le
     plan GOUVERNANCE, comme repartager (propriétaire, admin, Manage) : choisir ce qu'un
     lecteur voit, c'est choisir à qui l'app s'ouvre. Un rôle se pose sur un partage
     EXISTANT, et doit être déclaré par l'app (publiée, ou son brouillon : on prépare
     les rôles avant de publier)."""
+    if inp.op == "revoke_through_app" and not ownership.can_govern(sub, APP_RTYPE,
+                                                                   str(row["id"])):
+        return _retirer_par_le_tableau(sub, inp)
     _require(ownership.can_govern(sub, APP_RTYPE, str(row["id"])), "forbidden",
              "Only who manages this app chooses its people's roles.", 403)
     manifest = row.get("manifest") or {}
@@ -640,7 +663,14 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
     if inp.op in ("grant_through_app", "revoke_through_app"):
         vivants = {(g["principal_type"], g["principal_id"])
                    for g in db.apps.app_role_grants(str(row["id"]))}
-        if inp.op == "revoke_through_app":
+        if inp.op == "revoke_through_app" and inp.tables:
+            # Des tableaux nommés (noms de l'app, ou numéros) : ceux-là seulement.
+            decl = manifest.get("tables") or {}
+            ns = [int(decl[t]["table"]) if t in decl else int(t) for t in inp.tables
+                  if t in decl or str(t).isdigit()]
+            db.apps.revoke_through_app_tables(int(row["id"]), inp.principal_type,
+                                              str(inp.principal_id), ns)
+        elif inp.op == "revoke_through_app":
             db.apps.revoke_through_app(int(row["id"]), inp.principal_type, str(inp.principal_id))
         else:
             _require((inp.principal_type, str(inp.principal_id)) in vivants, "not_shared",

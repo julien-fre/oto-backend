@@ -699,6 +699,27 @@ def revoke_through_app(app_id: int, principal_type: str, principal_id: str) -> i
         ).rowcount
 
 
+def through_app_of_table(ns_id: int) -> list[dict]:
+    """Chaque accès par une app posé sur ce tableau, avec l'app (pour son gérant)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT a.app_id, ap.title AS app_title, a.principal_type, a.principal_id, "
+            "a.permission FROM app_table_access a JOIN apps ap ON ap.id = a.app_id "
+            "WHERE a.ns_id = %s ORDER BY a.app_id, a.principal_type, a.principal_id",
+            (int(ns_id),),
+        ).fetchall()
+
+
+def revoke_through_app_tables(app_id: int, principal_type: str, principal_id: str,
+                              ns_ids: list[int]) -> int:
+    with _connect() as conn:
+        return conn.execute(
+            "DELETE FROM app_table_access WHERE app_id = %s AND principal_type = %s "
+            "AND principal_id = %s AND ns_id = ANY(%s)",
+            (int(app_id), principal_type, str(principal_id), [int(n) for n in ns_ids]),
+        ).rowcount
+
+
 def through_app_of(app_id: int) -> list[dict]:
     """Chaque accès par l'app posé sur cette app (pour `op=roles`)."""
     with _connect() as conn:
@@ -706,3 +727,15 @@ def through_app_of(app_id: int) -> list[dict]:
             "SELECT ns_id, principal_type, principal_id, permission FROM app_table_access "
             "WHERE app_id = %s ORDER BY principal_type, principal_id, ns_id", (int(app_id),),
         ).fetchall()
+
+
+def app_of_run(job_id: int, sub: str) -> Optional[int]:
+    """L'app depuis laquelle `sub` a lancé ce travail (consentement `start_agent` brûlé
+    sur lui), None sinon."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT app_id FROM app_consents WHERE job_id = %s AND sub = %s "
+            "AND action = 'start_agent' AND used_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (int(job_id), sub),
+        ).fetchone()
+    return int(row["app_id"]) if row else None

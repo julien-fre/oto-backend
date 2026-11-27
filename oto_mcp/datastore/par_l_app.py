@@ -47,13 +47,26 @@ def portee(p: Portee) -> Iterator[Portee]:
         _PORTEE.reset(jeton)
 
 
+# Le RUN d'un agent lancé depuis une app (`apps_appel._droit_du_run`, enregistré par la
+# capacité : la couche datastore ne remonte pas vers les capacités). `(sub, ns_id) ->
+# "read" | None`.
+_DU_RUN: Optional[Callable[[str, str], Optional[str]]] = None
+
+
+def enregistrer_run(f: Callable[[str, str], Optional[str]]) -> None:
+    global _DU_RUN
+    _DU_RUN = f
+
+
 def droit(sub: Optional[str], ns_id: str) -> Optional[str]:
-    """Ce que la portée en cours ouvre à `sub` sur ce tableau ; None hors portée, pour un
-    autre compte, ou sinon."""
-    p = _PORTEE.get()
-    if p is None or sub is None or sub != p.sub:
+    """Ce que la portée en cours ouvre à `sub` sur ce tableau — l'appel d'une app, ou le
+    run d'un agent que `sub` a lancé depuis une app ; None sinon."""
+    if sub is None:
         return None
-    return p.droit(str(ns_id))
+    p = _PORTEE.get()
+    if p is not None:
+        return p.droit(str(ns_id)) if sub == p.sub else None
+    return _DU_RUN(sub, str(ns_id)) if _DU_RUN is not None else None
 
 
 def servi(ns_id: str) -> None:

@@ -983,6 +983,39 @@ def _par_l_app(sub: str, app: dict):
     return par_l_app.portee(par_l_app.Portee(sub, droit))
 
 
+def _droit_du_run(sub: str, ns: str) -> Optional[str]:
+    """L'accès par l'app d'un RUN : l'agent qu'un lecteur a lancé DEPUIS une app
+    (consentement `start_agent` brûlé sur ce travail, `app_consents.job_id`) lit, le
+    temps de son run, ce que ce lecteur lit par CETTE app — jugé à chaque fois comme
+    l'appel le jugerait (partage vivant de l'app, rôle, auteur qui peut partager le
+    tableau). Deux bornes de plus, parce que l'agent lit par les outils de tableau,
+    qui ne projettent pas : LECTURE seule (une écriture d'agent ne passerait pas par
+    `set` / `add`), et seulement d'un tableau que le rôle ouvre ENTIER (sans liste de
+    champs) — sinon l'agent verrait des champs que son lanceur ne voit pas."""
+    from .. import verrou_org
+
+    v = verrou_org.travail_de_la_requete()
+    if v is None or v.job_id is None or v.sub != sub:
+        return None
+    app_id = db.apps.app_of_run(int(v.job_id), sub)
+    if app_id is None:
+        return None
+    app = db.apps.get_for_call(int(app_id))
+    if (app is None or app.get("archived_at") is not None or not app.get("updated_by")
+            or not ownership.can_access(sub, APP_RTYPE, str(app_id), "read")):
+        return None
+    app = _au_role(sub, app, None)
+    t = next((t for t in (app["manifest"].get("tables") or {}).values()
+              if isinstance(t, dict) and str(t.get("table")) == str(ns)), None)
+    if t is None or t.get("fields") is not None:
+        return None
+    if not ownership.can_govern(app["updated_by"], ownership.TYPE_RESSOURCE_DATASTORE, str(ns)):
+        return None
+    d = db.apps.through_app_access(int(app_id), int(ns),
+                                   list(ownership.accessor_scope(sub).principal_pairs()))
+    return "read" if d else None
+
+
 def _appel_de(ctx: ResolvedCtx, inp: AppCallInput, app: dict) -> dict:
     o = inp.options or {}
 
@@ -1180,3 +1213,11 @@ CAPABILITIES += [
         ),
     ),
 ]
+
+
+def _enregistrer() -> None:
+    from ..datastore import par_l_app
+    par_l_app.enregistrer_run(_droit_du_run)
+
+
+_enregistrer()

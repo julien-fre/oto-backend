@@ -142,8 +142,17 @@ par défaut tous ceux que l'app déclare), `op=revoke_through_app` pour le retir
   l'historique des lignes garde le lecteur.
 - **Part avec le partage de l'app** : l'accès ne compte que si le MÊME principal tient
   un partage VIVANT de l'app (retrait, échéance).
-- ⚠️ **Un agent lancé depuis l'app n'en hérite pas** : son run lit les tableaux avec les
-  droits de qui l'a lancé, hors de toute portée.
+- **Un agent lancé depuis l'app en hérite, en LECTURE** (`apps_appel._droit_du_run`) :
+  le run d'un travail sur lequel le lecteur a brûlé un consentement `start_agent` de
+  cette app (`app_consents.job_id`, travail de la requête `verrou_org`) lit ce que ce
+  lecteur lit par l'app, rejugé à chaque résolution (partage vivant, rôle, auteur qui
+  peut partager le tableau). Deux bornes de plus, parce que l'agent lit par les outils
+  de tableau, qui ne projettent pas : **lecture seule**, et seulement d'un tableau que
+  le rôle ouvre **entier** (sans liste de champs). Un tableau aux champs bornés ne lui
+  est pas ouvert.
+- **Le gérant du tableau le voit et le retire** : `oto_resource op=get` d'un tableau
+  rend `through_app` (app, principal, droit) ; `oto_apps op=revoke_through_app` avec
+  `tables` (numéros) lui suffit, sans aucun droit sur l'app.
 
 Un périmètre de LIGNES par partage (« sa fiche seulement ») se posera sur cette même
 portée : il n'est pas dans ce lot.

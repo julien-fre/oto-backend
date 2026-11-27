@@ -276,3 +276,150 @@ def test_la_portee_ne_sert_que_son_lecteur(monde):
         assert par_l_app.droit(m["partenaire"], "1") == "write"
         assert par_l_app.droit(m["auteur"], "1") is None
         assert par_l_app.droit(None, "1") is None
+
+
+# ── Le run d'un agent lancé depuis l'app ─────────────────────────────────────────
+
+def _run_depuis_l_app(m, sub, job_id=None):
+    """Un travail que `sub` a lancé depuis l'app : son consentement `start_agent`
+    brûlé sur ce travail — ce que `_geste` écrit au lancement."""
+    from oto_mcp import db
+    job_id = job_id or int(uuid.uuid4().int % 10**9)
+    cid = db.apps.consent_issue(m["app"], sub, "start_agent", "f", uuid.uuid4().hex, 120)
+    with db._connect() as conn:
+        conn.execute("UPDATE app_consents SET used_at = now(), job_id = %s "
+                     "WHERE app_id = %s AND sub = %s AND action = 'start_agent' "
+                     "AND job_id IS NULL", (job_id, m["app"], sub))
+    return job_id
+
+
+def _dans_le_run(sub, job_id):
+    from oto_mcp import verrou_org
+    from contextlib import contextmanager
+
+    @contextmanager
+    def ctx():
+        j = verrou_org.poser(verrou_org.Verrou(sub=sub, org_id=None, job_id=job_id))
+        try:
+            yield
+        finally:
+            verrou_org._COURANT.reset(j)
+    return ctx()
+
+
+def _manifeste_entier(m):
+    """Le rôle du partenaire ouvre le tableau ENTIER (sans liste de champs)."""
+    from oto_mcp import db
+    with db._connect() as conn:
+        conn.execute("UPDATE apps SET manifest = jsonb_set(manifest, "
+                     "'{roles,partner,tables,fiches}', '{}'::jsonb) WHERE id = %s",
+                     (m["app"],))
+        conn.execute("UPDATE apps SET manifest = manifest #- '{tables,fiches,fields}' "
+                     "WHERE id = %s", (m["app"],))
+
+
+def test_l_agent_lance_depuis_l_app_lit_ce_que_son_lanceur_y_lit(monde):
+    from oto_mcp.datastore.core import DatastoreNotFound, DatastoreReadOnly, make_store
+    m = monde
+    _ouvrir(m)
+    _manifeste_entier(m)
+    job = _run_depuis_l_app(m, m["partenaire"])
+    with _dans_le_run(m["partenaire"], job):
+        assert make_store(m["partenaire"]).get_schema(str(m["ns_id"]))
+        with pytest.raises((DatastoreReadOnly, DatastoreNotFound)):
+            make_store(m["partenaire"]).append_row(str(m["ns_id"]), {"name": "x"})
+    # Un AUTRE travail du même compte, pas lancé depuis l'app : rien.
+    with _dans_le_run(m["partenaire"], job + 1):
+        with pytest.raises(DatastoreNotFound):
+            make_store(m["partenaire"]).get_schema(str(m["ns_id"]))
+
+
+def test_l_agent_n_herite_pas_d_un_tableau_aux_champs_bornes(monde):
+    from oto_mcp.datastore.core import DatastoreNotFound, make_store
+    m = monde
+    _ouvrir(m)                      # le rôle partner ne lit que name, status
+    job = _run_depuis_l_app(m, m["partenaire"])
+    with _dans_le_run(m["partenaire"], job):
+        with pytest.raises(DatastoreNotFound):
+            make_store(m["partenaire"]).get_schema(str(m["ns_id"]))
+
+
+# ── Le gérant du tableau voit et retire ──────────────────────────────────────────
+
+def test_le_gerant_du_tableau_voit_qui_le_lit_par_une_app_et_le_retire(monde):
+    from oto_mcp import db, org_store
+    from oto_mcp.capabilities import resources as R
+    from oto_mcp.capabilities.resources_v2 import ResourceInputV2
+    m = monde
+    _ouvrir(m)
+    vu = R._resources(_ctx(m, m["auteur"]), ResourceInputV2(
+        op="get", resource_type="datastore_namespace", resource_id=str(m["ns_id"])))
+    assert [(a["app_id"], a["principal_id"], a["permission"]) for a in vu["through_app"]] \
+        == [(m["app"], m["partenaire"], "write")]
+    # Un gérant du TABLEAU, sans aucun droit sur l'app, retire l'accès.
+    g = f"gt_{uuid.uuid4().hex[:6]}"
+    db.upsert_user(g, email=f"{g}@example.test")
+    org_store.add_org_member(m["org"], g, "org_member")
+    db.grant_resource("datastore_namespace", str(m["ns_id"]), "user", g, role="manager",
+                      granted_by=m["auteur"])
+    out = _apps(m, g, op="revoke_through_app", principal_type="user",
+                principal_id=m["partenaire"], tables=[str(m["ns_id"])])
+    assert out["ok"] is True
+    _refus(_lire, m, m["partenaire"])
+
+
+def test_sans_gouverner_le_tableau_on_ne_retire_rien(monde):
+    from oto_mcp import db
+    m = monde
+    _ouvrir(m)
+    x = f"x_{uuid.uuid4().hex[:6]}"
+    db.upsert_user(x, email=f"{x}@example.test")
+    e = _refus(_apps, m, x, op="revoke_through_app", principal_type="user",
+               principal_id=m["partenaire"], tables=[str(m["ns_id"])])
+    assert e.code == "forbidden"
+    assert _lire(m, m["partenaire"])["rows"]
+
+
+# ── Par les VRAIES routes REST (authentification, garde d'org, contexte de requête) ──
+
+class _Verifier:
+    def __init__(self, sub):
+        self.sub = sub
+
+    async def verify_token(self, token):
+        import types
+        return types.SimpleNamespace(claims={"sub": self.sub})
+
+
+def _client(sub, org):
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+    from oto_mcp.api import routes as api_routes
+    c = TestClient(Starlette(routes=list(api_routes.make_routes(_Verifier(sub)))))
+    c.headers.update({"Authorization": "Bearer jwt-de-test", "Origin": HOTE,
+                      "X-Oto-Org": str(org)})
+    return c
+
+
+def test_par_les_routes_rest_l_app_sert_et_les_tableaux_refusent(monde):
+    from oto_mcp import org_store
+    m = monde
+    _ouvrir(m)
+    org_store.set_active_org(m["partenaire"], m["org_p"])
+    c = _client(m["partenaire"], m["org_p"])
+    r = c.post(f"/api/me/apps/{m['app']}/call", json={"action": "read_rows", "table": "fiches"})
+    assert r.status_code == 200, r.text
+    ligne = r.json()["rows"][0]
+    assert ligne["name"] == "Acme" and "notes" not in ligne
+    # Les routes de tableau, elles, ne le connaissent pas.
+    for chemin in (f"/api/datastores/{m['ns_id']}", f"/api/datastores/{m['ns_id']}/rows"):
+        r = c.get(chemin)
+        assert r.status_code in (403, 404), (chemin, r.status_code, r.text)
+    # Et un geste par la route : consentement puis appel.
+    corps = {"action": "write_cell", "table": "fiches", "row_id": m["row"], "field": "status",
+             "value": "won", "expected_revision": m["rev"]}
+    r = c.post(f"/api/me/apps/{m['app']}/consent", json=corps)
+    assert r.status_code == 200, r.text
+    r = c.post(f"/api/me/apps/{m['app']}/call", json={**corps, "consent": r.json()["consent"]})
+    assert r.status_code == 200, r.text
+    assert r.json().get("through_app") is True
