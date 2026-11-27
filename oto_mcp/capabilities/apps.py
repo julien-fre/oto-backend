@@ -61,13 +61,15 @@ MAX_TITLE = 200
 MAX_PROJECTS = 200
 _THUMB_KEYS = {"image", "color", "emoji", "design"}
 _ECRITURES = frozenset({"create", "update", "patch", "archive", "unarchive", "restore",
-                        "file", "unfile", "publish", "delete_draft", "set_drafts"})
+                        "file", "unfile", "publish", "delete_draft", "set_drafts",
+                        "set_role"})
 
 
 class AppInput(BaseModel):
     op: Literal["list", "get", "create", "update", "patch", "archive", "unarchive",
                 "revisions", "revision", "restore", "validate", "file", "unfile",
-                "read_file", "put_file", "publish", "delete_draft", "set_drafts"]
+                "read_file", "put_file", "publish", "delete_draft", "set_drafts",
+                "roles", "set_role"]
     project_id: Optional[int] = Field(
         default=None, description="create: also file the new app in this project. "
         "file / unfile: the project. list: only the apps filed in it.")
@@ -113,6 +115,14 @@ class AppInput(BaseModel):
     media_type: Optional[str] = Field(
         default=None, description="put_file: its type (`text/csv`, `application/pdf`…); "
         "judged on the bytes anyway.")
+    principal_type: Optional[Literal["user", "group", "org"]] = Field(
+        default=None, description="set_role: who the app is shared with — a person "
+        "(`user`), a team (`group`) or an organization (`org`), as op=roles lists them.")
+    principal_id: Optional[str] = Field(
+        default=None, description="set_role: their id, as op=roles lists it.")
+    role: Optional[str] = Field(
+        default=None, description="set_role: one of the roles the app's manifest declares "
+        "(`manifest.roles`); omit it to give them back the app's `default_role`.")
 
 
 class AppCard(BaseModel):
@@ -147,6 +157,10 @@ class AppView(AppCard):
     drafts_enabled: bool = False
     published_at: Optional[Any] = None
     version_note: Optional[str] = None
+    # Le rôle d'app qui borne l'appelant (`apps_roles.py`) : `role`, `role_label`,
+    # `sections` (None = tout) — ce que l'app lit par `oto.access()`. Le manifeste
+    # servi est déjà resserré à ce rôle.
+    access: Optional[dict] = None
 
 
 class AppDraft(BaseModel):
@@ -191,6 +205,11 @@ class AppOut(BaseModel):
     # patch : un reçu, jamais le HTML — l'op existe pour ne pas le faire transiter.
     rev: Optional[str] = None
     replaced: Optional[int] = None
+    # roles / set_role : les rôles que l'app déclare (`[{key, label}]`, `default_role`)
+    # et chacun de ses partages avec son rôle d'app (None = le rôle par défaut).
+    roles: Optional[list[dict]] = None
+    default_role: Optional[str] = None
+    grants: Optional[list[dict]] = None
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -314,9 +333,17 @@ def _cards(sub: str, rows: list[dict], writable: Optional[set[int]] = None) -> l
 
 
 def _view(sub: str, row: dict) -> dict:
-    from . import apps_appel
+    from . import apps_appel, apps_roles
     row = _cards(sub, [row])[0]
     row["can_use"] = bool(row.get("can_edit")) or apps_appel.peut_cliquer(sub, int(row["id"]))
+    if "manifest" in row:
+        # Un lecteur reçoit le manifeste de SON rôle, sans la définition des rôles ;
+        # qui peut modifier l'app le reçoit entier.
+        entier = row["manifest"] or {}
+        role = None if row.get("can_edit") else apps_roles.role_du_lecteur(sub, row)
+        row["access"] = apps_roles.acces(entier, role)
+        if not row.get("can_edit"):
+            row["manifest"] = apps_roles.resserrer(entier, role)
     return {k: row[k] for k in AppView.model_fields if k in row}
 
 
@@ -428,10 +455,14 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         return {"app": _view(sub, row), **extra}
 
     row = _app_or_404(sub, inp.app_id,
-                      "read" if inp.op in ("get", "revisions", "read_file", "put_file") else "write")
+                      "read" if inp.op in ("get", "revisions", "read_file", "put_file",
+                                           "roles", "set_role") else "write")
     # L'org de l'APP, en plus de celle de l'appel (gardée par l'adaptateur) : l'app d'une
     # org suspendue se ferme à tous, invités d'une autre org compris.
     org_suspension.exiger(org_de_l_app(row))
+
+    if inp.op in ("roles", "set_role"):
+        return _roles(sub, row, inp)
 
     if inp.op == "get":
         view = _view(sub, row)
@@ -587,6 +618,38 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
     return {"app": _view(sub, changed), "target": "live", **extra}
 
 
+def _roles(sub: str, row: dict, inp: AppInput) -> dict:
+    """Les rôles d'app de ses partages (`apps_roles.py`) : les lire, en poser un. Le
+    plan GOUVERNANCE, comme repartager (propriétaire, admin, Manage) : choisir ce qu'un
+    lecteur voit, c'est choisir à qui l'app s'ouvre. Un rôle se pose sur un partage
+    EXISTANT, et doit être déclaré par l'app (publiée, ou son brouillon : on prépare
+    les rôles avant de publier)."""
+    _require(ownership.can_govern(sub, APP_RTYPE, str(row["id"])), "forbidden",
+             "Only who manages this app chooses its people's roles.", 403)
+    manifest = row.get("manifest") or {}
+    if inp.op == "set_role":
+        _require(inp.principal_type is not None and bool(inp.principal_id), "missing_principal",
+                 "`principal_type` and `principal_id` name the share to set a role on.")
+        if inp.role is not None:
+            brouillon = db.app_versions.draft(int(row["id"]))
+            declares = set(manifest.get("roles") or {}) | set(
+                ((brouillon or {}).get("manifest") or {}).get("roles") or {})
+            _require(inp.role in declares, "unknown_role",
+                     f"This app declares no role “{inp.role}”: add it to `manifest.roles`.")
+        _require(db.apps.set_app_role(str(row["id"]), inp.principal_type,
+                                      str(inp.principal_id), inp.role),
+                 "not_shared", "This app isn't shared with them: share it first, then set "
+                 "their role.", 404)
+    from .apps_roles import ordre
+    roles = manifest.get("roles") or {}
+    return {"roles": [{"key": k, "label": roles[k].get("label") or k} for k in ordre(manifest)],
+            "default_role": manifest.get("default_role"),
+            "grants": [{"principal_type": g["principal_type"], "principal_id": g["principal_id"],
+                        "share_role": g["role"], "app_role": g["app_role"],
+                        "expires_at": g["expires_at"]}
+                       for g in db.apps.app_role_grants(str(row["id"]))]}
+
+
 def _thumb_of(inp: AppInput) -> Any:
     if inp.clear_thumbnail:
         return None
@@ -694,6 +757,15 @@ def description_app(liens: bool) -> str:
             "unfile (`app_id`, `project_id`) / validate (`manifest`, and `app_id` for an "
             "existing app, optional `html`: the problems a create would refuse, nothing "
             "written).\n"
+            "Roles: the manifest may declare `roles` {name: {label, tables?: {table: true | "
+            "{fields?, set?, add?}}, agents?: [names], files?, sections?: [names]}} and a "
+            "required `default_role`; each role only NARROWS the manifest (a key it omits "
+            "keeps the manifest's). A viewer who can't edit the app gets the role set on "
+            "their share (op=set_role `app_id`, `principal_type`, `principal_id`, `role`; "
+            "op=roles lists roles and shares; managers only), else `default_role` — enforced "
+            "on every app call; op=get returns the role's narrowed manifest and `access` {role, "
+            "sections}. Sections are display only. A role only narrows what the app "
+            "serves: a viewer still needs their own access to the tables.\n"
             "Drafts: an app with `drafts_enabled` (op=set_drafts `enabled`) keeps its "
             "viewers on the PUBLISHED version — update and patch write its manifest and "
             "HTML to a DRAFT (`target: \"draft\"` in the reply; title and thumbnail stay "

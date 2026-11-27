@@ -608,3 +608,48 @@ def file_of(app_id: int, sub: str, file_id: int) -> Optional[dict]:
             f"SELECT {_FICHIER} FROM app_files WHERE id = %s AND app_id = %s AND sub = %s",
             (file_id, app_id, sub),
         ).fetchone()
+
+
+def app_roles_of(app_id: str, principals: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Les rôles d'app (`resource_grants.app_role`) que ces principals tiennent sur l'app,
+    par partage VIVANT : `[(principal_type, app_role)]`, rôle posé seulement
+    (`capabilities/apps_roles.role_du_lecteur`). UNE requête pour tous les principals."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+
+    if not principals:
+        return []
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT g.principal_type, g.app_role FROM resource_grants g "
+            "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
+            "  ON g.principal_type = pr.t AND g.principal_id = pr.i "
+            "WHERE g.resource_type = 'app' AND g.resource_id = %s "
+            f"AND g.app_role IS NOT NULL AND {PARTAGE_VIVANT_G}",
+            ([p[0] for p in principals], [str(p[1]) for p in principals], str(app_id)),
+        ).fetchall()
+    return [(r["principal_type"], r["app_role"]) for r in rows]
+
+
+def set_app_role(app_id: str, principal_type: str, principal_id: str,
+                 role: Optional[str]) -> bool:
+    """Pose (ou retire, `role` None) le rôle d'app du partage de ce principal. Faux = ce
+    principal n'a aucun partage de l'app : un rôle ne se pose que sur un partage."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE resource_grants SET app_role = %s WHERE resource_type = 'app' "
+            "AND resource_id = %s AND principal_type = %s AND principal_id = %s RETURNING 1",
+            (role, str(app_id), principal_type, str(principal_id)),
+        ).fetchone()
+    return row is not None
+
+
+def app_role_grants(app_id: str) -> list[dict]:
+    """Les partages VIVANTS de l'app avec leur rôle d'app (NULL = le rôle par défaut)."""
+    from ._partage_vivant import PARTAGE_VIVANT
+
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT principal_type, principal_id, role, app_role, expires_at "
+            "FROM resource_grants WHERE resource_type = 'app' AND resource_id = %s "
+            f"AND {PARTAGE_VIVANT} ORDER BY principal_type, principal_id", (str(app_id),),
+        ).fetchall()

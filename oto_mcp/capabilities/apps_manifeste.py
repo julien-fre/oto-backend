@@ -123,6 +123,9 @@ def forme(raw: Any) -> tuple[dict, list[str]]:
         "agents": agents,
         "files": raw.get("files") is True,
     }
+    # Les rôles (`apps_roles.py`) : jugés contre ce que le manifeste vient d'ouvrir.
+    from . import apps_roles
+    problems += apps_roles.forme(raw, clean, ALIAS.match)
     return clean, problems
 
 
@@ -187,7 +190,10 @@ def auteur(sub: str, project_org: Optional[int], clean: dict) -> list[str]:
     from ..datastore.core import DatastoreAmbigu, DatastoreNotFound, make_store
     from ..datastore.errors import TableauParNom
 
+    from .apps_roles import champs_nommes
+
     problems: list[str] = []
+    roles_nomment = champs_nommes(clean)
     store = make_store(sub)
     for alias, t in clean["tables"].items():
         try:
@@ -208,7 +214,8 @@ def auteur(sub: str, project_org: Optional[int], clean: dict) -> list[str]:
         declared = {f.get("key") for f in (schema or {}).get("fields") or [] if isinstance(f, dict)}
         if not declared:
             continue
-        named = set(t["fields"] or []) | set(t["set"]) | set(t["add"])
+        named = (set(t["fields"] or []) | set(t["set"]) | set(t["add"])
+                 | roles_nomment.get(alias, set()))
         unknown = sorted(n for n in named if n not in declared)
         if unknown:
             problems.append(f"tables.{alias}: no such field: {', '.join(unknown)}.")

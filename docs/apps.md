@@ -78,6 +78,50 @@ d'`ownership` (`apps.owner_type/owner_id`, partages dans `resource_grants`,
   après le tag. Index `apps (owner_id)` et `app_projects (filed_by)` : la fusion de
   comptes repointe ces colonnes d'un bloc.
 
+## Rôles d'une app (`manifest.roles`, `capabilities/apps_roles.py`)
+
+Une app peut dire **qui, parmi ses lecteurs, voit et fait quoi** : le manifeste déclare
+des rôles (`roles: {admin: {…}, user: {…}}`) et un `default_role`, OBLIGATOIRE dès
+qu'un rôle existe. Chaque rôle **resserre** le manifeste, jamais plus :
+
+- `tables` absent = tous les tableaux déclarés ; présent = ceux-là seuls, chacun `true`
+  ou `{fields?, set?, add?}` — une clé absente hérite du manifeste, une clé présente
+  en est un sous-ensemble (`set: {}`, `add: []` : aucune écriture). Jugé à l'écriture
+  (`apps_manifeste.forme`) : un rôle qui nomme ce que le manifeste n'ouvre pas est
+  refusé, 400 `invalid_manifest` ; ses champs sont jugés contre le schéma comme ceux
+  du manifeste.
+- `agents` (liste de noms, ou `{nom: true | {run?, input?}}`), `files` (`false` = ni
+  dépôt ni liste), `sections` (noms libres), `label`.
+
+**Qui tient quel rôle.** Le rôle d'app d'un PARTAGE de l'app
+(`resource_grants.app_role`, révision `20261127_1200_app_roles`) : posé par qui
+GOUVERNE l'app (`oto_apps op=set_role`, `principal_type`, `principal_id`, `role` ;
+sans `role` = retour au défaut ; 404 `not_shared` sans partage, 400 `unknown_role` pour
+un rôle que ni l'app publiée ni son brouillon ne déclare), lu par `op=roles`. Il part
+avec le partage (retrait, échéance) et suit la fusion de comptes comme lui. Nominatif
+d'abord, puis équipe, puis org ; à type égal, le premier dans l'ordre du manifeste.
+Sans rôle posé, ou un rôle que le manifeste ne déclare plus : `default_role` — jamais
+le manifeste entier. **Qui peut modifier l'app n'est borné par aucun rôle** (il
+réécrirait le manifeste) ; il l'essaie sous un rôle par `as_role` sur l'appel
+(403 `as_role_editors_only` sinon). Une app possédée par une org est modifiable par
+tous ses membres : pour des rôles entre collègues, la garder possédée par une personne
+ou une équipe et la PARTAGER à l'org (Use).
+
+**Où il s'applique : une fois, à l'entrée de l'appel** (`apps_appel._app_pour` →
+`_au_role`). Toute action lit le manifeste après ce point — lectures, lot, agrégats,
+gestes et leur consentement, dépôt et liste de fichiers, runs — donc toutes sont
+bornées sans le savoir. `op=get` sert au lecteur le manifeste de SON rôle, sans la
+définition des rôles, et `access` `{role, role_label, sections}` (ce que l'app lit par
+`oto.access()`) ; à qui peut la modifier, le manifeste entier et `role: null`.
+
+⚠️ **Les sections ne sont pas une barrière** : tout le HTML part chez chaque lecteur.
+Elles disent à l'app quoi AFFICHER ; ce qui protège, ce sont les données que le
+serveur refuse. ⚠️ Le rôle ne fait que retirer : Use reste nécessaire pour cliquer, et
+chaque geste reste jugé auteur ∩ lecteur — un partenaire extérieur doit donc toujours
+LIRE le tableau lui-même, ce qui lui ouvre le tableau entier hors de l'app. Un
+périmètre de LIGNES par partage (« sa fiche seulement ») n'a de sens qu'une fois l'app
+servie aux droits de son auteur : il n'est pas dans ce lot.
+
 ## Ce que le serveur juge
 
 - **À l'écriture** (`capabilities/apps_manifeste.py`) — `create`, `update` ET

@@ -184,6 +184,9 @@ class AppCallInput(BaseModel):
     draft: bool = Field(
         default=False, description="The app's DRAFT is open, not its published version "
         "(its editors only): judged against the draft's manifest and its author.")
+    as_role: Optional[str] = Field(
+        default=None, description="See the app as one of the roles its manifest declares "
+        "(its editors only, to try what that role sees and does).")
     # Libres à l'entrée : une lecture mal formée est refusée DANS sa réponse, jamais en
     # refusant tout le lot (`_lecture_du_lot`).
     reads: Optional[list[dict]] = Field(
@@ -285,7 +288,7 @@ def peut_cliquer(sub: str, app_id: int) -> bool:
 
 
 def _app_pour(ctx: ResolvedCtx, app_id: int, draft: bool = False,
-              geste_: bool = False) -> dict:
+              geste_: bool = False, as_role: Optional[str] = None) -> dict:
     from .. import org_suspension
 
     app = db.apps.get_for_call(int(app_id))
@@ -313,7 +316,27 @@ def _app_pour(ctx: ResolvedCtx, app_id: int, draft: bool = False,
     if not app.get("updated_by"):
         raise _refus(403, "app_author_unknown",
                      "Nobody is known to have written this app, so it can't act for anyone.")
-    return app
+    return _au_role(ctx.sub, app, as_role)
+
+
+def _au_role(sub: str, app: dict, as_role: Optional[str]) -> dict:
+    """L'app vue par son lecteur : son manifeste RESSERRÉ au rôle qu'il tient
+    (`apps_roles.py`). Toute action lit `app["manifest"]` après ce point — le rôle
+    borne donc lectures, lot, agrégats, gestes, consentement, fichiers et runs sans
+    qu'aucune n'ait à le savoir. `as_role` : un éditeur essaie un rôle."""
+    from . import apps_roles
+
+    manifest = app.get("manifest") or {}
+    if as_role is not None:
+        if not ownership.can_access(sub, APP_RTYPE, str(app["id"]), "write"):
+            raise _refus(403, "as_role_editors_only",
+                         "Only the app's editors can see it as another role.")
+        if as_role not in (manifest.get("roles") or {}):
+            raise _refus(400, "unknown_role", f"This app declares no role “{as_role}”.")
+        role = as_role
+    else:
+        role = apps_roles.role_du_lecteur(sub, app)
+    return {**app, "manifest": apps_roles.resserrer(manifest, role), "app_role": role}
 
 
 def _table(app: dict, alias: Optional[str], want: str = "read") -> tuple[str, dict]:
@@ -397,6 +420,9 @@ def _empreinte(inp: AppCallInput) -> str:
     corps = {k: getattr(inp, k) for k in ("action", "table", "agent", "row_id", "field",
                                            "value", "expected_revision", "values", "input",
                                            "files", "file")}
+    if inp.as_role is not None:
+        # Un jeton émis sous un rôle essayé ne se brûle que sous ce rôle.
+        corps["as_role"] = inp.as_role
     if inp.draft:
         # Un jeton émis pour l'aperçu du brouillon ne se brûle pas sur l'app publiée
         # (ni l'inverse) : leurs manifestes et leurs auteurs diffèrent. Absente quand
@@ -781,7 +807,7 @@ def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
         raise AuthzDenied(400, "consent_not_needed", f"`{inp.action}` doesn't take a consent.")
     if inp.reads is not None:
         raise AuthzDenied(400, "invalid_batch", "A consent is for one gesture: no `reads`.")
-    app = _app_pour(ctx, inp.app_id, inp.draft, geste_=True)
+    app = _app_pour(ctx, inp.app_id, inp.draft, geste_=True, as_role=inp.as_role)
     _, resume = _geste(ctx, app, inp)
     jeton = secrets.token_urlsafe(32)
     ttl = CONSENT_TTL_UPLOAD if inp.action == "upload_file" else CONSENT_TTL
@@ -825,7 +851,7 @@ def _lot(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
               if getattr(inp, k) is not None]
     if inp.options or autres:
         raise AuthzDenied(400, "invalid_batch",
-                     "A batch carries only `reads` (and `draft`): each read names its own "
+                     "A batch carries only `reads` (and `draft`, `as_role`): each read names its own "
                      f"table and options (not {', '.join(autres or ['options'])}).")
     if not reads:
         raise AuthzDenied(400, "invalid_batch", "A batch needs `reads`, a non-empty list.")
@@ -841,7 +867,7 @@ def _lot(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
         raise AuthzDenied(400, "invalid_batch", "Two reads of a batch share an `id`.")
     _debiter(len(reads) - 1)
     with db.reuse_connection():
-        app = _app_pour(ctx, inp.app_id, inp.draft)
+        app = _app_pour(ctx, inp.app_id, inp.draft, as_role=inp.as_role)
         results = []
         for r in reads:
             try:
@@ -906,7 +932,8 @@ def _debiter(n: int) -> None:
 
 
 def _appel(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
-    app = _app_pour(ctx, inp.app_id, inp.draft, geste_=inp.action in GESTES)
+    app = _app_pour(ctx, inp.app_id, inp.draft, geste_=inp.action in GESTES,
+                    as_role=inp.as_role)
     o = inp.options or {}
 
     if inp.action == "upload_file":

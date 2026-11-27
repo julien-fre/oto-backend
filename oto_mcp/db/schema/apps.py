@@ -162,3 +162,14 @@ ALTER TABLE app_revisions ADD COLUMN IF NOT EXISTS note TEXT;
 -- remplacé. NULL pour les révisions d'avant cette colonne.
 ALTER TABLE app_revisions ADD COLUMN IF NOT EXISTS saved_at TIMESTAMPTZ;
 """
+
+ROLES = """
+-- Le rôle d'APP d'un partage (`docs/apps.md` § Rôles d'une app) : la clé d'un des rôles
+-- que le manifeste déclare (`manifest.roles`), posée par qui gouverne l'app
+-- (`oto_apps op=set_role`). Il RESSERRE ce que le manifeste ouvre à ce lecteur
+-- (tableaux, champs, valeurs, ajouts, agents, fichiers) — jamais plus. NULL = le rôle
+-- par défaut du manifeste (`default_role`). Sur le partage même : il part avec lui
+-- (retrait, échéance), suit la fusion de comptes et l'export comme lui. Colonne AJOUTÉE
+-- (révision `20261127_1200_app_roles`) : le fragment `grants.GRANTS` a déjà été joué.
+ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS app_role TEXT;
+"""
