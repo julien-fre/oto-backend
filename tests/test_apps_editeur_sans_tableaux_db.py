@@ -121,3 +121,14 @@ def test_brouillon_et_publication_sans_les_tableaux(monde):
     assert app["html"] == "<p>v3</p>"
     assert (app["updated_by"], app["edited_by"]) == (m["auteur"], m["editeur"])
     assert [r["name"] for r in _lire(m, m["lecteur"])["rows"]] == ["Acme"]
+
+
+def test_les_roles_comptent_comme_une_declaration():
+    """Un manifeste qui ne change QUE ses rôles change ce qu'il ouvre : la comparaison
+    les porte (une clé absente des deux côtés reste égale)."""
+    from oto_mcp.capabilities import apps as A
+    base = {"tables": {}, "agents": {}}
+    assert A._ouvre({**base}) == A._ouvre({**base, "roles": None})
+    assert A._ouvre({**base, "roles": {"user": {}}}) != A._ouvre(
+        {**base, "roles": {"user": {"tables": {}}}})
+    assert A._ouvre({**base, "default_role": "a"}) != A._ouvre({**base, "default_role": "b"})

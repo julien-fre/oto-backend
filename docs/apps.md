@@ -144,8 +144,10 @@ auteur celui de l'app, et un éditeur sans les tableaux était refusé (`would_b
   (`app_revisions.edited_by`) nomme qui a écrit chaque état, pas son auteur. Servi
   partout où l'app s'écrit : `update` (HTML, titre, vignette, manifeste), `patch`,
   `restore`, brouillon et `publish` ; `op=validate` dit bon un tel manifeste.
-- **Une borne** : il ne change ni les tableaux (numéro, `fields`, `set`, `add`) ni les
-  agents que l'app déclare — comparés après résolution par l'auteur, le reste du
+- **Une borne** : il ne change ni les tableaux (numéro, `fields`, `set`, `add`), ni les
+  agents que l'app déclare, ni ses rôles (`roles`, leur ordre, `default_role`, dès
+  qu'une app en déclare : élargir un rôle ouvre ce que l'auteur n'a pas choisi de
+  montrer) — comparés après résolution par l'auteur, le reste du
   manifeste (titre, hauteur, `files`) est libre — **et l'auteur d'avant les atteint
   encore**. Sinon le refus est le sien, nommé par SES problèmes (rien ne dit ce que
   l'auteur atteint). Une restauration ou une publication se juge pareil, contre ce

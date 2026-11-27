@@ -271,11 +271,23 @@ def _problemes(sub: str, org_id: Optional[int], raw: Optional[dict]) -> tuple[di
     return clean, problems
 
 
-def _declarations(manifest: Optional[dict]) -> tuple[dict, dict]:
-    """Ce qu'un manifeste ouvre : ses tableaux (numéro, champs, `set`, `add`) et ses
-    agents, normalisés par `forme` — le reste (titre, hauteur, fichiers) n'ouvre rien."""
+# Ce qui, dans un manifeste normalisé, OUVRE quelque chose à ses lecteurs : les tableaux
+# (numéro, champs, `set`, `add`), les agents — et, dès qu'une app déclare des rôles,
+# leur définition, leur ordre et le rôle par défaut (`apps_roles.py`) : élargir un rôle
+# ouvre à ceux qui le tiennent ce que l'auteur n'a pas choisi de leur montrer. Une clé
+# que le manifeste ne porte pas se compare comme absente des deux côtés.
+_CE_QUI_OUVRE = ("tables", "agents", "roles", "role_order", "default_role")
+
+
+def _ouvre(clean: dict) -> dict:
+    return {k: clean.get(k) or None for k in _CE_QUI_OUVRE}
+
+
+def _declarations(manifest: Optional[dict]) -> dict:
+    """Ce qu'un manifeste ouvre (`_CE_QUI_OUVRE`), normalisé par `forme` — le reste
+    (titre, hauteur, fichiers) n'ouvre rien."""
     clean, _ = forme(manifest if manifest is not None else {})
-    return clean.get("tables") or {}, clean.get("agents") or {}
+    return _ouvre(clean)
 
 
 def _auteur_garde(ctx: ResolvedCtx, org_id: Optional[int], base: dict,
@@ -283,7 +295,7 @@ def _auteur_garde(ctx: ResolvedCtx, org_id: Optional[int], base: dict,
     """Un éditeur qui n'atteint pas tout ce que l'app déclare écrit-il SANS en devenir
     l'auteur ? Oui si l'auteur de `base` (`{"manifest", "updated_by"}` : l'état vivant
     ou le brouillon que l'écriture remplace) existe, atteint encore tout ce que `raw`
-    déclare, et que `raw` déclare exactement les mêmes tableaux et agents que `base`.
+    déclare, et que `raw` déclare exactement les mêmes tableaux, agents et rôles que `base`.
     Rend alors le manifeste résolu par cet auteur ; sinon `None` (le refus de l'appelant
     reste, nommé par SES problèmes : rien ne dit ce que l'auteur atteint)."""
     a = base.get("updated_by")
@@ -292,7 +304,7 @@ def _auteur_garde(ctx: ResolvedCtx, org_id: Optional[int], base: dict,
     essai, problems = forme(copy.deepcopy(raw) if raw is not None else {})
     if problems or auteur(a, org_id, essai):
         return None
-    if (essai["tables"], essai["agents"]) != _declarations(base.get("manifest")):
+    if _ouvre(essai) != _declarations(base.get("manifest")):
         return None
     return essai
 
