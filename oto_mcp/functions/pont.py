@@ -114,11 +114,27 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
     rendu d'exploitable (délai, plantage, protocole), `executor.BacASableAbsent` si
     l'instance n'en a pas, `executor.BacASableOccupe` si `sub` ou le processus n'a plus
     de place (`places.py`) — la place est tenue jusqu'à la mort du processus, annulation
-    comprise."""
-    with places.place(sub):
+    comprise, et au plus `duree_max_s(budget)` : ce que le refus d'un autre annonce."""
+    with places.place(sub, duree_max_s(budget)):
         return await _executer_avec_pont(sources=sources, entrypoint=entrypoint,
                                          appeler=appeler, budget=budget,
                                          requirements=requirements, entree=entree)
+
+
+def duree_max_s(budget: Budget) -> float:
+    """Le temps au bout duquel une exécution du pont a rendu sa place au plus tard : son
+    délai, la grâce laissée au code pour rendre son reçu (`fin_dure`), celle laissée à la
+    fin pour ce qui vole encore, puis l'arrêt du processus. Toute attente de la boucle
+    est bornée par `fin_dure` (`_avant`) : rien d'autre ne la prolonge."""
+    return budget.delai_s + 2 * GRACE_S + places.MARGE_ARRET_S
+
+
+async def _avant(fin_dure: float, attente, delai_s: float):
+    """`attente`, bornée par l'échéance de l'exécution : au-delà, `ExecutionEchouee`."""
+    try:
+        return await asyncio.wait_for(attente, max(0.0, fin_dure - time.monotonic()))
+    except asyncio.TimeoutError:
+        raise executor.ExecutionEchouee(f"délai dépassé ({delai_s:g} s)") from None
 
 
 async def _executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler,
@@ -156,7 +172,11 @@ async def _executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appele
     places = asyncio.Semaphore(max(1, budget.en_vol))
     ecriture = asyncio.Lock()
     try:
-        await _envoyer(proc, tache)
+        # L'envoi de la tâche et les refus rendus depuis la boucle attendent que le
+        # processus LISE son entrée : bornés par `fin_dure`, comme la lecture. Sans borne,
+        # un processus vivant qui ne lit pas (tube plein, sous `bwrap` rien ne tue un
+        # processus qui dort) tenait la place jusqu'à la borne de dernier recours.
+        await _avant(fin_dure, _envoyer(proc, tache), budget.delai_s)
         while True:
             reste = fin_dure - time.monotonic()
             if reste <= 0:
@@ -186,7 +206,8 @@ async def _executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appele
                 # même place du budget. Seul l'appel admis part dans sa tâche.
                 refus = _admettre(message, budget, recu, fin)
                 if refus is not None:
-                    await _repondre(proc, ecriture, message.get("id"), refus)
+                    await _avant(fin_dure, _repondre(proc, ecriture, message.get("id"),
+                                                     refus), budget.delai_s)
                     continue
                 tache_appel = asyncio.create_task(_servir(
                     proc, ecriture, places, message, appeler, recu, fin, budget, partis,

@@ -175,7 +175,8 @@ def executer(*, sources: dict, entrypoint: str, requirements: list[str], mode: s
         "job": {"sources": sources, "entrypoint": entrypoint, "mode": mode,
                 "input": entree if entree is not None else {}},
     }
-    with places.place(sub):
+    # Au plus `DELAI_S` puis l'arrêt du processus (`_jouer`) : ce qu'un refus annonce.
+    with places.place(sub, DELAI_S + places.MARGE_ARRET_S):
         debut = time.monotonic()
         code, sortie, erreurs = _jouer(lancement(racine, _SCRIPT, DELAI_S),
                                        json.dumps(tache).encode())

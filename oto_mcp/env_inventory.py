@@ -317,7 +317,7 @@ _REGLAGES: tuple[Variable, ...] = (
              "(`isolement.MEMOIRE_MO`) sous la mémoire libre de la box. PAR PROCESSUS : "
              "pendant une bascule bleu/vert, les deux couleurs tournent et le plafond "
              "effectif double. Pas un entier ≥ 1 : refus de démarrer.",
-             ("oto_mcp/functions/places.py:60",)),
+             ("oto_mcp/functions/places.py:81",)),
     Variable("OTO_ABONNEMENT_OUVERT_A_TOUS", Classe.REGLAGE, "",
              "Agents sur l'abonnement Claude de la personne : ouverts à TOUT compte "
              "de l'instance (`1`, `true`, `yes`, `on`). Absente, vide ou un non = "

@@ -118,6 +118,15 @@ mort du processus, quoi qu'il arrive (exception, délai, annulation). Un `thread
 et non un sémaphore asyncio : l'aller simple prend sa place dans un fil, le pont dans la
 boucle ; le verrou ne couvre qu'un compte, jamais une attente.
 
+Le `Retry-After` dit quand une place se libère **au plus tard** (25/11/2026) : chaque place
+connaît sa borne (le délai de l'exécution, ses grâces, l'arrêt du processus —
+`pont.duree_max_s`, `executor.DELAI_S` + `places.MARGE_ARRET_S`). Refus par compte : ce
+qui reste à l'exécution de ce compte ; refus du plafond : la première place à devoir se
+libérer. Le message dit lequel des deux plafonds a refusé. Une place sans borne, ou qui a
+dépassé la sienne (journalisée, sans le compte), retombe sur `places.ATTENTE_S` (10 s).
+Un appel d'outil abandonné à l'échéance (son fil continue) ne tient PAS de place : il
+vole hors place jusqu'à la fin de son fil (`tests/test_functions_places_liberation.py`).
+
 Le réglage se lit au démarrage (`server.main`) : pas un entier ≥ 1, l'instance refuse de
 démarrer.
 
