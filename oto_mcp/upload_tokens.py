@@ -334,7 +334,8 @@ def import_rows(sub: str, target: dict, rows: list, *, deadline: float,
     store = ds.make_store(sub)
     ns_id = int(target["ns_id"])
     # Retired-word refusals are judged on the whole file before the first slice.
-    mdp.controler(*(r for r in rows[resume_from:] if isinstance(r, dict)))
+    mdp.controler(*rows[resume_from:], lot=True, key=target.get("key"),
+                  premier_rang=resume_from + 1)
     # oto#124: so are undeclared columns — nothing written.
     try:
         cnd.juger_le_lot(store._schema_of(ns_id), rows[resume_from:])

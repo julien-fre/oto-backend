@@ -1389,7 +1389,11 @@ de fin de passage détectait après coup.
   (ou renvoyer sa valeur quand elle doit survivre à une valeur qui change)
   (`mots_deprecies.controler`, sur les quatre chemins d'écriture : création, patch par
   `id`, lot, import par URL signée). Sans ce refus, `"@keep"` serait stocké comme une
-  valeur littérale.
+  valeur littérale. Le refus nomme la colonne, la CASE exacte (`statut.valeur`,
+  `contacts[0].fonction`) et, dans un lot, les lignes qui la portent (rang et clé du lot ;
+  `details.words` sur la face REST) ; un `@keep` posé sur `valeur` reçoit le geste exact :
+  renvoyer `comment`/`link` SANS `valeur`, la valeur en place reste (signal 1481 : un lot de
+  46 lignes refusé sur une colonne nommée, sans dire ni la couche ni les lignes).
   ⚠️ **J2 : `""` et `[]` sont des VALEURS** — ils remplacent la valeur en place, et la
   valeur remplacée revient dans `valeurs_effacees`. L'écart (#608) et le refus « écriture
   sans effet » (#724) ne valent plus que pour `{}` (jamais une valeur, oto#165). Posé sur
