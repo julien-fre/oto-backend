@@ -237,6 +237,63 @@ def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
 
+#: lemlist's 404 when an address holds no lead in this workspace (`GET /leads/{email}`,
+#: served as "lemlist HTTP 404: Lead not found").
+_LEAD_NOT_FOUND = "lead not found"
+
+#: The `lemlist_lead` ops whose lemlist route takes a lead ID (`lea_…`), never an email.
+#: Given an email and a campaign, the id is looked up first (`_lead_id_from_email`).
+LEAD_ID_OPS = ("update", "pause", "resume", "vars_update", "vars_delete", "upload_audio")
+
+
+def _lead_introuvable(exc) -> bool:
+    """Whether a refusal is lemlist's "this address holds no lead here" — the 404
+    `Lead not found`, as bare text or under `error`/`message` in JSON. Exact match,
+    case aside, as `get_unsubscribe` reads "Variable not found" in oto-core: a 404 of
+    another kind (an unknown route) is a refusal, never an answer."""
+    if getattr(exc, "status_code", None) != 404:
+        return False
+    body = getattr(exc, "body", None)
+    texts = [body.get("error"), body.get("message")] if isinstance(body, dict) else [body]
+    return any(isinstance(t, str) and t.strip().lower() == _LEAD_NOT_FOUND for t in texts)
+
+
+def _compte_servi() -> Optional[str]:
+    """The account of the connector this call resolved (`_account`), None when the
+    workspace has a single unnamed one. In a workspace with two lemlist accounts, a
+    miss means "not in THIS one": the answer must say which one it looked in."""
+    from .. import session_org
+
+    return (session_org.current_call_trace() or {}).get("resolved_account") or None
+
+
+def _lead_id_from_email(client, op: str, campaign_id: Optional[str], email: str) -> str:
+    """The id of `email`'s lead in `campaign_id`, for an op whose route takes a lead id.
+
+    A person has one lead PER campaign: an email alone does not name one, so a campaign
+    is required, and the lead lemlist's lookup by email (`GET /leads/{email}`) returns
+    is used only when its `campaignId` IS that campaign — never another campaign's lead.
+    The lookup's own refusal (a 404 `Lead not found` included) raises: this is a write.
+    Anything else is refused with the call that gives the id."""
+    where = (f'lemlist_lead(op="list", campaign_id="{campaign_id}") lists that '
+             "campaign's leads with their ids" if campaign_id else
+             f'lemlist_lead(op="get", email="{email}") gives the lead lemlist holds for '
+             "this address (`_id`) and its `campaignId`")
+    if not campaign_id:
+        raise _bad(
+            f'op="{op}" acts on ONE lead, and an email names a person, who has one lead '
+            "per campaign: pass `campaign_id` with the email, or `lead_id` — " + where)
+    found = client.get_lead_by_email(email)
+    leads = found if isinstance(found, list) else [found]
+    ids = {lead["_id"] for lead in leads if isinstance(lead, dict) and lead.get("_id")
+           and lead.get("campaignId") == campaign_id}
+    if len(ids) == 1:
+        return ids.pop()
+    raise _bad(
+        f"lemlist's lookup of {email!r} returns no single lead of campaign "
+        f"{campaign_id!r}, so op=\"{op}\" was not sent: pass `lead_id` — " + where)
+
+
 #: The module of oto-core that shapes a list of activities (`fields`, `compact`).
 _ACTIVITY_VIEWS = "oto.tools.lemlist.activity_views"
 
@@ -1654,8 +1711,18 @@ def register(mcp: FastMCP) -> None:
         Creating a lead is `lemlist_create_lead`; releasing one held for review
         is `lemlist_launch_lead`.
 
+        Ops that act on ONE lead by id (`update`, `pause`, `resume`,
+        `vars_update`, `vars_delete`, `upload_audio`) also take `campaign_id` +
+        `email` in place of `lead_id`: the lead of that email IN that campaign is
+        looked up first (never another campaign's lead), and the answer carries
+        `lead_from_email`. An email without a campaign is refused — a person has
+        one lead per campaign.
+
         Args by op:
-        - `get`: `lead_id` or `email`. `list`: `campaign_id` + optional `state`
+        - `get`: `lead_id` or `email`. By email, an address with no lead in
+          this account answers `{found: false, email, account}` instead of
+          failing (a found lead carries `found: true`) — checking which of
+          several lemlist accounts holds a lead is a normal question. `list`: `campaign_id` + optional `state`
           (`sent`, `replied`, `paused`…) and `limit`. ⚠️ `state` defaults to
           `"all"` HERE, which is NOT lemlist's own default: without it the API
           filters everything out and returns an empty list that reads as "no
@@ -1685,14 +1752,33 @@ def register(mcp: FastMCP) -> None:
           recording's `source` as read (`{"kind": "transit", "ref": …}`). The server
           fetches it (≤ 20 MB) and forwards the bytes.
         """
+        from oto.tools.common.errors import UpstreamHTTPError
+
         client, is_platform = _client()
         target = lead_id or email
+        from_email = None
+        if op in LEAD_ID_OPS and not lead_id and email:
+            lead_id = _lead_id_from_email(client, op, campaign_id, email)
+            from_email = {"email": email, "lead_id": lead_id}
 
         if op == "get":
             if not target:
                 raise _bad("`lead_id` or `email` required")
-            result = (client.get_lead(lead_id=lead_id) if lead_id
-                      else client.get_lead_by_email(email))
+            if lead_id:
+                result = client.get_lead(lead_id=lead_id)
+            else:
+                try:
+                    result = client.get_lead_by_email(email)
+                except UpstreamHTTPError as e:
+                    if not _lead_introuvable(e):
+                        raise
+                    # A lookup that misses is an answer: checking which of two
+                    # lemlist accounts holds a lead, "not in this one" is expected.
+                    return {"found": False, "email": email, "account": _compte_servi(),
+                            "message": "lemlist holds no lead for this address in "
+                                       "this account (404 Lead not found)."}
+                if isinstance(result, dict):
+                    result = {"found": True, **result}
 
         elif op == "list":
             if not campaign_id:
@@ -1711,7 +1797,7 @@ def register(mcp: FastMCP) -> None:
 
         elif op == "update":
             if not (campaign_id and lead_id and fields):
-                raise _bad("`campaign_id`, `lead_id` AND `fields` required")
+                raise _bad("`campaign_id`, `lead_id` (or `email`) AND `fields` required")
             result = client.update_lead(campaign_id, lead_id, fields)
 
         elif op in ("delete", "unsubscribe"):
@@ -1722,12 +1808,12 @@ def register(mcp: FastMCP) -> None:
 
         elif op == "pause":
             if not lead_id:
-                raise _bad("`lead_id` required")
+                raise _bad("`lead_id` required (or `campaign_id` + `email`)")
             result = client.pause_lead(lead_id, campaign_id=campaign_id)
 
         elif op == "resume":
             if not lead_id:
-                raise _bad("`lead_id` required")
+                raise _bad("`lead_id` required (or `campaign_id` + `email`)")
             result = client.resume_lead(lead_id)
 
         elif op in ("interested", "not_interested"):
@@ -1739,12 +1825,12 @@ def register(mcp: FastMCP) -> None:
 
         elif op == "vars_update":
             if not (lead_id and variables):
-                raise _bad("`lead_id` AND `variables` required")
+                raise _bad("`lead_id` (or `campaign_id` + `email`) AND `variables` required")
             result = client.update_lead_variables(lead_id, variables)
 
         elif op == "vars_delete":
             if not (lead_id and variable_names):
-                raise _bad("`lead_id` AND `variable_names` required")
+                raise _bad("`lead_id` (or `campaign_id` + `email`) AND `variable_names` required")
             result = client.delete_lead_variables(lead_id, variable_names)
 
         elif op == "import_crm":
@@ -1771,4 +1857,6 @@ def register(mcp: FastMCP) -> None:
                 "unsubscribe, pause, resume, interested, not_interested, "
                 "vars_update, vars_delete, import_crm, upload_audio")
 
+        if from_email and isinstance(result, dict):
+            result = {**result, "lead_from_email": from_email}
         return result

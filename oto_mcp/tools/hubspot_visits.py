@@ -27,7 +27,12 @@ why. `op="companies"` therefore answers its own emptiness (`diagnosis`).
    events API. HubSpot's reference asks for the `business-intelligence` scope and a
    Professional or Enterprise plan. ⚠️ On the one portal read (2026-10-14), a private
    app token HOLDING that scope was refused: HubSpot asked for `event-detail-read`,
-   which is in no published scope list. Unproven to work with a private app.
+   which is in no published scope list. Unproven to work with a private app. That
+   refusal is therefore ANSWERED, not raised: for a contact, the tool serves its
+   visit properties (the ones op="contacts" reads) under `page_views:
+   "not_readable"`, `fallback: "contact_properties"` — hosted agents asked for every
+   contact's pages on each run, and a failed call per contact said nothing they could
+   act on. Every other refusal still raises.
 
 ⚠️ **Not exercised against a portal that tracks companies.** The property names
 come from a portal's schema; the events parameters and response shape from HubSpot's
@@ -203,6 +208,18 @@ def compact_event(event: dict) -> dict:
     return {k: v for k, v in row.items() if v is not None}
 
 
+def timeline_not_grantable(refus, object_type) -> bool:
+    """Whether a translated events refusal is the one a token can never get past —
+    HubSpot asking for a permission outside its published scope list
+    (`permission_not_grantable`) — on a CONTACT, the one record whose visit
+    properties stand in for its page views. Any other refusal (a scope to tick, the
+    plan, a scope it does not name) stays a refusal: it can change, so it is said."""
+    detail = getattr(refus, "oto_detail", None) or {}
+    otype = str(object_type or "").strip().lower()
+    return (detail.get("reason") == "permission_not_grantable"
+            and _EVENT_OBJECT.get(otype, otype) == "contact")
+
+
 # --- the tool ---------------------------------------------------------------------
 
 def register(mcp: FastMCP) -> None:
@@ -277,8 +294,11 @@ def register(mcp: FastMCP) -> None:
           Requires `object_id`. ⚠️ HubSpot may refuse it to a private app
           token even with the `business-intelligence` scope its reference
           names (seen: it asked for `event-detail-read`, which no published
-          scope list offers). Then the refusal says so, and op="contacts"
-          still gives the first page, last page and last session.
+          scope list offers). For a contact that refusal is ANSWERED, not
+          raised: `page_views: "not_readable"`, `fallback:
+          "contact_properties"`, `partial: true`, a `note`, and `contact` —
+          its first page, last page, last session, visit and page-view counts
+          (what op="contacts" reads). Any other refusal raises and says why.
         - **"event_types"** : the event types this portal defines — what
           `event_type` accepts.
 
@@ -376,4 +396,46 @@ def register(mcp: FastMCP) -> None:
                 what="record" if events else "object")
             if refus is None:
                 raise          # any other upstream refusal keeps its shape and its trace
+            if op == "page_views" and timeline_not_grantable(refus, object_type):
+                return _properties_instead(c, object_id, extra, full, refus)
             raise refus from None
+
+    def _properties_instead(c, object_id, extra, full, refus) -> dict:
+        """The answer to a page-view read HubSpot will never grant this token: the
+        contact's visit properties, read like op="contacts" reads them.
+
+        Raised, the refusal cost a failed call per contact per run — and the next run
+        asked again, since nothing in a failure says "this will not change". Answered,
+        it says so once (`page_views: "not_readable"`) and serves what IS readable.
+        The read of the properties is its own: its refusal (no contacts scope, an
+        unknown id) is named as a contacts refusal, not as an events one."""
+        detail = getattr(refus, "oto_detail", None) or {}
+        wanted = list(CONTACT_PROPS) + [p for p in extra if p not in CONTACT_PROPS]
+        try:
+            record = c.get_object("contacts", object_id, properties=wanted) or {}
+        except UpstreamHTTPError as e:
+            contact_refus = translate(e, object_id=object_id, object_type="contacts",
+                                      what="record")
+            if contact_refus is None:
+                raise
+            raise contact_refus from None
+        asks = detail.get("hubspot_asks") or []
+        named = ", ".join(f"`{a}`" for a in asks) or "a permission"
+        return {
+            "object_type": "contacts", "object_id": object_id,
+            "page_views": "not_readable",
+            "fallback": "contact_properties",
+            "partial": True,
+            "reason": detail.get("reason"),
+            **({"hubspot_asks": asks} if asks else {}),
+            "note": (
+                "HubSpot does not serve this contact's page-view timeline to this "
+                f"token: it asks for {named}, which is not in its published scope "
+                "list, so there is nothing known to tick on the key. Served instead: "
+                "the contact's visit properties — first page, last page, last "
+                "session, visit and page-view counts (since/until do not apply to "
+                "them). Asking op='page_views' again with this token will answer the "
+                "same; op='contacts' reads these properties for many contacts in one "
+                "call."),
+            "contact": record if full else compact_record(record, wanted),
+        }

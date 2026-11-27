@@ -284,6 +284,7 @@ def test_another_403_on_events_points_at_the_plan_and_quotes_hubspot(client):
     assert e.value.status_code == 403
     assert "Professional" in str(e.value) and "not allowed here" in str(e.value)
     assert "op='contacts'" in str(e.value)
+    client.get_object.assert_not_called()
 
 
 def test_a_missing_companies_scope_still_names_the_companies_scope(client):
@@ -293,25 +294,79 @@ def test_a_missing_companies_scope_still_names_the_companies_scope(client):
     assert e.value.oto_detail["scope_to_add"] == "crm.objects.companies.read"
 
 
-def test_a_scope_refusal_outside_missing_scopes_names_what_hubspot_asks(client):
-    """Served on a real portal, 2026-10-14, to a private app token that HOLDS
-    `business-intelligence`: the message verbatim (the rest of the body was not
-    kept). The first version read it as "not a scope, so the plan" — wrong on both
-    counts, and it sent the reader to check a plan."""
+#: Served on a real portal, 2026-10-14, to a private app token that HOLDS
+#: `business-intelligence`: the message verbatim (the rest of the body was not kept).
+NOT_GRANTABLE = {"status": "error", "category": "FORBIDDEN",
+                 "message": "Insufficient scopes, requires one of: [event-detail-read,[id]]"}
+
+CONTACT = {"id": "42", "properties": {
+    "email": "jane@site.example", "firstname": "Jane",
+    "hs_analytics_last_visit_timestamp": "2026-10-12T09:31:07.123Z",
+    "hs_analytics_last_url": "https://site.example/pricing",
+    "hs_analytics_first_url": "https://site.example/",
+    "hs_analytics_num_visits": "4", "hs_analytics_num_page_views": "9",
+    "hs_analytics_source": None, "hs_object_id": "42"}}
+
+
+def test_a_permission_no_scope_list_offers_is_answered_with_the_contact_s_properties(
+        client):
+    """Hosted agents asked every contact's pages on each run, and each call failed on
+    this refusal: nothing in a failure says it will never change. Answered, it says
+    so once and serves what IS readable — the visit properties op='contacts' reads."""
+    client._request.side_effect = _upstream(403, NOT_GRANTABLE)
+    client.get_object.return_value = CONTACT
+    out = _tool()(op="page_views", object_id="42", since="2026-10-06")
+    (otype, oid), kw = client.get_object.call_args
+    assert (otype, oid) == ("contacts", "42")
+    assert kw["properties"] == list(V.CONTACT_PROPS)
+    assert out["page_views"] == "not_readable"
+    assert out["fallback"] == "contact_properties" and out["partial"] is True
+    assert out["reason"] == "permission_not_grantable"
+    assert out["hubspot_asks"] == ["event-detail-read"]
+    assert "`event-detail-read`" in out["note"] and "published scope list" in out["note"]
+    assert "results" not in out, "an empty list would read as 'no page read'"
+    assert out["contact"] == {
+        "id": "42", "email": "jane@site.example", "firstname": "Jane",
+        "hs_analytics_last_visit_timestamp": "2026-10-12T09:31:07.123Z",
+        "hs_analytics_last_url": "https://site.example/pricing",
+        "hs_analytics_first_url": "https://site.example/",
+        "hs_analytics_num_visits": "4", "hs_analytics_num_page_views": "9"}
+
+
+def test_the_fallback_serves_the_raw_record_on_full_and_adds_the_extra_columns(client):
+    client._request.side_effect = _upstream(403, NOT_GRANTABLE)
+    client.get_object.return_value = CONTACT
+    out = _tool()(op="page_views", object_id="42", full=True,
+                  properties=["lifecyclestage"])
+    assert out["contact"] == CONTACT
+    assert client.get_object.call_args.kwargs["properties"] == [
+        *V.CONTACT_PROPS, "lifecyclestage"]
+
+
+def test_the_fallback_s_own_refusal_is_named_as_a_contacts_refusal(client):
+    """The properties read fails on its own (the token lacks the contacts scope): the
+    refusal names the CONTACTS scope, never the events one."""
+    client._request.side_effect = _upstream(403, NOT_GRANTABLE)
+    client.get_object.side_effect = _upstream(403, MISSING_BI)
+    with pytest.raises(McpError) as e:
+        _tool()(op="page_views", object_id="42")
+    assert e.value.oto_detail["scope_to_add"] == "crm.objects.contacts.read"
+
+
+def test_the_not_grantable_refusal_on_another_object_type_still_raises(client):
+    """Only a contact has visit properties that stand in for its page views."""
     from oto.tools.common.errors import UpstreamHTTPError
 
-    client._request.side_effect = _upstream(403, {
-        "status": "error", "category": "FORBIDDEN",
-        "message": "Insufficient scopes, requires one of: [event-detail-read,[id]]"})
+    client._request.side_effect = _upstream(403, NOT_GRANTABLE)
     with pytest.raises(UpstreamHTTPError) as e:
-        _tool()(op="page_views", object_id="42")
+        _tool()(op="page_views", object_id="7", object_type="companies")
     msg = str(e.value)
     assert e.value.status_code == 403
     assert "`event-detail-read`" in msg and "published scope list" in msg
     assert "Professional" not in msg, "a scope refusal is not a plan refusal"
-    assert "op='contacts'" in msg
     assert e.value.oto_detail["reason"] == "permission_not_grantable"
     assert e.value.oto_detail["hubspot_asks"] == ["event-detail-read"]
+    client.get_object.assert_not_called()
 
 
 def test_a_scope_refusal_naming_a_known_scope_says_which_one_to_tick(client):
@@ -346,6 +401,7 @@ def test_a_scope_refusal_naming_nothing_makes_no_claim_about_the_list(client):
     assert "published scope list" not in msg and "Professional" not in msg
     assert "required scopes" in msg, "HubSpot's own words are quoted"
     assert e.value.oto_detail["reason"] == "scope_refused"
+    client.get_object.assert_not_called(), "a scope it does not name may be tickable"
 
 
 @pytest.mark.parametrize("message,expected", [
