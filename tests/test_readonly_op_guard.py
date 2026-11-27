@@ -90,7 +90,7 @@ ECRITURES = {
     "me.app": {"create", "update", "patch", "archive", "unarchive", "restore", "file",
                "unfile", "put_file", "publish", "delete_draft", "set_drafts"},
     "me.doc": {"create", "bulk_create", "update", "patch", "delete", "move", "revert",
-               "set_public", "archive", "unarchive", "verify"},
+               "set_public", "archive", "unarchive", "verify", "set_owner"},
     "me.function": {"create", "propose", "run", "test", "publish", "refuse"},
     # `sample` appelle un outil facturé, `describe` écrit l'affichage de la recette.
     "me.recipe": {"create", "propose", "describe", "sample", "test", "publish", "run"},

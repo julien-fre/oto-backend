@@ -675,9 +675,12 @@ sources = [
   "oto_mcp/db/journal_revisions.py",
   "oto_mcp/db/retention_revisions.py",
   "oto_mcp/db/doc_archivage.py",
+  "oto_mcp/db/responsables.py",
 ]
 tests = [
   "tests/**/test_doc_*.py",
+  "tests/test_responsables_db.py",
+  "tests/test_migration_20261125_responsables.py",
   "tests/**/test_docs*.py",
   "tests/**/test_kb*.py",
   "tests/**/test_node*.py",

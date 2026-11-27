@@ -615,6 +615,35 @@ ainsi ne le lirait plus.
 ⚠️ `can_access` ne change pas : la règle déplace la propriété, elle n'invente pas d'état
 « à l'org mais caché ».
 
+## Responsable d'une page — `owner_sub` (2026-11-25)
+
+**Le besoin.** Une équipe qui partage ses procédures et ses pages de mémoire veut savoir
+à qui poser une question sur l'une d'elles, sans demander à un agent qui l'a écrite.
+
+**La forme.** Colonne `owner_sub` (TEXT, nullable, sans défaut) sur `docs` et sur
+`org_instructions` (`oto_mcp/db/responsables.py`), posée par la révision
+`20261125_1700_responsables` et par le démarrage, sous garde de catalogue (même DDL).
+Elle nomme un compte. **C'est un nom, pas un droit** : elle n'ouvre ni ne ferme rien ;
+quiconque pouvait écrire la page ou la procédure le peut toujours, et peut la confier à
+quelqu'un d'autre. À ne pas confondre avec le palier propriétaire d'une procédure
+(`owner_type` / `owner_id`, ADR 0030) : `owner_sub` est une personne de ce palier.
+
+- **Lu** : chaque lecture de page (`oto_doc` / `POST /api/me/docs` : `list`, `get`, reçus
+  d'écriture) rend `owner_sub` ; `GET /api/me/instructions/{slug}` le rend sur la version
+  courante (pas sur `?version=N`).
+- **Par défaut** : tant que personne ne l'a posé (`NULL`), le responsable lu est
+  l'auteur — `created_by` pour une page, l'auteur de la première version rangée pour une
+  procédure (à défaut, `set_by` de la ligne vivante). Rien n'est rempli d'avance.
+- **Poser celui d'une page** : `oto_doc op=set_owner doc_id owner_sub`. Garde : `write`
+  sur le projet. Le compte doit pouvoir lire le projet, sinon 422 `owner_cannot_read`.
+  Ni le corps, ni `rev`, ni `updated_at`, ni les révisions ne bougent.
+- **Poser celui d'une procédure** : `POST /api/me/instructions/{slug}/owner
+  {owner_sub, org?}`, capacité `org.instruction.set_owner`. Garde : `ORG_ADMIN_OPT("org")`,
+  celle de l'écriture du corps. Le compte doit être membre de l'org, sinon 422
+  `owner_not_member`. La version ne bouge pas, aucun instantané n'est écrit.
+
+Les deux colonnes suivent la fusion de comptes (`db/users.py`).
+
 ## Lien public d'une page — le jeton est rangé chiffré (2026-11-19)
 
 `oto_doc op=set_public public=true` ouvre UNE page au web par un lien `/p/d/<jeton>`

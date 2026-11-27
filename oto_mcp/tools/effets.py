@@ -1234,7 +1234,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "oto_context": "lire",
     # reversible by oto_enable_tool
     "oto_disable_tool": "ecrire",
-    "oto_doc": {"lire": "list search get revisions backlinks shared_with_me outline verify", "ecrire": "create update patch move unarchive", "envoyer": "set_public", "detruire": "bulk_create delete revert archive"},
+    "oto_doc": {"lire": "list search get revisions backlinks shared_with_me outline verify", "ecrire": "create update patch move unarchive set_owner", "envoyer": "set_public", "detruire": "bulk_create delete revert archive"},
     "oto_doc_app": "lire",
     "oto_connector_app": "lire",
     "oto_connector_connect": "lire",

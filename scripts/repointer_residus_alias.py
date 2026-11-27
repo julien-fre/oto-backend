@@ -82,7 +82,7 @@ PAR_LOTS: dict[str, tuple[str, ...]] = {
     "doc_revisions": ("edited_by",),
     "apps": ("created_by", "updated_by", "draft_by"),
     "app_revisions": ("edited_by",),
-    "docs": ("created_by", "updated_by", "verified_by"),
+    "docs": ("created_by", "updated_by", "verified_by", "owner_sub"),
     "project_activity": ("sub",),
     "usage_signals": ("sub", "resolved_by"),
     "usage_signal_occurrences": ("sub",),
@@ -135,6 +135,7 @@ BORNEES: dict[tuple[str, str], str] = {
     ("tenant_admins", "sub"): "admins de tenant : une poignée par tenant",
     ("platform_instructions", "updated_by"): "deux lignes (clé = bloc A / bloc B)",
     ("org_instructions", "set_by"): "une ligne par guide d'org ou d'équipe",
+    ("org_instructions", "owner_sub"): "une ligne par guide d'org ou d'équipe",
     ("org_instruction_revisions", "set_by"): "versions des guides d'org : bornées par "
                                              "les éditions humaines, pas par les appels",
     ("connector_credentials", "set_by"): "une ligne par clé posée",
