@@ -15,8 +15,8 @@ l'ancien code l'ignore.
 Retour arrière : retire la table. Les mises en ligne en cours s'arrêtent ; la vidéo
 reste dans le projet, une nouvelle demande la renvoie.
 
-Révision : 20261126_2300_youtube_uploads
-Précédente : 20261125_1103_revocations
+Révision : 20261127_1100_youtube_uploads
+Précédente : 20261127_1000_file_expiry
 """
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from alembic import op
 
 from oto_mcp.db.schema.youtube import YOUTUBE_UPLOAD_JOBS
 
-revision = "20261126_2300_youtube_uploads"
-down_revision = "20261125_1103_revocations"
+revision = "20261127_1100_youtube_uploads"
+down_revision = "20261127_1000_file_expiry"
 branch_labels = None
 depends_on = None
 
