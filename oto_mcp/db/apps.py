@@ -653,3 +653,56 @@ def app_role_grants(app_id: str) -> list[dict]:
             "FROM resource_grants WHERE resource_type = 'app' AND resource_id = %s "
             f"AND {PARTAGE_VIVANT} ORDER BY principal_type, principal_id", (str(app_id),),
         ).fetchall()
+
+
+def through_app_access(app_id: int, ns_id: int,
+                       principals: list[tuple[str, str]]) -> Optional[str]:
+    """Le droit que l'un de ces principals tient sur le tableau À TRAVERS cette app
+    (`app_table_access`) : `write` > `read`, None = aucun. Ne compte que si le MÊME
+    principal tient un partage VIVANT de l'app — l'accès part avec ce partage."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+
+    if not principals:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT max(a.permission) AS p FROM app_table_access a "
+            "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
+            "  ON a.principal_type = pr.t AND a.principal_id = pr.i "
+            "JOIN resource_grants g ON g.resource_type = 'app' "
+            "  AND g.resource_id = a.app_id::text AND g.principal_type = a.principal_type "
+            f"  AND g.principal_id = a.principal_id AND {PARTAGE_VIVANT_G} "
+            "WHERE a.app_id = %s AND a.ns_id = %s",
+            ([p[0] for p in principals], [str(p[1]) for p in principals], int(app_id),
+             int(ns_id)),
+        ).fetchone()
+    return row["p"] if row else None
+
+
+def grant_through_app(app_id: int, ns_id: int, principal_type: str, principal_id: str,
+                      permission: str, by: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO app_table_access (app_id, ns_id, principal_type, principal_id, "
+            "permission, granted_by) VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (app_id, ns_id, principal_type, principal_id) DO UPDATE SET "
+            "permission = EXCLUDED.permission, granted_by = EXCLUDED.granted_by, "
+            "granted_at = NOW()",
+            (int(app_id), int(ns_id), principal_type, str(principal_id), permission, by))
+
+
+def revoke_through_app(app_id: int, principal_type: str, principal_id: str) -> int:
+    with _connect() as conn:
+        return conn.execute(
+            "DELETE FROM app_table_access WHERE app_id = %s AND principal_type = %s "
+            "AND principal_id = %s", (int(app_id), principal_type, str(principal_id)),
+        ).rowcount
+
+
+def through_app_of(app_id: int) -> list[dict]:
+    """Chaque accès par l'app posé sur cette app (pour `op=roles`)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT ns_id, principal_type, principal_id, permission FROM app_table_access "
+            "WHERE app_id = %s ORDER BY principal_type, principal_id, ns_id", (int(app_id),),
+        ).fetchall()

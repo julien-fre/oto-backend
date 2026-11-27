@@ -62,14 +62,14 @@ MAX_PROJECTS = 200
 _THUMB_KEYS = {"image", "color", "emoji", "design"}
 _ECRITURES = frozenset({"create", "update", "patch", "archive", "unarchive", "restore",
                         "file", "unfile", "publish", "delete_draft", "set_drafts",
-                        "set_role"})
+                        "set_role", "grant_through_app", "revoke_through_app"})
 
 
 class AppInput(BaseModel):
     op: Literal["list", "get", "create", "update", "patch", "archive", "unarchive",
                 "revisions", "revision", "restore", "validate", "file", "unfile",
                 "read_file", "put_file", "publish", "delete_draft", "set_drafts",
-                "roles", "set_role"]
+                "roles", "set_role", "grant_through_app", "revoke_through_app"]
     project_id: Optional[int] = Field(
         default=None, description="create: also file the new app in this project. "
         "file / unfile: the project. list: only the apps filed in it.")
@@ -120,6 +120,9 @@ class AppInput(BaseModel):
         "(`user`), a team (`group`) or an organization (`org`), as op=roles lists them.")
     principal_id: Optional[str] = Field(
         default=None, description="set_role: their id, as op=roles lists it.")
+    tables: Optional[list[str]] = Field(
+        default=None, description="grant_through_app: the app's table names to open "
+        "(default: every table it declares).")
     role: Optional[str] = Field(
         default=None, description="set_role: one of the roles the app's manifest declares "
         "(`manifest.roles`); omit it to give them back the app's `default_role`.")
@@ -210,6 +213,8 @@ class AppOut(BaseModel):
     roles: Optional[list[dict]] = None
     default_role: Optional[str] = None
     grants: Optional[list[dict]] = None
+    # grant_through_app : les tableaux de l'app qu'on n'a pas pu ouvrir (pas gérant).
+    skipped: Optional[list[dict]] = None
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -456,12 +461,13 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
 
     row = _app_or_404(sub, inp.app_id,
                       "read" if inp.op in ("get", "revisions", "read_file", "put_file",
-                                           "roles", "set_role") else "write")
+                                           "roles", "set_role", "grant_through_app",
+                                           "revoke_through_app") else "write")
     # L'org de l'APP, en plus de celle de l'appel (gardée par l'adaptateur) : l'app d'une
     # org suspendue se ferme à tous, invités d'une autre org compris.
     org_suspension.exiger(org_de_l_app(row))
 
-    if inp.op in ("roles", "set_role"):
+    if inp.op in ("roles", "set_role", "grant_through_app", "revoke_through_app"):
         return _roles(sub, row, inp)
 
     if inp.op == "get":
@@ -627,9 +633,46 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
     _require(ownership.can_govern(sub, APP_RTYPE, str(row["id"])), "forbidden",
              "Only who manages this app chooses its people's roles.", 403)
     manifest = row.get("manifest") or {}
-    if inp.op == "set_role":
+    skipped = None
+    if inp.op in ("set_role", "grant_through_app", "revoke_through_app"):
         _require(inp.principal_type is not None and bool(inp.principal_id), "missing_principal",
-                 "`principal_type` and `principal_id` name the share to set a role on.")
+                 "`principal_type` and `principal_id` name who the app is shared with.")
+    if inp.op in ("grant_through_app", "revoke_through_app"):
+        vivants = {(g["principal_type"], g["principal_id"])
+                   for g in db.apps.app_role_grants(str(row["id"]))}
+        if inp.op == "revoke_through_app":
+            db.apps.revoke_through_app(int(row["id"]), inp.principal_type, str(inp.principal_id))
+        else:
+            _require((inp.principal_type, str(inp.principal_id)) in vivants, "not_shared",
+                     "This app isn't shared with them: share it first.", 404)
+            declares = manifest.get("tables") or {}
+            noms = inp.tables if inp.tables is not None else list(declares)
+            inconnus = [n for n in noms if n not in declares]
+            _require(not inconnus, "undeclared_table",
+                     f"This app declares no table named {', '.join(inconnus)}.")
+            skipped = []
+            for alias in noms:
+                t = declares[alias]
+                ns = str(t.get("table"))
+                # Ouvrir un tableau, même par l'app seule, c'est le PARTAGER : il faut
+                # pouvoir le partager (gérant, propriétaire, admin).
+                if not ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, ns):
+                    skipped.append({"table": alias, "reason": "you can't share this table"})
+                    continue
+                db.apps.grant_through_app(int(row["id"]), int(ns), inp.principal_type,
+                                          str(inp.principal_id),
+                                          "write" if (t.get("set") or t.get("add")) else "read",
+                                          sub)
+    if inp.op == "set_role":
+        # Changer le rôle de qui tient des tableaux PAR L'APP, c'est changer ce qu'il en
+        # voit : il faut pouvoir partager chacun de ces tableaux.
+        ouverts = [a for a in db.apps.through_app_of(int(row["id"]))
+                   if (a["principal_type"], a["principal_id"])
+                   == (inp.principal_type, str(inp.principal_id))]
+        _require(all(ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE,
+                                          str(a["ns_id"])) for a in ouverts),
+                 "forbidden", "They see tables through this app that you can't share: "
+                 "only who can share them changes their role.", 403)
         if inp.role is not None:
             brouillon = db.app_versions.draft(int(row["id"]))
             declares = set(manifest.get("roles") or {}) | set(
@@ -642,11 +685,19 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
                  "their role.", 404)
     from .apps_roles import ordre
     roles = manifest.get("roles") or {}
-    return {"roles": [{"key": k, "label": roles[k].get("label") or k} for k in ordre(manifest)],
+    alias_de = {str(t.get("table")): a for a, t in (manifest.get("tables") or {}).items()}
+    par_l_app: dict[tuple, list] = {}
+    for a in db.apps.through_app_of(int(row["id"])):
+        par_l_app.setdefault((a["principal_type"], a["principal_id"]), []).append(
+            {"table": alias_de.get(str(a["ns_id"]), str(a["ns_id"])),
+             "permission": a["permission"]})
+    return {**({"skipped": skipped} if skipped is not None else {}),
+            "roles": [{"key": k, "label": roles[k].get("label") or k} for k in ordre(manifest)],
             "default_role": manifest.get("default_role"),
             "grants": [{"principal_type": g["principal_type"], "principal_id": g["principal_id"],
                         "share_role": g["role"], "app_role": g["app_role"],
-                        "expires_at": g["expires_at"]}
+                        "expires_at": g["expires_at"],
+                        "through_app": par_l_app.get((g["principal_type"], g["principal_id"]), [])}
                        for g in db.apps.app_role_grants(str(row["id"]))]}
 
 
@@ -764,8 +815,11 @@ def description_app(liens: bool) -> str:
             "their share (op=set_role `app_id`, `principal_type`, `principal_id`, `role`; "
             "op=roles lists roles and shares; managers only), else `default_role` — enforced "
             "on every app call; op=get returns the role's narrowed manifest and `access` {role, "
-            "sections}. Sections are display only. A role only narrows what the app "
-            "serves: a viewer still needs their own access to the tables.\n"
+            "sections}. Sections are display only. To let someone use the app WITHOUT any "
+            "access to its tables elsewhere: op=grant_through_app (`app_id`, "
+            "`principal_type`, `principal_id`, optional `tables`; you must be able to share "
+            "each table) — they then read and write those tables only inside this app, as "
+            "their role allows; op=revoke_through_app removes it.\n"
             "Drafts: an app with `drafts_enabled` (op=set_drafts `enabled`) keeps its "
             "viewers on the PUBLISHED version — update and patch write its manifest and "
             "HTML to a DRAFT (`target: \"draft\"` in the reply; title and thumbnail stay "

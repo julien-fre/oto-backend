@@ -808,7 +808,8 @@ def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     if inp.reads is not None:
         raise AuthzDenied(400, "invalid_batch", "A consent is for one gesture: no `reads`.")
     app = _app_pour(ctx, inp.app_id, inp.draft, geste_=True, as_role=inp.as_role)
-    _, resume = _geste(ctx, app, inp)
+    with _par_l_app(ctx.sub, app):
+        _, resume = _geste(ctx, app, inp)
     jeton = secrets.token_urlsafe(32)
     ttl = CONSENT_TTL_UPLOAD if inp.action == "upload_file" else CONSENT_TTL
     db.apps.consent_issue(int(app["id"]), ctx.sub, inp.action, _empreinte(inp),
@@ -869,23 +870,24 @@ def _lot(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     with db.reuse_connection():
         app = _app_pour(ctx, inp.app_id, inp.draft, as_role=inp.as_role)
         results = []
-        for r in reads:
-            try:
-                lu = _lecture_du_lot(inp, r)
-                out = _lire(ctx, app, lu.action, lu.table, lu.options or {})
-                results.append({"id": r["id"], "ok": True, **out})
-            except AuthzDenied as d:
-                results.append({"id": r["id"], "ok": False, "status": d.status,
-                                "code": d.code, "detail": d.message or None,
-                                **({"details": d.details} if d.details else {})})
-            except psycopg.errors.QueryCanceled:
-                # La borne `statement_timeout` du pool a coupé CETTE lecture : l'emprunt
-                # est en autocommit (`reuse_connection`), donc seule elle échoue, et
-                # les suivantes restent servies sur la même connexion.
-                results.append({"id": r["id"], "ok": False, "status": 503,
-                                "code": READ_TIMEOUT,
-                                "detail": "This read took too long and was stopped: "
-                                          "narrow it (filter, limit) or retry it alone."})
+        with _par_l_app(ctx.sub, app):
+            for r in reads:
+                try:
+                    lu = _lecture_du_lot(inp, r)
+                    out = _lire(ctx, app, lu.action, lu.table, lu.options or {})
+                    results.append({"id": r["id"], "ok": True, **out})
+                except AuthzDenied as d:
+                    results.append({"id": r["id"], "ok": False, "status": d.status,
+                                    "code": d.code, "detail": d.message or None,
+                                    **({"details": d.details} if d.details else {})})
+                except psycopg.errors.QueryCanceled:
+                    # La borne `statement_timeout` du pool a coupé CETTE lecture : l'emprunt
+                    # est en autocommit (`reuse_connection`), donc seule elle échoue, et
+                    # les suivantes restent servies sur la même connexion.
+                    results.append({"id": r["id"], "ok": False, "status": 503,
+                                    "code": READ_TIMEOUT,
+                                    "detail": "This read took too long and was stopped: "
+                                              "narrow it (filter, limit) or retry it alone."})
     return {"results": results}
 
 
@@ -934,6 +936,54 @@ def _debiter(n: int) -> None:
 def _appel(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     app = _app_pour(ctx, inp.app_id, inp.draft, geste_=inp.action in GESTES,
                     as_role=inp.as_role)
+    with _par_l_app(ctx.sub, app) as portee:
+        out = _appel_de(ctx, inp, app)
+        if (inp.action in GESTES and isinstance(out, dict) and inp.table
+                and str(((app["manifest"].get("tables") or {}).get(inp.table) or {})
+                        .get("table")) in portee.servis):
+            # Écrit par l'accès de l'app : le lecteur n'atteint pas ce tableau par ses
+            # routes — l'hôte ne propose pas de défaire par elles.
+            out = {**out, "through_app": True}
+        return out
+
+
+def _par_l_app(sub: str, app: dict):
+    """La portée de l'accès PAR L'APP (`datastore/par_l_app.py`) pour cet appel : les
+    seuls tableaux du manifeste resserré au rôle du lecteur, au droit que l'un de ses
+    principals y tient par CETTE app (`app_table_access`, tant qu'il tient un partage
+    vivant de l'app) — en écriture seulement si l'app y écrit (`set` ou `add`). Lu une
+    fois par tableau et par appel."""
+    from ..datastore import par_l_app
+
+    tables = {str(t.get("table")): t for t in (app["manifest"].get("tables") or {}).values()
+              if isinstance(t, dict)}
+    vus: dict[str, Optional[str]] = {}
+
+    def droit(ns: str) -> Optional[str]:
+        # Paresseux : un appel que le lecteur sert seul ne lit rien de plus.
+        if ns not in tables:
+            return None
+        if ns not in vus:
+            principaux = list(ownership.accessor_scope(sub).principal_pairs())
+            d = db.apps.through_app_access(int(app["id"]), int(ns), principaux)
+            # Le manifeste et ses rôles sont la SEULE frontière d'un lecteur par l'app :
+            # elle ne vaut que tant que leur auteur (le dernier à les avoir écrits,
+            # `updated_by`, ou `draft_by` pour l'aperçu) peut PARTAGER ce tableau. Un
+            # éditeur qui ne le peut pas et réécrit l'app (un champ de plus, un rôle
+            # élargi) en devient l'auteur : l'accès par l'app s'éteint, il ne s'élargit pas.
+            if d is not None and not ownership.can_govern(
+                    app["updated_by"], ownership.TYPE_RESSOURCE_DATASTORE, ns):
+                d = None
+            t = tables[ns]
+            if d == "write" and not (t.get("set") or t.get("add")):
+                d = "read"
+            vus[ns] = d
+        return vus[ns]
+
+    return par_l_app.portee(par_l_app.Portee(sub, droit))
+
+
+def _appel_de(ctx: ResolvedCtx, inp: AppCallInput, app: dict) -> dict:
     o = inp.options or {}
 
     if inp.action == "upload_file":

@@ -117,10 +117,36 @@ définition des rôles, et `access` `{role, role_label, sections}` (ce que l'app
 ⚠️ **Les sections ne sont pas une barrière** : tout le HTML part chez chaque lecteur.
 Elles disent à l'app quoi AFFICHER ; ce qui protège, ce sont les données que le
 serveur refuse. ⚠️ Le rôle ne fait que retirer : Use reste nécessaire pour cliquer, et
-chaque geste reste jugé auteur ∩ lecteur — un partenaire extérieur doit donc toujours
-LIRE le tableau lui-même, ce qui lui ouvre le tableau entier hors de l'app. Un
-périmètre de LIGNES par partage (« sa fiche seulement ») n'a de sens qu'une fois l'app
-servie aux droits de son auteur : il n'est pas dans ce lot.
+chaque geste reste jugé auteur ∩ lecteur. Un lecteur qui tient le tableau par un
+partage ORDINAIRE le lit en entier hors de l'app : pour que le rôle soit la seule
+porte, ouvrir le tableau **par l'app seulement** (ci-dessous) au lieu de le partager.
+
+### Accès par l'app (`app_table_access`, `datastore/par_l_app.py`)
+
+Un tableau peut être ouvert à quelqu'un **à travers une app seulement** : `oto_apps
+op=grant_through_app` (`app_id`, `principal_type`, `principal_id`, `tables` optionnel —
+par défaut tous ceux que l'app déclare), `op=revoke_through_app` pour le retirer,
+`op=roles` le liste par partage (`through_app`). Règles :
+
+- **Poser = partager le tableau** : qui gouverne l'app ET peut partager chaque tableau
+  (`can_govern`) ; un tableau qu'il ne peut partager est sauté et nommé (`skipped`).
+  Seulement à un principal qui tient un partage de l'app (404 `not_shared`).
+- **Droit** : `write` si l'app écrit dans ce tableau (`set` ou `add`), sinon `read` ; à
+  l'appel, `write` retombe à `read` si le manifeste resserré au rôle n'y écrit plus.
+- **Ne vaut que dans l'appel de CETTE app** : `apps_appel._par_l_app` ouvre une portée
+  (`ContextVar`) le temps de l'appel, pour les seuls tableaux du manifeste resserré ;
+  `DatastorePg._trouver` la consulte quand le lecteur ne tient pas le tableau lui-même
+  assez. **Aucune autre lecture ne voit `app_table_access`** : outils `data_*`, face
+  REST des tableaux, écran Tableaux, recherche, une autre app — rien. Le reste de
+  l'appel est jugé comme avant (manifeste, rôle, auteur ∩ lecteur, consentement) ;
+  l'historique des lignes garde le lecteur.
+- **Part avec le partage de l'app** : l'accès ne compte que si le MÊME principal tient
+  un partage VIVANT de l'app (retrait, échéance).
+- ⚠️ **Un agent lancé depuis l'app n'en hérite pas** : son run lit les tableaux avec les
+  droits de qui l'a lancé, hors de toute portée.
+
+Un périmètre de LIGNES par partage (« sa fiche seulement ») se posera sur cette même
+portée : il n'est pas dans ce lot.
 
 ## Ce que le serveur juge
 

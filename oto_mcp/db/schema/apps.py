@@ -173,3 +173,23 @@ ROLES = """
 -- (révision `20261127_1200_app_roles`) : le fragment `grants.GRANTS` a déjà été joué.
 ALTER TABLE resource_grants ADD COLUMN IF NOT EXISTS app_role TEXT;
 """
+
+ACCES_PAR_L_APP = """
+-- Un tableau ouvert à quelqu'un À TRAVERS UNE APP SEULEMENT (`docs/apps.md` § Accès par
+-- l'app) : il le lit — et l'écrit, `permission = 'write'`, par les seuls gestes de
+-- l'app — dans l'appel de CETTE app, borné par son manifeste et son rôle d'app. Nulle
+-- part ailleurs : aucune lecture de `resource_grants` ne voit cette table, ni les
+-- outils `data_*`, ni la face REST des tableaux, ni l'écran Tableaux. Posé par qui
+-- gouverne l'app ET le tableau (`oto_apps op=grant_through_app`). Ne vaut que tant que
+-- le même principal tient un partage VIVANT de l'app : il part avec lui.
+CREATE TABLE IF NOT EXISTS app_table_access (
+    app_id BIGINT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
+    principal_type TEXT NOT NULL CHECK (principal_type IN ('user', 'group', 'org')),
+    principal_id TEXT NOT NULL,
+    permission TEXT NOT NULL CHECK (permission IN ('read', 'write')),
+    granted_by TEXT,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (app_id, ns_id, principal_type, principal_id)
+);
+"""
