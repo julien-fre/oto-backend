@@ -49,13 +49,17 @@ def portee(p: Portee) -> Iterator[Portee]:
 
 # Le RUN d'un agent lancé depuis une app (`apps_appel._droit_du_run`, enregistré par la
 # capacité : la couche datastore ne remonte pas vers les capacités). `(sub, ns_id) ->
-# "read" | None`.
+# "read" | None`. Et ce qui note au journal des lectures d'app un tableau qu'un run a
+# ouvert par cet accès (`apps_appel._noter_run`, `(sub, ns_id) -> None`).
 _DU_RUN: Optional[Callable[[str, str], Optional[str]]] = None
+_NOTER_RUN: Optional[Callable[[str, str], None]] = None
 
 
-def enregistrer_run(f: Callable[[str, str], Optional[str]]) -> None:
-    global _DU_RUN
+def enregistrer_run(f: Callable[[str, str], Optional[str]],
+                    noter: Optional[Callable[[str, str], None]] = None) -> None:
+    global _DU_RUN, _NOTER_RUN
     _DU_RUN = f
+    _NOTER_RUN = noter
 
 
 def droit(sub: Optional[str], ns_id: str) -> Optional[str]:
@@ -69,7 +73,12 @@ def droit(sub: Optional[str], ns_id: str) -> Optional[str]:
     return _DU_RUN(sub, str(ns_id)) if _DU_RUN is not None else None
 
 
-def servi(ns_id: str) -> None:
+def servi(sub: str, ns_id: str) -> None:
+    """Le tableau vient d'être servi par l'accès de l'app : noté dans la portée de
+    l'appel (le journal des lectures en tire `access = 'app'`), ou — hors d'elle, donc
+    par le run d'un agent lancé depuis l'app — noté au journal comme une ouverture."""
     p = _PORTEE.get()
     if p is not None:
         p.servis.add(str(ns_id))
+    elif _NOTER_RUN is not None:
+        _NOTER_RUN(sub, str(ns_id))

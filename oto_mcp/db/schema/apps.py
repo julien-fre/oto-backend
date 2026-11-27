@@ -193,3 +193,35 @@ CREATE TABLE IF NOT EXISTS app_table_access (
     PRIMARY KEY (app_id, ns_id, principal_type, principal_id)
 );
 """
+
+LECTURES = """
+-- Le JOURNAL DES LECTURES d'app (`docs/apps.md` § Journal des lectures) : qui a lu quel
+-- tableau par quelle app, quel jour — des COMPTEURS, pas une ligne par lecture (une app
+-- ouvre son écran par huit à quinze lectures et se rafraîchit). Écrit APRÈS la lecture,
+-- hors de son emprunt au pool (`capabilities/apps_appel._call_journalise`). Lu par qui
+-- gouverne l'app ou le tableau (`oto_apps op=reads`). Purgé au-delà de 180 jours par
+-- `oto-mcp maintenance app-reads`.
+-- `access` : par où le lecteur atteignait le tableau — `own` (son propre partage),
+-- `app` (À TRAVERS l'app seulement, `app_table_access`), `run` (un agent lancé depuis
+-- l'app, par cet accès : `row_reads` y compte les ouvertures du tableau, `rows_served`
+-- reste 0, le run lisant par les outils de tableau).
+-- `day` : le jour UTC.
+CREATE TABLE IF NOT EXISTS app_reads (
+    app_id BIGINT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    day DATE NOT NULL,
+    ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
+    sub TEXT NOT NULL,
+    access TEXT NOT NULL CHECK (access IN ('own', 'app', 'run')),
+    row_reads INTEGER NOT NULL DEFAULT 0,
+    aggregate_reads INTEGER NOT NULL DEFAULT 0,
+    rows_served BIGINT NOT NULL DEFAULT 0,
+    first_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (app_id, day, ns_id, sub, access)
+);
+-- Le gérant d'un tableau lit par lui ; la purge, par le jour.
+CREATE INDEX IF NOT EXISTS app_reads_ns_idx ON app_reads (ns_id, day);
+CREATE INDEX IF NOT EXISTS app_reads_day_idx ON app_reads (day);
+-- La fusion de comptes repointe `sub` d'un bloc.
+CREATE INDEX IF NOT EXISTS app_reads_sub_idx ON app_reads (sub);
+"""

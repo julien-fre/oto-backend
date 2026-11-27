@@ -156,6 +156,8 @@ CLASSEMENT: dict[str, Table] = {
     "app_table_access": indirecte(_APPS, "l'accès par l'app part avec son app, si son "
                                   "principal est du périmètre", comptes=("granted_by",),
                                   destinataire=ParEntite("principal_type", "principal_id")),
+    "app_reads": indirecte(_APPS, "le journal des lectures d'app part avec son app",
+                           comptes=("sub",)),
     "doc_links": indirecte(Via("docs", ("from_doc",))),
     "doc_change_requests": indirecte(_DOCS),
     "doc_embeddings": indirecte(_DOCS),

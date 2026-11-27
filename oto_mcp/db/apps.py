@@ -1,5 +1,6 @@
 """Apps : lecture et écriture des tables `apps`, `app_revisions`, `app_projects`,
-`app_consents` et `app_files`.
+`app_consents`, `app_files`, `app_table_access` et `app_reads` (le journal des
+lectures, en compteurs par jour).
 
 NON aplati dans `db.*` : `create`/`get`/`update` sont trop communs pour la surface
 plate. Les appelants écrivent `db.apps.<fn>`.
@@ -739,3 +740,93 @@ def app_of_run(job_id: int, sub: str) -> Optional[int]:
             (int(job_id), sub),
         ).fetchone()
     return int(row["app_id"]) if row else None
+
+
+# --- Le journal des lectures d'app (`app_reads`, `docs/apps.md` § Journal des lectures).
+
+#: Ce que le journal garde : la purge (`maintenance app-reads`) et la borne de lecture.
+READS_RETENTION_DAYS = 180
+#: Au plus, les lignes d'une lecture du journal (une par lecteur, tableau, accès, jour).
+READS_MAX = 2000
+
+_JOUR_UTC = "(NOW() AT TIME ZONE 'UTC')::date"
+
+
+def note_reads(app_id: int, sub: str, lues: Iterable[tuple]) -> int:
+    """Ajoute aux compteurs du jour (UTC) ce qu'un appel a servi : `lues` = des
+    `(ns_id, access, row_reads, aggregate_reads, rows_served)`, déjà sommés par
+    `(ns_id, access)` par l'appelant — un `ON CONFLICT DO UPDATE` refuse de toucher deux
+    fois la même ligne dans une requête. UNE requête, en autocommit de son emprunt ;
+    les clés triées : deux appels concurrents verrouillent dans le même ordre. Un
+    tableau supprimé entre la lecture et l'écriture est sauté (jointure)."""
+    lignes = sorted((int(ns), str(acc), int(r), int(a), int(n)) for ns, acc, r, a, n in lues)
+    if not lignes:
+        return 0
+    cols = list(zip(*lignes))
+    with _connect() as conn:
+        return conn.execute(
+            "INSERT INTO app_reads (app_id, day, ns_id, sub, access, row_reads, "
+            "aggregate_reads, rows_served) "
+            f"SELECT %s, {_JOUR_UTC}, x.ns, %s, x.acc, x.r, x.a, x.n "
+            "FROM unnest(%s::bigint[], %s::text[], %s::int[], %s::int[], %s::bigint[]) "
+            "AS x(ns, acc, r, a, n) JOIN user_datastores d ON d.id = x.ns "
+            "ORDER BY x.ns, x.acc "
+            "ON CONFLICT (app_id, day, ns_id, sub, access) DO UPDATE SET "
+            "row_reads = app_reads.row_reads + EXCLUDED.row_reads, "
+            "aggregate_reads = app_reads.aggregate_reads + EXCLUDED.aggregate_reads, "
+            "rows_served = app_reads.rows_served + EXCLUDED.rows_served, "
+            "last_at = NOW()",
+            (int(app_id), sub, list(cols[0]), list(cols[1]), list(cols[2]), list(cols[3]),
+             list(cols[4])),
+        ).rowcount
+
+
+_COLONNES_LUES = ("r.app_id, ap.title AS app_title, r.ns_id, d.namespace AS table_name, r.sub, "
+                  "u.email, r.access, r.day, r.row_reads, r.aggregate_reads, r.rows_served, "
+                  "r.first_at, r.last_at")
+_JOINTURES_LUES = ("FROM app_reads r JOIN apps ap ON ap.id = r.app_id "
+                   "JOIN user_datastores d ON d.id = r.ns_id "
+                   "LEFT JOIN users u ON u.sub = r.sub")
+
+
+def reads_of_app(app_id: int, days: int, ns_ids: Optional[list[int]] = None) -> list[dict]:
+    """Le journal d'UNE app sur les `days` derniers jours (UTC, aujourd'hui compris),
+    les plus récents d'abord, `READS_MAX` lignes au plus ; `ns_ids` : ces tableaux
+    seulement (None = tous)."""
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_COLONNES_LUES} {_JOINTURES_LUES} WHERE r.app_id = %s "
+            f"AND r.day > {_JOUR_UTC} - %s "
+            "AND (%s::bigint[] IS NULL OR r.ns_id = ANY(%s::bigint[])) "
+            "ORDER BY r.day DESC, r.last_at DESC LIMIT %s",
+            (int(app_id), int(days), ns_ids, ns_ids, READS_MAX),
+        ).fetchall()
+
+
+def reads_of_tables(ns_ids: list[int], days: int) -> list[dict]:
+    """Le journal de ces tableaux, par toutes les apps, sur les `days` derniers jours."""
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_COLONNES_LUES} {_JOINTURES_LUES} WHERE r.ns_id = ANY(%s::bigint[]) "
+            f"AND r.day > {_JOUR_UTC} - %s "
+            "ORDER BY r.day DESC, r.last_at DESC LIMIT %s",
+            ([int(n) for n in ns_ids], int(days), READS_MAX),
+        ).fetchall()
+
+
+_READS_PURGEABLES = f"day <= {_JOUR_UTC} - %s"
+
+
+def count_purgeable_reads(days: int = READS_RETENTION_DAYS) -> int:
+    with _connect() as conn:
+        return int(conn.execute(
+            f"SELECT count(*) AS n FROM app_reads WHERE {_READS_PURGEABLES}", (int(days),),
+        ).fetchone()["n"])
+
+
+def purge_reads(days: int = READS_RETENTION_DAYS) -> int:
+    """Retire les jours du journal des lectures au-delà de `days`. Rend combien."""
+    with _connect() as conn:
+        return conn.execute(
+            f"DELETE FROM app_reads WHERE {_READS_PURGEABLES}", (int(days),),
+        ).rowcount or 0
