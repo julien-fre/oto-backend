@@ -666,8 +666,35 @@ def classify(exc, parametres: Optional[list] = None) -> ErrorInfo:
                 return ErrorInfo("invalid_input", False,
                                  str(e) or "Request refused by the upstream service.")
 
+    # (4c) The VAULT could not read the call's key back (signal 1465): an envelope that
+    # does not open under this row's AAD or the current master key, or a stored secret
+    # that does not unpack. Both messages are written by us and cite no secret; they
+    # say the one gesture left (set the key again). Served "Internal server error.",
+    # they read as an outage, and the agent retried a call that could never pass.
+    # Still a fault on OUR side: it stays reported to Sentry (`_is_expected_error`
+    # does not list it).
+    illisible = _vault_unreadable(exc)
+    if illisible is not None:
+        return ErrorInfo("credential_unreadable", False, str(illisible),
+                         "set the connector's key again from the dashboard (or "
+                         "reconnect it): the stored copy can no longer be read")
+
     # (5) The rest = bug/internal error: NO echo of str(exc) (anti-leak).
     return ErrorInfo("internal", False, "Internal server error.")
+
+
+#: The vault's own refusals to read a stored key back — recognized by NAME, like the
+#: other typed errors here: the taxonomy imports neither `crypto` nor the store.
+_VAULT_UNREADABLE = frozenset({"EnveloppeIndechiffrable", "SecretUnpackError"})
+
+
+def _vault_unreadable(exc) -> Optional[BaseException]:
+    """The first vault read refusal in the chain (`crypto.EnveloppeIndechiffrable`,
+    `credentials_store.SecretUnpackError`), else None."""
+    for e in _chain(exc):
+        if type(e).__name__ in _VAULT_UNREADABLE and str(e).strip():
+            return e
+    return None
 
 
 def jsonrpc_code(info: ErrorInfo) -> int:
