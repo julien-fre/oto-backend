@@ -24,7 +24,7 @@ _KEY = "7" * 64
 SECRET = "SK-SECRET-A-NE-JAMAIS-IMPRIMER"
 LOGIN = "login-exemple-1234"
 AUTRE_LOGIN = "login-autre-9999"
-ID_ORG = "org-identifiant-a-taire"
+ID_ORG = "987654"   # une org a un identifiant numérique
 SUB = "sub-identifiant-a-taire"
 
 
@@ -178,8 +178,8 @@ def test_la_ligne_est_rejugee_sous_verrou(monkeypatch):
 
 def test_une_erreur_sur_une_ligne_est_comptee_et_les_autres_passent(monkeypatch, capsys,
                                                                     caplog):
-    _poser("org", "a", f"{LOGIN}:{SECRET}")
-    _poser("org", "b", f"{LOGIN}:{SECRET}")
+    _poser("org", "11", f"{LOGIN}:{SECRET}")
+    _poser("org", "12", f"{LOGIN}:{SECRET}")
     vrai = q._convertir
 
     def _premiere_en_erreur(cle_ligne, rang):
@@ -193,13 +193,13 @@ def test_une_erreur_sur_une_ligne_est_comptee_et_les_autres_passent(monkeypatch,
     code = maintenance.main(["qonto-deux-champs", "--appliquer"])
 
     assert code == maintenance.QONTO_ERREUR
-    assert _ligne("org", "a")["clair"] == f"{LOGIN}:{SECRET}"
-    assert _ligne("org", "b")["clair"] == SECRET
+    assert _ligne("org", "11")["clair"] == f"{LOGIN}:{SECRET}"
+    assert _ligne("org", "12")["clair"] == SECRET
     sortie = capsys.readouterr()
     assert "converties                        : 1" in sortie.out
     assert "erreurs                           : 1" in sortie.out
     tout = sortie.out + sortie.err + caplog.text
-    assert SECRET not in tout and "'org', 'a'" not in tout
+    assert SECRET not in tout and "987654" not in tout
 
 
 def test_aucune_valeur_ni_identifiant_dans_la_sortie(capsys, caplog):
