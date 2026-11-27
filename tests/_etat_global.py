@@ -79,6 +79,37 @@ def _lecteurs_lies() -> tuple:
         and getattr(mod, "__dict__", {}).get(_LECTEUR, origine) is not origine))
 
 
+def modules_qui_lient_le_lecteur() -> list[str]:
+    """Les modules d'`oto_mcp` qui lient le lecteur d'identité à leur import
+    (`from …auth.hooks import current_user_sub_from_token` au NIVEAU MODULE), lus dans le
+    source par l'AST, sans rien importer. Un import fait dans une fonction ne lie rien au
+    module : il relit `auth.hooks` à chaque appel."""
+    import ast
+    import pathlib
+    racine = pathlib.Path(__file__).resolve().parent.parent
+    noms = []
+    for chemin in sorted((racine / "oto_mcp").rglob("*.py")):
+        arbre = ast.parse(chemin.read_text(encoding="utf-8"), filename=str(chemin))
+        if any(isinstance(n, ast.ImportFrom) and (n.module or "").endswith("hooks")
+               and any(a.name == _LECTEUR for a in n.names) for n in arbre.body):
+            partie = chemin.relative_to(racine).with_suffix("").parts
+            noms.append(".".join(partie[:-1] if partie[-1] == "__init__" else partie))
+    return noms
+
+
+def lier_les_lecteurs_d_avance() -> None:
+    """Importe, AVANT tout test, chaque module qui lie le lecteur d'identité. Un module
+    importé pour la première fois PENDANT qu'un test patche `auth.hooks` lierait le faux
+    lecteur, et `monkeypatch` ne le rendrait pas : l'écart dépendait de l'ordre du worker
+    (vécu le 27/11/2026 sur deux bancs de recettes, `oto_mcp.middleware.call_context`,
+    deux tags bloqués). Importés d'avance, ils lient l'original : un patch ne les touche
+    plus qu'à travers `monkeypatch.setattr` sur eux, qui se rend. Un import qui échoue
+    lève : la suite ne joue pas sur un arbre qu'elle ne sait pas importer."""
+    import importlib
+    for nom in modules_qui_lient_le_lecteur():
+        importlib.import_module(nom)
+
+
 def releve() -> dict:
     return {
         "lecteur d'identité lié": _lecteurs_lies(),
