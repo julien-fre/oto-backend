@@ -18,15 +18,15 @@ maison, linéaire, qui suit le découpage du tokenizer HTML (commentaires et leu
 fermetures abruptes, `<!…>` / `<?…>` / `</…` faux commentaires, valeurs d'attribut
 entre guillemets qui contiennent `>`, texte brut de `script` avec ses états
 « échappés », `style`, `textarea`, `title`, `xmp`, `iframe`, `noembed`, `noframes`,
-`noscript`, `plaintext`, CDATA et `/>` dans SVG/MathML). Il ne rejoue PAS la
-construction de l'arbre : un élément marqué ne finit qu'à SA balise fermante, au même
-niveau d'imbrication du même nom, et **jamais par la fermeture d'un ancêtre** (le
-navigateur ferme souvent plus tôt, rarement plus tard : `<div><p><div marqué>x</p>S</div>`
-garde S dans le div marqué). Une fermeture n'est pas comptée tant qu'un tableau, une
-cellule, un `template`, un `button`, un `select`, un `object`, un SVG… ouvert DANS
-l'élément reste ouvert (le navigateur l'ignorerait). Jamais fermé : **tout jusqu'à la
-fin du document part**. `html`, `head`, `body` marqués : jusqu'à la fin aussi. Retirer
-trop est un défaut d'affichage ; retirer trop peu serait une fuite.
+`noscript`, `plaintext`, CDATA et `/>` dans SVG/MathML). Dans l'élément marqué, il tient
+la pile de ce qui s'y ouvre ; une fermeture n'y dépile que si le navigateur la suivrait
+(`_bloque` : portée des tableaux, des listes, des `select`, éléments spéciaux), règles
+prises AU LARGE. Il ne rejoue pas les fermetures implicites des balises ouvrantes
+(`<li>` qui ferme un `<li>`) : l'élément marqué ne finit qu'à SA balise fermante, jamais
+avant le navigateur. Jamais fermé — ou un élément marqué intérieur fermé par celle d'un
+autre (le navigateur peut le garder ouvert ou le recloner) — : **tout jusqu'à la fin du
+document part**. `html`, `head`, `body` marqués : jusqu'à la fin aussi. Retirer trop est
+un défaut d'affichage ; retirer trop peu serait une fuite.
 
 **Ce qui n'est PAS protégé** : le JavaScript et les données hors d'un élément marqué
 (une constante dans un `<script>` non marqué, un gabarit HTML construit en JS, le CSS)
@@ -49,6 +49,7 @@ _BLANCS = re.compile(r"[\t\n\f\r ]*")
 _NOM = re.compile(r"[^\t\n\f\r />]*")
 _ATTR = re.compile(r"""([^\t\n\f\r />][^\t\n\f\r /=>]*)(?:[\t\n\f\r ]*=[\t\n\f\r ]*"""
                    r"""(?:"([^"]*)"|'([^']*)'|(?!["'])([^\t\n\f\r >]*)))?""")
+_BLANCS_HTML = re.compile(r"[\t\n\f\r ]+")
 _FIN_COMMENTAIRE = re.compile(r"--!?>")
 _JALONS_SCRIPT = re.compile(r"<!--|-->|<(/?)script(?=[\t\n\f\r />])", re.I)
 _FIN_BRUT: dict[str, re.Pattern] = {}
@@ -60,24 +61,26 @@ BRUTS = frozenset({"script", "style", "textarea", "title", "xmp", "iframe", "noe
                    "noframes", "noscript", "plaintext"})
 # Contenu jamais exécuté comme du JS : relu, un niveau, pour ses propres marques.
 _RELUS = frozenset({"noscript", "noembed", "noframes", "iframe"})
-# Ouverts DANS un élément marqué, ils font ignorer au navigateur la fermeture de
-# l'élément tant qu'ils restent ouverts (portée) : on ne la compte pas non plus.
-BARRIERES = frozenset({"table", "caption", "colgroup", "tbody", "thead", "tfoot", "tr",
-                       "td", "th", "template", "button", "select", "object", "applet",
-                       "marquee", "svg", "math", "foreignobject"})
-# Les éléments « spéciaux » du HTML : la fermeture d'un élément ORDINAIRE (`span`, `a`,
-# `b`, un élément maison…) est ignorée tant que l'un d'eux, ouvert dedans, reste ouvert.
-SPECIAUX = BARRIERES | frozenset({
-    "address", "article", "aside", "blockquote", "body", "center", "dd", "details", "dir",
-    "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "frameset",
-    "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "html", "li", "listing",
-    "main", "menu", "nav", "ol", "p", "pre", "search", "section", "summary", "ul",
-    "desc", "title", "mi", "mo", "mn", "ms", "mtext", "annotation-xml"})
-# Des éléments marqués imbriqués et encore ouverts : au-delà, tout part jusqu'à la fin.
-MAX_PILES = 32
-# La profondeur suivie (une pile, les SVG/MathML ouverts) : au-delà, une zone part
-# jusqu'à la fin et un SVG de plus n'est plus suivi — la lecture reste linéaire.
-MAX_PROFONDEUR = 512
+# La portée du navigateur (« has an element in scope ») : une fermeture ne traverse
+# pas ces éléments ouverts au-dessus d'elle — elle est ignorée. Pris au large : ignorer
+# à tort retire trop, jamais trop peu.
+PORTEE = frozenset({"applet", "caption", "html", "table", "td", "th", "marquee", "object",
+                    "template", "svg", "math", "foreignobject", "desc", "title", "mi", "mo",
+                    "mn", "ms", "mtext", "annotation-xml"})
+_TABLEAU = frozenset({"table", "caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td",
+                      "th"})
+# Les éléments « spéciaux » du HTML : la fermeture d'un élément ordinaire (`span`, un
+# élément maison) ou de mise en forme (`b`, `a`…) ne les traverse pas.
+SPECIAUX = PORTEE | _TABLEAU | frozenset({
+    "address", "article", "aside", "blockquote", "body", "button", "center", "dd", "details",
+    "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
+    "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "li",
+    "listing", "main", "menu", "nav", "ol", "p", "pre", "search", "section", "select",
+    "summary", "ul"})
+# La profondeur suivie (ce qui est ouvert dans une zone, les SVG/MathML ouverts), et ce
+# que coûtent au plus les fermetures examinées : au-delà, la zone part jusqu'à la fin —
+# la lecture reste linéaire.
+MAX_PROFONDEUR = 256
 _JUSQU_A_LA_FIN = frozenset({"html", "head", "body"})
 # Une de ces balises ouvrantes dans SVG/MathML ramène au HTML (« breakout »).
 _SORTIES = frozenset({"b", "big", "blockquote", "body", "br", "center", "code", "dd", "div",
@@ -161,40 +164,31 @@ def _fin_brut(s: str, p: int, nom: str) -> int:
     return -1
 
 
-class _Pile:
-    """Un élément marqué ouvert dans la zone : son nom, ses barrières, et ce qui est
-    ouvert depuis (ses homonymes et ses barrières seulement), compté pour un test
-    d'appartenance en temps constant."""
-    __slots__ = ("tag", "barr", "noms", "compte")
-
-    def __init__(self, nom: str) -> None:
-        self.tag, self.noms, self.compte = nom, [nom], {nom: 1}
-        self.barr = BARRIERES if nom in SPECIAUX else SPECIAUX
-
-    def ouvre(self, nom: str) -> bool:
-        if nom != self.tag and nom not in self.barr:
-            return False
-        self.noms.append(nom)
-        self.compte[nom] = self.compte.get(nom, 0) + 1
-        return len(self.noms) > MAX_PROFONDEUR
-
-    def ferme(self, nom: str) -> None:
-        if not self.compte.get(nom):
-            return
-        if nom in self.barr:
-            while True:     # jusqu'au plus proche homonyme, compris
-                x = self.noms.pop()
-                self.compte[x] -= 1
-                if x == nom:
-                    return
-        elif self.noms[-1] == nom:
-            self.noms.pop()
-            self.compte[nom] -= 1
+def _bloque(fermee: str, ouvert: str) -> bool:
+    """`</fermee>` est-elle IGNORÉE par le navigateur quand `ouvert` est ouvert entre
+    elle et son élément ? Chaque règle de l'algorithme d'arbre, prise au large."""
+    if fermee in ("template", "select"):
+        return False
+    if ouvert == "select" and fermee not in ("option", "optgroup"):
+        return True     # dans un select, toute autre fermeture est ignorée
+    if fermee in _TABLEAU:
+        return ouvert in ("table", "template", "html")
+    if fermee == "form":
+        return True     # l'élément sort de la pile, ce qu'il contient reste ouvert
+    if fermee == "p":
+        return ouvert in PORTEE or ouvert == "button"
+    if fermee == "li":
+        return ouvert in PORTEE or ouvert in ("ul", "ol")
+    if fermee in SPECIAUX:
+        return ouvert in PORTEE
+    return ouvert in SPECIAUX   # mise en forme et élément ordinaire
 
 
 def _noms(attrs: list[tuple[str, str]]) -> Optional[list[list[str]]]:
     """Les noms de section de chaque occurrence de l'attribut, None sans attribut."""
-    occ = [_html.unescape(v).split() for k, v in attrs if k == ATTRIBUT]
+    occ = [_BLANCS_HTML.split(_html.unescape(v).strip("\t\n\f\r ")) for k, v in attrs
+           if k == ATTRIBUT]
+    occ = [[x for x in noms if x] for noms in occ]
     return occ or None
 
 
@@ -215,11 +209,11 @@ def _parcourir(s: str, ouvre: Optional[Callable[[list[list[str]]], bool]],
     # Dans un `select`, le navigateur ignore `style`, `title`, `iframe`, `xmp`… : seul `script`
     # y passe en texte brut ; `input`, `keygen`, `textarea` le ferment.
     dans_select = False
-    # L'élément marqué en cours de retrait : son début, et une PILE par élément marqué
-    # ouvert dedans (lui compris) — chacune ne compte que son nom et ses barrières ; la
-    # zone finit quand toutes sont vides (un élément marqué intérieur resté ouvert, le
-    # navigateur peut le prolonger ou le recloner après la fin de l'élément).
+    # L'élément marqué en cours de retrait : son début, et la PILE de ce qui y est ouvert
+    # (lui compris), chacun avec « marqué et retiré ». La zone finit quand la pile est
+    # vide. Une fermeture n'y dépile que si le navigateur la suit (`_bloque`).
     zone: Optional[dict] = None
+    budget = 4 * n + 100_000     # pas examinés par les fermetures, au plus
     i = 0
 
     def etranger() -> bool:
@@ -276,12 +270,31 @@ def _parcourir(s: str, ouvre: Optional[Callable[[list[list[str]]], bool]],
                 del ns[len(ns) - 1 - ns[::-1].index(nom):]
             if nom == "select":
                 dans_select = False
-            if zone is not None:
-                for pile in zone["piles"]:
-                    pile.ferme(nom)
-                zone["piles"] = [x for x in zone["piles"] if x.noms]
-                if not zone["piles"]:
-                    fin_zone(fin)
+            if zone is not None and zone["compte"].get(nom):
+                pile, k = zone["pile"], len(zone["pile"]) - 1
+                while k >= 0 and pile[k][0] != nom:
+                    if _bloque(nom, pile[k][0]):
+                        k = -2
+                        break
+                    k -= 1
+                budget -= len(pile) - k
+                if budget < 0:
+                    out.non_fermes.append((zone["debut"], zone["nom"]))
+                    fin_zone(n)
+                    return out
+                if k >= 0:
+                    # Un élément MARQUÉ fermé en silence par celle d'un autre : le
+                    # navigateur peut le garder ouvert (balise ignorée) ou le recloner plus
+                    # loin, marque comprise (mise en forme) — tout part jusqu'à la fin.
+                    if any(cache for _, cache in pile[k + 1:]):
+                        out.non_fermes.append((zone["debut"], zone["nom"]))
+                        fin_zone(n)
+                        return out
+                    for x, _ in pile[k:]:
+                        zone["compte"][x] -= 1
+                    del pile[k:]
+                    if not pile:
+                        fin_zone(fin)
             i = fin
             continue
         if not ("a" <= c <= "z" or "A" <= c <= "Z"):
@@ -347,25 +360,19 @@ def _parcourir(s: str, ouvre: Optional[Callable[[list[list[str]]], bool]],
                 out.non_fermes.append((j, nom))
                 return out
             else:
-                zone = {"debut": j, "nom": nom, "piles": [_Pile(nom)]}
+                zone = {"debut": j, "nom": nom, "pile": [(nom, True)], "compte": {nom: 1}}
                 i = fin
             continue
 
         if zone is not None:
+            cache = noms is not None and ouvre is not None and not ouvre(noms)
+            if (cache and nom in _JUSQU_A_LA_FIN) or len(zone["pile"]) >= MAX_PROFONDEUR:
+                out.non_fermes.append((zone["debut"], zone["nom"]))
+                fin_zone(n)
+                return out
             if not ferme_seul and not brut:
-                trop = False
-                for pile in zone["piles"]:
-                    trop = pile.ouvre(nom) or trop
-                if trop:
-                    out.non_fermes.append((zone["debut"], zone["nom"]))
-                    fin_zone(n)
-                    return out
-                if noms is not None and ouvre is not None and not ouvre(noms):
-                    if nom in _JUSQU_A_LA_FIN or len(zone["piles"]) >= MAX_PILES:
-                        out.non_fermes.append((zone["debut"], zone["nom"]))
-                        fin_zone(n)
-                        return out
-                    zone["piles"].append(_Pile(nom))
+                zone["pile"].append((nom, cache))
+                zone["compte"][nom] = zone["compte"].get(nom, 0) + 1
         elif brut and not relu and fin_contenu is not None and ouvre is not None:
             # Un contenu jamais exécuté comme du JS : relu pour ses propres marques.
             typ = next((_bas(v) for k, v in attrs if k == "type"), "")
@@ -431,22 +438,26 @@ def avertissements(manifest: dict, html: Optional[str]) -> list[str]:
     out: list[str] = []
     if not roles:
         if marques:
-            out.append(f"The HTML marks sections ({', '.join(sorted(portees)) or 'empty'}) "
+            noms = sorted(portees)
+            liste = ", ".join(noms[:10]) + (", …" if len(noms) > 10 else "")
+            out.append(f"The HTML marks sections ({liste or 'empty'}) "
                        f"with {ATTRIBUT}, but the manifest declares no `roles`: nothing is "
                        "removed, every viewer gets the whole HTML.")
         return out
-    for x in sorted(set(declarees) - set(portees)):
+    for x in sorted(set(declarees) - set(portees))[:MAX_AVERTISSEMENTS]:
         out.append(f'Role {", ".join(declarees[x])} opens section "{x}", but no element '
                    f'carries {ATTRIBUT}="{x}": whatever the page hides for it in script '
                    "still ships to every viewer. Mark that markup with "
                    f'{ATTRIBUT}="{x}" so it is removed for the other roles.')
-    for x in sorted(set(portees) - set(declarees), key=portees.get):
+    for x in sorted(set(portees) - set(declarees), key=portees.get)[:MAX_AVERTISSEMENTS]:
+        if len(out) >= MAX_AVERTISSEMENTS:
+            break
         out.append(f'Line {ligne(portees[x])}: {ATTRIBUT}="{x}" names a section no role '
                    "declares: it is removed for every role that lists `sections`.")
     for pos in vides[:1]:
         out.append(f"Line {ligne(pos)}: an empty {ATTRIBUT} is removed for every role "
                    "that lists `sections`.")
-    for pos, nom in _parcourir(html, lambda occ: False).non_fermes:
+    for pos, nom in _parcourir(html, lambda occ: False).non_fermes[:MAX_AVERTISSEMENTS]:
         out.append(f"Line {ligne(pos)}: <{nom} {ATTRIBUT}> is never closed: for a role that "
                    f"doesn't open it, everything after it is removed. Close it with </{nom}>.")
     return out[:MAX_AVERTISSEMENTS]

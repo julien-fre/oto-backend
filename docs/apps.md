@@ -130,10 +130,11 @@ reste celui de l'app.
 - **Fermé du côté sûr.** Un lecteur linéaire suit le découpage du tokenizer HTML
   (commentaires, valeurs entre guillemets contenant `>`, texte brut de `script` et de
   ses états échappés, `style`, `textarea`, `title`, CDATA et `/>` en SVG/MathML) ; un
-  élément marqué ne finit qu'à SA balise fermante, au même niveau d'imbrication, jamais
-  par la fermeture d'un ancêtre, ni tant qu'un tableau, une cellule, un `template`, un
-  `select`… ouvert dedans reste ouvert. **Jamais fermé : tout jusqu'à la fin du document
-  part** (un avertissement le dit à l'écriture). Retirer trop casse l'affichage d'un
+  élément marqué ne finit qu'à SA balise fermante, et seulement si le navigateur la
+  suivrait (une fermeture ignorée à travers un tableau, une liste, un `select`, un
+  `template`… est ignorée ici aussi), jamais par la fermeture d'un ancêtre. **Jamais
+  fermé — ou un élément marqué intérieur fermé par celle d'un autre — : tout jusqu'à la
+  fin du document part** (un avertissement le dit à l'écriture). Retirer trop casse l'affichage d'un
   rôle ; retirer trop peu fuirait. Fermer explicitement chaque élément marqué (`</li>`,
   `</p>`, `</td>` compris).
 - **Ce qui n'est PAS protégé** : tout ce qui vit hors d'un élément marqué — une

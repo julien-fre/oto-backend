@@ -41,6 +41,13 @@ def test_plusieurs_noms_un_seul_suffit():
     assert "X" in r(html, ["ops"]) and "X" not in r(html, ["other"])
 
 
+def test_seuls_les_blancs_ascii_separent_les_noms():
+    # Une espace insécable ne sépare pas : « admin\u00a0sales » est UN nom.
+    assert r('<div data-oto-section="admin\u00a0sales">SECRET</div>GARDE', ["admin"]) == "GARDE"
+    assert r('<div data-oto-section="admin&#9;sales">X</div>', ["sales"]) == \
+        '<div data-oto-section="admin&#9;sales">X</div>'
+
+
 def test_marque_vide_n_est_ouverte_a_personne():
     assert r('<div data-oto-section="">SECRET</div>GARDE', ["admin"]) == "GARDE"
     assert r('<div data-oto-section>SECRET</div>GARDE', ["admin"]) == "GARDE"
@@ -109,12 +116,28 @@ def test_la_fermeture_d_un_ancetre_ne_ferme_pas():
     '<div data-oto-section=a><table><tr><td></div>SECRET</td></tr></table></div>',
     '<div data-oto-section=a><template></div>SECRET</template></div>',
     '<div data-oto-section=a><select></div>SECRET</select></div>',
-    '<div data-oto-section=a><button></div>SECRET</button></div>',
+    '<div data-oto-section=a><select><option></div>SECRET</select></div>',
+    '<button data-oto-section=a><select></button>SECRET</select></button>',
+    '<form data-oto-section=a><div></form>SECRET</div>',
+    '<ul><li data-oto-section=a><ul></li>SECRET</ul></li></ul>',
+    '<table><tr><td data-oto-section=a><table></td>SECRET</table></td></tr></table>',
+    '<table><tr data-oto-section=a><td><table></tr>SECRET</table></td></tr></table>',
+    '<button data-oto-section=a><table></button>SECRET</table></button>',
+    '<object data-oto-section=a><table></object>SECRET</table></object>',
+    '<form data-oto-section=a><span></form>SECRET</span>',
+    '<div data-oto-section=a><p data-oto-section=a>x</div>SECRET',     # p marqué, ouvert
     '<span data-oto-section=a><p></span>SECRET</p></span>',
     '<p data-oto-section=a><b data-oto-section=a></p>SECRET',     # b recloné après </p>
 ])
 def test_une_fermeture_que_le_navigateur_ignore(html):
     assert "SECRET" not in r(html)
+
+
+def test_une_fermeture_que_le_navigateur_suit():
+    # `</div>` traverse un <button>, un <p>, un <span> ouverts : le div finit là.
+    assert r('<div data-oto-section=a><button>x</div>GARDE') == "GARDE"
+    assert r('<div data-oto-section=a><p><span>x</div>GARDE') == "GARDE"
+    assert r('<div data-oto-section=a><table><tr><td><div></table>x</div>GARDE') == "GARDE"
 
 
 def test_cellule_et_tableau_marques():
@@ -195,7 +218,8 @@ def test_lineaire_au_plafond():
            '<div data-oto-section=a>' + ('<span data-oto-section=a>' + '<table>' * 500) * 31,
            '<svg>' * 600 + '</svg>' * (n // 6) + '<i data-oto-section=a>x</i>',
            '<p data-oto-section=a>x</p>' * (n // 27),
-           '<script><!--<script>' * (n // 20) + '<b data-oto-section=a>']
+           '<script><!--<script>' * (n // 20) + '<b data-oto-section=a>',
+           ''.join(f'<i data-oto-section="n{k}">x</i>\n' for k in range(n // 40))]
     for html in cas:
         t = time.perf_counter()
         r(html)
@@ -226,6 +250,12 @@ def test_avertit_un_element_marque_jamais_ferme():
     html = '<div data-oto-section="pipeline">x</div>\n<p data-oto-section="admin">y'
     w = avertissements(ROLES, html)
     assert any("Line 2: <p data-oto-section> is never closed" in x for x in w)
+
+
+def test_avertissements_bornes():
+    html = "".join(f'<i data-oto-section="n{k}">x</i>\n' for k in range(500))
+    assert len(avertissements(ROLES, html)) <= 10
+    assert len(avertissements({}, html)[0]) < 400
 
 
 def test_sans_roles_les_marques_n_ont_aucun_effet():
