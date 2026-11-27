@@ -27,12 +27,13 @@ from ._model import CredentialField, _c
 #   platform key here is the commerce's PHONE RELAY credential — `account_sid` = the
 #   platform's Twilio account SID (informational, never sent to Twilio), `auth_token` =
 #   the relay token (`tools/twilio_courtier.py`). It is never handed to `TwilioClient`
-#   (`_client()` resolves byo only). A CLOSED key, like the platform's paid keys (AI
-#   Ark, Forager): the commerce's enrolment grants it to every org it bills, and cuts an
-#   org out of credits (`grant:twilio`); resolution then refuses. Not a free tier.
+#   (`_client()` resolves byo only). OPEN to every org, like Unipile (Julien, 27/11:
+#   "anyone with credit can access it"): the commerce cuts ONE org out of credits
+#   (`grant:twilio` → `share_denied`), and resolution then refuses. An org reaches only
+#   its own numbers through the relay, so an org without any sees nothing.
 CONNECTOR = _c(
     "twilio", ["twilio"], auth_modes={"byo_org", "platform"},
-    default_quota=0, platform_key_open=False,
+    default_quota=0, platform_key_open=True,
     secret_kind="fields",
     credential_fields=(
         CredentialField(

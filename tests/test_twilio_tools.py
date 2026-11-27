@@ -286,11 +286,11 @@ def test_le_relais_est_appele_avec_la_cle_plateforme(courtier):
     assert courtier["token"] == ["relay-t"]
 
 
-def test_twilio_est_un_connecteur_plateforme_ferme():
-    """Platform key closed (granted per org by the commerce's enrolment), never a free tier."""
+def test_twilio_est_un_connecteur_plateforme_ouvert():
+    """Open to every org like Unipile, cut per org by the commerce (share_denied)."""
     from oto_mcp import providers
     c = providers.connector_for_provider("twilio")
-    assert "platform" in c.auth_modes and "byo_org" in c.auth_modes and not c.platform_key_open
+    assert "platform" in c.auth_modes and "byo_org" in c.auth_modes and c.platform_key_open
 
 
 def test_les_outils_twilio_ne_debitent_rien_cote_oto():
