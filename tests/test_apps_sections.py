@@ -268,3 +268,64 @@ def test_sans_roles_les_marques_n_ont_aucun_effet():
 def test_tout_va_bien():
     html = '<div data-oto-section="pipeline">x</div><div data-oto-section="admin pipeline">y</div>'
     assert avertissements(ROLES, html) == []
+
+
+# ── Le mode strict ───────────────────────────────────────────────────────────────
+
+from oto_mcp.capabilities import apps_sections as _S  # noqa: E402
+
+_ROLES = {"roles": {"a": {"sections": ["admin"]}, "u": {}}, "default_role": "u"}
+
+
+def test_strict_suit_les_sections_et_s_eteint_explicitement():
+    assert _S.strict(_ROLES)
+    assert not _S.strict({**_ROLES, "strict_sections": False})
+    assert not _S.strict({"roles": {"u": {}}, "default_role": "u"})
+    assert not _S.strict({})
+
+
+def test_un_script_ou_un_style_non_classe_est_nomme():
+    for brut in ('<script>let x = 1</script>', '<style>.a{}</style>',
+                 '<SCRIPT type="module">x</SCRIPT>'):
+        assert _S.non_classes("<main>" + brut + "</main>"), brut
+
+
+def test_le_commun_et_les_sections_passent():
+    html = ('<script data-oto-section="*">const t = "<style>"; el.innerHTML = '
+            '"<div onclick=go()>"</script>'
+            '<section data-oto-section="admin"><script>admin()</script>'
+            '<button onclick="x()">X</button></section>'
+            '<style data-oto-section="admin">.secret{}</style><p>Texte commun</p>')
+    assert _S.non_classes(html) == []
+
+
+def test_un_gestionnaire_non_classe_est_nomme():
+    assert _S.non_classes('<button onclick="go()">Go</button>')
+    assert _S.non_classes('<img src=x ONERROR=go()>')
+    assert _S.non_classes('<button data-oto-section="*" onclick="go()">Go</button>') == []
+
+
+def test_une_balise_jamais_fermee_ne_se_classe_pas():
+    assert _S.non_classes('<p>ok</p><script src="x.js"')
+    # Marquée et coupée : le retrait l'emporte déjà jusqu'à la fin, rien ne part.
+    assert _S.non_classes('<p>ok</p><script data-oto-section="admin"') == []
+
+
+def test_le_commun_reste_meme_sans_aucune_section_ouverte():
+    html = '<script data-oto-section="*">a()</script><div data-oto-section="admin">S</div>'
+    out = _S.retirer(html, [])
+    assert 'a()' in out and "S</div>" not in out
+
+
+def test_etoile_reservee_et_jamais_signalee():
+    from oto_mcp.capabilities.apps_manifeste import forme
+    _, problems = forme({"roles": {"u": {"sections": ["*"]}}, "default_role": "u"})
+    assert any("reserved" in p for p in problems)
+    w = _S.avertissements(_ROLES, '<div data-oto-section="*">x</div><div data-oto-section="admin">y</div>')
+    assert not any('"*"' in x and "no role declares" in x for x in w)
+
+
+def test_une_section_nommee_dans_le_commun_avertit():
+    w = _S.noms_dans_le_commun(_ROLES, '<script data-oto-section="*">'
+                                       'if (access.sections.includes("admin")) secret()</script>')
+    assert w and "admin" in w[0]

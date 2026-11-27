@@ -363,6 +363,13 @@ def _view(sub: str, row: dict) -> dict:
             if "html" in row:
                 # Les éléments des sections que ce rôle n'ouvre pas ne partent pas
                 # (`apps_sections.py`) ; sans rôle ou sans `sections`, le HTML entier.
+                # Dernier recours du mode strict : une app écrite avant lui, ou dont le
+                # manifeste a changé sans le HTML, n'est pas servie à un lecteur borné
+                # tant que tout n'est pas classé — refus neutre, sans nom de section.
+                if apps_sections.strict(entier) and apps_sections.non_classes(row["html"]):
+                    raise AuthzDenied(403, "app_unavailable",
+                                      "This app can't be shown to you right now: ask its "
+                                      "editors.")
                 row["html"] = apps_sections.retirer(row["html"], row["access"]["sections"])
     return {k: row[k] for k in AppView.model_fields if k in row}
 
@@ -372,8 +379,21 @@ def _avertir(manifest: Optional[dict], html: Optional[str]) -> dict:
     Appelé AVANT l'écriture : un défaut du lecteur de HTML refuse sans rien écrire,
     plutôt qu'un 500 après une création commitée qu'un agent rejouerait en doublon."""
     from . import apps_sections
-    w = (avertissements(manifest or {}, html)
-         + apps_sections.avertissements(manifest or {}, html))[:MAX_WARNINGS]
+    m = manifest or {}
+    # Le mode strict des sections REFUSE (la seule exception à « le HTML avertit, ne
+    # refuse jamais ») : un script, une feuille ou un gestionnaire non classé partirait
+    # chez chaque lecteur borné. Jugé ici, avant toute écriture, sur le manifeste et le
+    # HTML qu'elle laissera — create, update, patch, restore, publish.
+    if apps_sections.strict(m):
+        nc = apps_sections.non_classes(html)
+        if nc:
+            raise AuthzDenied(400, "sections_not_classified",
+                              "Roles declare `sections`, so every <script>, <style> and on… "
+                              "handler must be marked with a section, or with "
+                              "data-oto-section=\"*\" when every role may read it (or set "
+                              "`strict_sections: false`). " + " ".join(nc))
+    w = (avertissements(m, html) + apps_sections.avertissements(m, html)
+         + apps_sections.noms_dans_le_commun(m, html))[:MAX_WARNINGS]
     return {"warnings": w} if w else {}
 
 
@@ -454,7 +474,12 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         if not problems and (app is None or _can(sub, app["id"], "write")):
             manifeste = app["manifest"] if inp.manifest is None and app is not None else clean
             html = inp.html if inp.html is not None else (app or {}).get("html")
-            out.update(_avertir(manifeste, html))
+            try:
+                out.update(_avertir(manifeste, html))
+            except AuthzDenied as e:
+                if e.code != "sections_not_classified":
+                    raise
+                out = {"ok": False, "problems": [e.message]}
         return out
 
     if inp.op == "create":
@@ -996,7 +1021,11 @@ def description_app(liens: bool) -> str:
             "marked element (with its content and inner scripts) whose sections the viewer's "
             "role doesn't open — it never reaches them. Only marked markup is protected: data "
             "in an unmarked <script> or built by JS still ships to everyone, so keep "
-            "section-only content inside marked elements. To let someone use the app WITHOUT any "
+            "section-only content inside marked elements. While a role declares `sections` (unless "
+            "`strict_sections: false`), every <script>, <style> and on… handler MUST be marked "
+            "— with a section, or `data-oto-section=\"*\"` for code every role gets — or the "
+            "write is refused (sections_not_classified). A role with `rows` can't add or set "
+            "its table's unique key. To let someone use the app WITHOUT any "
             "access to its tables elsewhere: op=grant_through_app (`app_id`, "
             "`principal_type`, `principal_id`, optional `tables`; you must be able to share "
             "each table) — they then read and write those tables only inside this app, as "

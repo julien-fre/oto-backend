@@ -410,7 +410,7 @@ def retirer(html: Optional[str], sections: Optional[list[str]]) -> Optional[str]
     rôle ouvre l'un des noms ; une marque vide n'est ouverte à aucun rôle."""
     if sections is None or not html or not _MARQUE.search(html):
         return html
-    ouverts = set(sections)
+    ouverts = set(sections) | {COMMUN}
     return retirer_avec(html, lambda occ: all(ouverts.intersection(x) for x in occ))
 
 
@@ -449,7 +449,7 @@ def avertissements(manifest: dict, html: Optional[str]) -> list[str]:
                    f'carries {ATTRIBUT}="{x}": whatever the page hides for it in script '
                    "still ships to every viewer. Mark that markup with "
                    f'{ATTRIBUT}="{x}" so it is removed for the other roles.')
-    for x in sorted(set(portees) - set(declarees), key=portees.get)[:MAX_AVERTISSEMENTS]:
+    for x in sorted(set(portees) - set(declarees) - {COMMUN}, key=portees.get)[:MAX_AVERTISSEMENTS]:
         if len(out) >= MAX_AVERTISSEMENTS:
             break
         out.append(f'Line {ligne(portees[x])}: {ATTRIBUT}="{x}" names a section no role '
@@ -460,4 +460,96 @@ def avertissements(manifest: dict, html: Optional[str]) -> list[str]:
     for pos, nom in _parcourir(html, lambda occ: False).non_fermes[:MAX_AVERTISSEMENTS]:
         out.append(f"Line {ligne(pos)}: <{nom} {ATTRIBUT}> is never closed: for a role that "
                    f"doesn't open it, everything after it is removed. Close it with </{nom}>.")
+    return out[:MAX_AVERTISSEMENTS]
+
+
+# ── Le mode STRICT : rien de non classé ne part chez un lecteur borné ────────────────
+#
+# Le retrait ne retire que ce qui est MARQUÉ. Un `<script>` ou un `<style>` non marqué part
+# chez tout le monde, avec ce qu'il porte (la logique « admin », une constante, un
+# gabarit) ; un gestionnaire `on…=` aussi. Dès qu'un rôle déclare `sections`, le mode
+# strict EXIGE que chacun soit classé : marqué d'une section, ou déclaré COMMUN
+# (`data-oto-section="*"`). Jugé à CHAQUE écriture (l'auteur voit le problème, refus
+# 400 `sections_not_classified`), et au service en dernier recours (refus neutre).
+# `strict_sections: false` au manifeste l'éteint, en connaissance de cause.
+#
+# Ce qu'il ne couvre PAS : le balisage et le texte non marqués (ils sont communs par
+# définition), les attributs `style=`, les URLs. Ce qu'il tient : aucun code ni aucune
+# feuille de style ne part chez un lecteur sans que l'auteur ait dit à qui il est.
+
+#: La section COMMUNE : toujours servie, à tous les rôles. Réservée (aucun rôle ne la
+#: déclare, `apps_roles.forme`).
+COMMUN = "*"
+_TOUTE_BALISE = re.compile(r"<[a-zA-Z][^\t\n\f\r />]*")
+
+
+def strict(manifest: Optional[dict]) -> bool:
+    """Le mode strict s'applique-t-il ? Dès qu'un rôle déclare `sections`, sauf
+    `strict_sections: false`."""
+    m = manifest or {}
+    if m.get("strict_sections") is False:
+        return False
+    return any("sections" in (r or {}) for r in (m.get("roles") or {}).values())
+
+
+def _commun(attrs: list[tuple[str, str]]) -> bool:
+    occ = _noms(attrs)
+    return bool(occ) and all(COMMUN in x for x in occ)
+
+
+def non_classes(html: Optional[str]) -> list[str]:
+    """Ce qui partirait chez TOUT lecteur sans être classé : chaque `<script>` / `<style>`
+    et chaque balise à gestionnaire `on…=` hors de tout élément marqué d'une section,
+    qui ne porte pas `data-oto-section="*"`. Lu sur ce qui RESTE une fois retirés tous
+    les éléments marqués d'une section (le commun gardé). Pris au large : un faux
+    positif refuse (l'auteur reclasse), un oubli fuirait."""
+    if not html:
+        return []
+    reste = retirer_avec(html, lambda occ: all(COMMUN in x for x in occ)) if _MARQUE.search(html) else html
+    ligne = lambda pos: reste.count("\n", 0, pos) + 1  # noqa: E731
+    out: list[str] = []
+    i = 0
+    while len(out) < MAX_AVERTISSEMENTS:
+        m = _TOUTE_BALISE.search(reste, i)
+        if m is None:
+            break
+        b = _balise(reste, m.start(), False)
+        if b is None:
+            # Une balise que le texte coupe : on ne sait pas ce qu'elle porte — refusé.
+            out.append(f"Line {ligne(m.start())}: a tag is never closed (`>`): "
+                       "it can't be classified.")
+            break
+        fin, nom, attrs = b[0], b[1], b[2]
+        commun = _commun(attrs)
+        if nom in ("script", "style") and not commun:
+            out.append(f"Line {ligne(m.start())}: <{nom}> is in no section: it ships to "
+                       f"every viewer. Mark it {ATTRIBUT}=\"<section>\", or "
+                       f"{ATTRIBUT}=\"{COMMUN}\" if every role may read it.")
+        elif not commun and any(_bas(k).startswith("on") for k, _ in attrs):
+            out.append(f"Line {ligne(m.start())}: an on… handler on <{nom}> is in no "
+                       f"section: it ships to every viewer. Move it into a script, or mark "
+                       f"the element {ATTRIBUT}=\"{COMMUN}\".")
+        i = fin
+        if nom in BRUTS:
+            # Le texte d'un script ou d'une feuille n'est pas du balisage : sauté.
+            k = _fin_brut(reste, fin, nom)
+            i = k if k >= 0 else len(reste)
+    return out
+
+
+def noms_dans_le_commun(manifest: dict, html: Optional[str]) -> list[str]:
+    """Avertissements : une section nommée en clair dans un script qui part chez tous
+    (commun ou non marqué) — sa logique part avec lui."""
+    roles = (manifest or {}).get("roles") or {}
+    noms = {x for r in roles.values() for x in (r or {}).get("sections") or []} - {COMMUN}
+    if not html or not noms:
+        return []
+    reste = retirer_avec(html, lambda occ: all(COMMUN in x for x in occ)) if _MARQUE.search(html) else html
+    out = []
+    for x in sorted(noms):
+        m = re.search(r"""(["'`])""" + re.escape(x) + r"\1", reste)
+        if m:
+            out.append(f'Line {reste.count(chr(10), 0, m.start()) + 1}: section "{x}" is named '
+                       "in markup or script every viewer gets: whatever that code does for it "
+                       f'ships to all. Move it into a <script {ATTRIBUT}="{x}">.')
     return out[:MAX_AVERTISSEMENTS]

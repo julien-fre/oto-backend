@@ -149,6 +149,22 @@ reste celui de l'app.
   élément marqué (un `<script data-oto-section="admin">` pour son code, un
   `<template data-oto-section="admin">` pour son gabarit). Les données des tableaux sont
   protégées par le rôle de toute façon : ce qu'il ne lit pas n'est jamais servi.
+- **Le mode STRICT** (`apps_sections.strict`, `non_classes`) — dès qu'un rôle déclare
+  `sections`, sauf `strict_sections: false` au manifeste : **chaque `<script>`, chaque
+  `<style>` et chaque balise à gestionnaire `on…=` doit être classé** — marqué d'une
+  section, ou déclaré COMMUN par `data-oto-section="*"` (servi à tous les rôles, même à
+  `sections: []` ; `*` est réservé, aucun rôle ne le déclare). Jugé sur ce qui reste une
+  fois retirés les éléments marqués d'une section (le texte d'un script n'est pas lu
+  comme du balisage). ⚠️ **C'est la seule exception à « le HTML avertit, ne refuse
+  jamais »** : à CHAQUE écriture (`create`, `update` — y compris un manifeste seul sur le
+  HTML gardé —, `patch`, `restore`, `publish`), 400 `sections_not_classified` qui nomme
+  chaque ligne, rien d'écrit ; `op=validate` le rend dans `problems`. Au service, en
+  dernier recours (une app écrite avant la règle, ou base modifiée à la main), un
+  lecteur borné reçoit 403 `app_unavailable`, sans nom de rôle ni de section ; qui
+  modifie l'app l'ouvre et voit le problème en écrivant. Ce que le mode strict ne
+  couvre PAS : le balisage et le texte non marqués (communs par définition), les
+  attributs `style=`, les URLs — et ce qu'un script COMMUN fait : un avertissement
+  signale une section nommée en clair dans le commun (`noms_dans_le_commun`).
 - **À l'écriture**, en `warnings` (jamais un refus) : une section qu'un rôle ouvre sans
   qu'aucun élément ne la porte (ce que la page cache pour elle par script part chez
   tous), une marque qu'aucun rôle ne déclare (retirée pour tout rôle à `sections`), un
@@ -399,6 +415,19 @@ et `batch`, un lot de lectures (plus bas).
   mais la route y est réduite (`/api/me/apps/:id/call`) : le numéro de l'app et le
   tableau lu n'y sont pas. Qui a lu quel tableau par quelle app se lit dans le **journal
   des lectures** (§ suivant).
+
+
+**La clé métier ne se choisit pas d'un périmètre** (`apps_appel._cle_hors_perimetre`) :
+unique sur TOUT le tableau, le refus d'une clé déjà portée (« existe déjà ») dirait à un
+partenaire qu'une ligne hors de son périmètre la porte. Un lecteur au périmètre de lignes
+ne peut donc ni ajouter une ligne qui porte la colonne clé, ni la réécrire (403
+`row_scope_key`) — sauf si son périmètre IMPOSE cette colonne. Jugé à chaque geste sur le
+schéma VIVANT (une clé déclarée après le manifeste compte), sans regarder les données :
+clé libre ou prise, le même refus. Ajouter SANS la clé reste permis (la ligne naît sans
+clé, non rapprochable) ; un partenaire ne peut plus enregistrer une ligne par une clé
+qu'il tape. À l'écriture du manifeste, un rôle à `rows` qui ajoute ou pose la clé est
+refusé. Et pour tout lecteur d'app, le 409 `business_key_exists` d'un ajout — qui nomme
+la ligne en place (`id`, `details`) — devient 409 `row_conflict`, sans rien d'elle.
 
 ### Journal des lectures (`app_reads`)
 

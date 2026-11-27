@@ -246,6 +246,11 @@ def forme(raw: dict, clean: dict, alias_ok) -> list[str]:
                 problems.append(f"{where}.sections must be a list of at most {MAX_SECTIONS} "
                                 "short names.")
             else:
+                if "*" in s:
+                    # `*` = le COMMUN (`apps_sections.COMMUN`), servi à tous : un rôle ne
+                    # le déclare pas, il l'a toujours.
+                    problems.append(f"{where}.sections: `*` is reserved for markup every "
+                                    "role gets.")
                 role["sections"] = s
         inconnues = sorted(set(r) - {"label", "tables", "agents", "files", "sections", "rows"})
         if inconnues:

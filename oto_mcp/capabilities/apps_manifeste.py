@@ -123,6 +123,13 @@ def forme(raw: Any) -> tuple[dict, list[str]]:
         "agents": agents,
         "files": raw.get("files") is True,
     }
+    # Le mode strict des sections (`apps_sections.strict`) : seul un `false` explicite
+    # l'éteint ; absent, il suit les rôles.
+    if raw.get("strict_sections") is not None:
+        if not isinstance(raw["strict_sections"], bool):
+            problems.append("`strict_sections` must be true or false.")
+        else:
+            clean["strict_sections"] = raw["strict_sections"]
     # Les rôles (`apps_roles.py`) : jugés contre ce que le manifeste vient d'ouvrir.
     from . import apps_roles
     problems += apps_roles.forme(raw, clean, ALIAS.match)

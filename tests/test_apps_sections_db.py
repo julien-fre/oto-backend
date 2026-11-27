@@ -116,3 +116,50 @@ def test_validate_ne_rend_pas_les_avertissements_au_lecteur(monde):
     assert lecteur["ok"] is True and "warnings" not in lecteur
     auteur = _apps(m, m["auteur"], op="validate")
     assert any('"billing"' in w for w in auteur["warnings"])
+
+
+# ── Le mode strict, jugé à l'écriture et au service ──────────────────────────────
+
+NON_CLASSE = HTML.replace("</main>", "<script>const tout = 1;</script></main>")
+
+
+def test_ecrire_un_script_non_classe_est_refuse(monde):
+    from oto_mcp.capabilities._types import AuthzDenied
+    m = monde
+    vu = _apps(m, m["auteur"], op="get")["app"]
+    with pytest.raises(AuthzDenied) as e:
+        _apps(m, m["auteur"], op="update", html=NON_CLASSE, expected_rev=vu["rev"])
+    assert e.value.code == "sections_not_classified" and "Line" in e.value.message
+    # Rien n'a été écrit.
+    assert _apps(m, m["auteur"], op="get")["app"]["html"] == HTML
+    # Le commun passe.
+    commun = HTML.replace("</main>", '<script data-oto-section="*">const t = 1;</script></main>')
+    _apps(m, m["auteur"], op="update", html=commun, expected_rev=vu["rev"])
+
+
+def test_validate_dit_le_probleme_sans_ecrire(monde):
+    m = monde
+    out = _apps(m, m["auteur"], op="validate", html=NON_CLASSE)
+    assert out["ok"] is False and "Line" in out["problems"][0]
+
+
+def test_strict_eteint_explicitement_laisse_ecrire(monde):
+    m = monde
+    vu = _apps(m, m["auteur"], op="get")["app"]
+    man = {**vu["manifest"], "strict_sections": False}
+    _apps(m, m["auteur"], op="update", manifest=man, html=NON_CLASSE, expected_rev=vu["rev"])
+
+
+def test_au_service_une_app_non_classee_n_est_pas_servie_au_lecteur(monde):
+    """Écrite avant le mode strict (directement en base) : le lecteur borné reçoit un
+    refus neutre, sans nom de section ; qui modifie l'app l'ouvre et voit le problème."""
+    from oto_mcp import db
+    from oto_mcp.capabilities._types import AuthzDenied
+    m = monde
+    with db._connect() as conn:
+        conn.execute("UPDATE apps SET html = %s WHERE id = %s", (NON_CLASSE, m["app"]))
+    with pytest.raises(AuthzDenied) as e:
+        _apps(m, m["membre"], op="get")
+    assert e.value.code == "app_unavailable"
+    assert "admin" not in e.value.message and "pipeline" not in e.value.message
+    assert _apps(m, m["auteur"], op="get")["app"]["html"] == NON_CLASSE
