@@ -154,7 +154,21 @@ def test_get_rend_le_corps_et_les_pieces(client):
                                    "isInline": None}]
 
 
-def test_piece_jointe_par_nom_rendue_pour_l_agent(client, monkeypatch):
+@pytest.fixture
+def depots(monkeypatch):
+    """Le dépôt privé du fichier original (`media_store.upload_private`) : chaque dépôt
+    noté, une URL signée factice rendue."""
+    vus = []
+
+    def deposer(prefix, sub, data, mime, filename=None, **kw):
+        vus.append((prefix, sub, data, filename))
+        return f"https://stockage.example/tmp/{prefix}/{filename}?sig=1"
+
+    monkeypatch.setattr("oto_mcp.media_store.upload_private", deposer)
+    return vus
+
+
+def test_piece_jointe_par_nom_rendue_pour_l_agent(client, monkeypatch, depots):
     client.list_attachments.return_value = [{"id": "a1", "name": "f.pdf"}]
     client.get_attachment.return_value = {
         "name": "f.pdf", "contentType": "application/pdf",
@@ -163,16 +177,30 @@ def test_piece_jointe_par_nom_rendue_pour_l_agent(client, monkeypatch):
     monkeypatch.setattr("oto_mcp.file_content.render_for_agent",
                         lambda data, nom, mime, **kw: vus.append((data, nom, mime, kw))
                         or {"encoding": "text"})
-    _tool("outlook")(op="attachment", message_id="m1", filename="f.pdf")
+    out = _tool("outlook")(op="attachment", message_id="m1", filename="f.pdf")
     client.get_attachment.assert_called_once_with("m1", "a1")
     data, nom, mime, kw = vus[0]
     assert (data, nom, mime) == (b"%PDF", "f.pdf", "application/pdf")
     assert kw["prefix"] == "outlook-attachments" and kw["sub"] == "sub-1"
+    # Désignée par son nom, la pièce revient avec la source qui la redésigne PAR SON ID.
+    assert out["source"] == {"kind": "outlook", "message_id": "m1", "attachment_id": "a1"}
 
 
-def test_piece_jointe_image_revient_en_image_sans_url(client, monkeypatch):
-    """#1522 — une image jointe revient en bloc image MCP, sans dépôt ni URL signée
-    (injoignable d'un bac à sable) ; les autres ops gardent leur dict."""
+def test_piece_jointe_texte_en_ligne_porte_aussi_un_lien(client, depots):
+    """Un texte rendu en ligne n'avait aucun lien : il en porte un (`raw_url`)."""
+    client.get_attachment.return_value = {
+        "id": "a1", "name": "notes.txt", "contentType": "text/plain",
+        "contentBytes": base64.b64encode(b"bonjour").decode()}
+    out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a1")
+    assert out["encoding"] == "text" and out["content"] == "bonjour"
+    assert out["raw_url"].startswith("https://stockage.example/tmp/outlook-attachments/")
+    assert depots == [("outlook-attachments", "sub-1", b"bonjour", "notes.txt")]
+    assert out["source"]["attachment_id"] == "a1"
+
+
+def test_piece_jointe_image_revient_en_image_avec_lien_et_source(client, depots):
+    """#1522 — une image jointe revient en bloc image MCP ; signal #1486 — avec, dans
+    sa ligne de texte, le lien du fichier original et sa `source`."""
     from _pdf_texte import jpeg_minimal
     from fastmcp.tools.tool import ToolResult
     from mcp.types import ImageContent
@@ -181,14 +209,51 @@ def test_piece_jointe_image_revient_en_image_sans_url(client, monkeypatch):
     client.get_attachment.return_value = {
         "name": "photo.jpg", "contentType": "image/jpeg",
         "contentBytes": base64.b64encode(jpeg).decode()}
-    monkeypatch.setattr("oto_mcp.media_store.upload_private",
-                        lambda *a, **k: pytest.fail("aucun dépôt attendu"))
     out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a1")
     assert isinstance(out, ToolResult)
     texte, image = out.content
     assert "photo.jpg" in texte.text
+    assert "https://stockage.example/tmp/outlook-attachments/photo.jpg?sig=1" in texte.text
+    assert '"kind": "outlook"' in texte.text and '"attachment_id": "a1"' in texte.text
     assert isinstance(image, ImageContent) and image.mimeType == "image/jpeg"
     assert base64.b64decode(image.data) == jpeg
+    assert depots and depots[0][2] == jpeg
+
+
+def test_piece_jointe_scannee_revient_en_images_avec_un_lien(client, depots):
+    """Signal #1486 — un PDF scanné (pages JPEG) revient en images ET avec un lien
+    téléchargeable vers le PDF original : l'agent peut le lire et le transmettre."""
+    from _pdf_texte import jpeg_minimal, pdf_scanne
+    from fastmcp.tools.tool import ToolResult
+    from mcp.types import ImageContent
+
+    scan = pdf_scanne([("/DCTDecode", jpeg_minimal())] * 2)
+    client.get_attachment.return_value = {
+        "id": "a9", "name": "arret.pdf", "contentType": "application/pdf",
+        "contentBytes": base64.b64encode(scan).decode()}
+    out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a9")
+    assert isinstance(out, ToolResult)
+    texte, *images = out.content
+    assert len(images) == 2 and all(isinstance(i, ImageContent) for i in images)
+    assert "Original file: https://stockage.example/tmp/outlook-attachments/arret.pdf" \
+        in texte.text
+    assert depots == [("outlook-attachments", "sub-1", scan, "arret.pdf")]
+
+
+def test_piece_jointe_scannee_sans_stockage_le_dit(client, monkeypatch):
+    from _pdf_texte import jpeg_minimal, pdf_scanne
+    from oto_mcp import media_store
+
+    def panne(*a, **k):
+        raise media_store.MediaError(500, "upload_failed", "boom")
+
+    monkeypatch.setattr("oto_mcp.media_store.upload_private", panne)
+    client.get_attachment.return_value = {
+        "id": "a9", "name": "arret.pdf", "contentType": "application/pdf",
+        "contentBytes": base64.b64encode(pdf_scanne([("/DCTDecode",
+                                                       jpeg_minimal())])).decode()}
+    out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a9")
+    assert "Original file not stored" in out.content[0].text
 
 
 def test_piece_jointe_ambigue_ou_non_fichier_refusee(client):

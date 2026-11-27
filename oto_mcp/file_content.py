@@ -188,7 +188,7 @@ def _joindre_le_brut(out: dict, data: bytes, filename: str, mime: str, *, sub: s
 
 def render_attachment_for_agent(data: bytes, filename: str, mime: str, *, sub: str,
                                 prefix: str, sheet: Optional[Union[int, str]] = None,
-                                max_rows: Optional[int] = None):
+                                max_rows: Optional[int] = None, lien: bool = False):
     """Rendu d'une PIÈCE JOINTE d'e-mail (outlook, gmail) : `render_for_agent`, sauf
     pour ce qu'un modèle lit en image.
 
@@ -208,14 +208,20 @@ def render_attachment_for_agent(data: bytes, filename: str, mime: str, *, sub: s
     non convertible sans moteur de rendu) — jamais une URL seule sans raison.
 
     La ligne de texte est du texte libre, pas du JSON : comme `web_image`, aucun
-    middleware ne réémet alors la réponse depuis un JSON qui perdrait le bloc image."""
+    middleware ne réémet alors la réponse depuis un JSON qui perdrait le bloc image.
+
+    `lien=True` (outlook) : TOUJOURS un lien vers le fichier ORIGINAL, par le dépôt
+    privé de `render_for_agent` (`_joindre_le_brut`, sous `tmp/`, purgé en un jour) —
+    dans la ligne de texte d'une réponse en images, en `raw_url` d'un texte rendu en
+    ligne. Un stockage absent le DIT (`raw_unavailable`), le rendu n'échoue pas."""
     raison = None
     if sheet is None and max_rows is None and not is_spreadsheet(filename, mime):
         fmt = image_format(data)
         if fmt is not None:
             if len(data) <= INLINE_IMAGE_CAP:
                 return _en_images(filename, mime, len(data), f"{fmt} image",
-                                  [(fmt, data)])
+                                  [(fmt, data)], _brut_en_texte(
+                                      lien, data, filename, mime, sub=sub, prefix=prefix))
             raison = (f"image of {len(data)} bytes, over the "
                       f"{INLINE_IMAGE_CAP // 1_000_000} MB served as image content")
         elif file_extract.is_pdf(filename, mime):
@@ -226,20 +232,38 @@ def render_attachment_for_agent(data: bytes, filename: str, mime: str, *, sub: s
                     return _en_images(
                         filename, mime, len(data),
                         f"scanned PDF without text, {ex.pages} page(s), "
-                        f"{len(images)} page image(s) in JPEG", images)
+                        f"{len(images)} page image(s) in JPEG", images, _brut_en_texte(
+                            lien, data, filename, mime, sub=sub, prefix=prefix))
     out = render_for_agent(data, filename, mime, sub=sub, prefix=prefix, sheet=sheet,
                            max_rows=max_rows)
+    if lien and not ({"url", "raw_url", "raw_unavailable"} & out.keys()):
+        _joindre_le_brut(out, data, filename, mime, sub=sub, prefix=prefix)
     if raison is not None:
         out["image_unavailable"] = f"{raison} — served as a signed URL instead."
     return out
 
 
-def _en_images(filename: str, mime: str, size: int, quoi: str, images: list):
+def _brut_en_texte(lien: bool, data: bytes, filename: str, mime: str, *, sub: str,
+                   prefix: str) -> Optional[str]:
+    """`lien=True` : le fichier original déposé (`_joindre_le_brut`) et dit en une phrase
+    pour la ligne de texte d'une réponse en images ; sinon None (rien n'est déposé)."""
+    if not lien:
+        return None
+    out: dict = {}
+    _joindre_le_brut(out, data, filename, mime, sub=sub, prefix=prefix)
+    if "raw_url" in out:
+        return (f"Original file: {out['raw_url']} (signed link, expires in "
+                f"{out['raw_expires_in']} s).")
+    return "Original file not stored: temporary storage unavailable, no link."
+
+
+def _en_images(filename: str, mime: str, size: int, quoi: str, images: list,
+               brut: Optional[str] = None):
     from fastmcp.tools.tool import ToolResult
     from fastmcp.utilities.types import Image
     from mcp.types import TextContent
     ligne = (f"Attachment « {filename} » ({mime or 'unknown type'}, {size} bytes): "
-             f"{quoi}, below as image content. Nothing was stored.")
+             f"{quoi}, below as image content. {brut or 'Nothing was stored.'}")
     return ToolResult(content=[TextContent(type="text", text=ligne),
                                *(Image(data=octets, format=fmt).to_image_content()
                                  for fmt, octets in images)])

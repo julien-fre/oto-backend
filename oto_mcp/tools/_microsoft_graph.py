@@ -12,6 +12,7 @@ account that has not authorized THIS service, naming its card — before any Gra
 """
 from __future__ import annotations
 
+import base64
 from typing import Callable, NoReturn, Optional, TypeVar
 
 from mcp.types import ErrorData, INVALID_PARAMS
@@ -47,21 +48,73 @@ def raw(objet: dict) -> dict:
     return objet
 
 
-def token(service: str, *, renew: bool = False) -> str:
+def token(service: str, *, renew: bool = False, account: Optional[str] = None) -> str:
     """The caller's access token for `service`, on the account the call designates.
     `renew=True` asks Entra for a new one whatever the cache holds (a permission granted
-    since the cached token was issued — `access_token_for`)."""
+    since the cached token was issued — `access_token_for`). `account` names the account
+    of a FILE SOURCE inside the call (an Outlook attachment dropped elsewhere,
+    `file_source`); omitted, it is the call's own (`_account=`, pin, default)."""
     from oto.tools.microsoft import MicrosoftAuthError
 
     from ..auth import microsoft as ms_auth
 
     sub = access.current_user_sub_or_raise()
+    args = (sub, service) + ((account,) if account else ())
     try:
         if renew:
-            return ms_auth.access_token_for(sub, service, renew=True)
-        return ms_auth.access_token_for(sub, service)
+            return ms_auth.access_token_for(*args, renew=True)
+        return ms_auth.access_token_for(*args)
     except (RuntimeError, MicrosoftAuthError) as e:
         raise bad(str(e))
+
+
+def attachment(client, message_id: str, *, attachment_id: Optional[str] = None,
+               filename: Optional[str] = None, max_bytes: Optional[int] = None,
+               label: str = "Outlook") -> tuple[dict, bytes]:
+    """`(Graph attachment, bytes)` of a FILE attachment of `message_id`, designated by
+    `attachment_id` OR `filename` — the single reader of `outlook(op="attachment")` and
+    of the `outlook` file source (`file_source`), so both refuse alike.
+
+    `max_bytes`: the size Graph lists for the attachment is checked BEFORE its content
+    is fetched (Graph serves the content in one JSON body, no stream here), then the
+    bytes themselves. Without it (op="attachment"), no listing is added to the call.
+    Refusals are `McpError`s that name the gesture: ambiguous or unknown name, unknown
+    id, an attached email or link (no bytes), a file over the limit."""
+    if (attachment_id is None) == (filename is None):
+        raise bad("an Outlook attachment is designated by `attachment_id` OR `filename` "
+                  "(only one) — both come from outlook(op='get').")
+    pieces = None
+    aid = attachment_id
+    if aid is None:
+        pieces = run(lambda: client.list_attachments(message_id), label)
+        memes = [a for a in pieces if a.get("name") == filename]
+        if len(memes) != 1:
+            noms = [(a.get("name"), a.get("id")) for a in pieces]
+            raise bad(f"{len(memes)} attachments are named {filename!r} on this "
+                      f"message — pass `attachment_id` (name, id): {noms}.")
+        aid = memes[0]["id"]
+    if max_bytes is not None:
+        if pieces is None:
+            pieces = run(lambda: client.list_attachments(message_id), label)
+        listee = next((a for a in pieces if a.get("id") == aid), None)
+        if listee is None:
+            noms = [(a.get("name"), a.get("id")) for a in pieces]
+            raise bad(f"no attachment with id {aid!r} on this message — its "
+                      f"attachments (name, id): {noms}.")
+        if (listee.get("size") or 0) > max_bytes:
+            raise bad(f"« {listee.get('name')} » weighs {listee['size']} bytes, over "
+                      f"the {max_bytes} bytes this gesture carries. Nothing was done.")
+    piece = run(lambda: client.get_attachment(message_id, aid), label)
+    if piece.get("contentBytes") is None:
+        raise bad(f"« {piece.get('name')} » is not a file attachment "
+                  f"({piece.get('@odata.type')}): an attached email or a link "
+                  "has no content to read here — open the message in Outlook "
+                  "(`webLink` of op='get').")
+    data = base64.b64decode(piece["contentBytes"])
+    if max_bytes is not None and len(data) > max_bytes:
+        raise bad(f"« {piece.get('name')} » weighs {len(data)} bytes, over the "
+                  f"{max_bytes} bytes this gesture carries. Nothing was done.")
+    return {**piece, "id": piece.get("id") or aid}, data
 
 
 def upstream_message(e, label: str, conflict: Optional[str] = None) -> str:

@@ -279,8 +279,10 @@ def register(mcp: FastMCP) -> None:
           it never transits through your context: `{"kind":"project_file",
           "project_id":…,"file_id":…}`, `{"kind":"url","url":"https://…"}` — a
           signed URL from another tool —, `{"kind":"drive",…}`, `{"kind":"gmail",
-          …}`; `name` may be omitted, the source's filename is used). Up to 25 MB
-          whatever the form. An existing name is refused by default
+          …}`, an Outlook attachment `{"kind":"outlook","message_id":…,
+          "attachment_id":…}` (or `"filename":…` instead of `attachment_id`; the same
+          Microsoft account as this call, or `"account":…`); `name` may be omitted,
+          the source's filename is used). Up to 25 MB whatever the form. An existing name is refused by default
           (`conflict="fail"`); "rename" keeps both, "replace" overwrites.
         - **"create_folder"**: ⚠️ WRITES — a folder `name` inside `item_id`/
           `path` (root when omitted), same `conflict` rule.
@@ -299,7 +301,7 @@ def register(mcp: FastMCP) -> None:
             content_base64: op="upload" — the file, base64-encoded.
             content_text: op="upload" — the file as plain text, instead.
             source: op="upload" — a server-side file reference, instead
-                ({kind: project_file|url|drive|gmail, …}, ≤ 25 MB).
+                ({kind: project_file|url|drive|gmail|outlook, …}, ≤ 25 MB).
             conflict: op="upload"/"create_folder" — fail (default) | rename |
                 replace.
             as_pdf: op="download" — force (true) or skip (false) the PDF

@@ -304,6 +304,22 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > fichier ne sont plus `quote`-és dans une clé (boto ré-encodait le `%` : `%255B`) mais
 > réduits à des caractères sûrs (`media_store.nom_sur`).
 
+> **Une pièce jointe Outlook comme source (signal #1486, 27/11/2026).** Une équipe RH
+> classait chaque jour des pièces reçues par mail dans SharePoint, sans chemin pour le
+> faire. `file_source` connaît `{"kind":"outlook","message_id":…,"attachment_id":…}` (ou
+> `"filename"` au lieu de l'id ; `"account"` pour un autre compte Microsoft que celui de
+> l'appel) : la pièce est lue chez Graph par le lecteur d'`outlook(op="attachment")`
+> (`_microsoft_graph.attachment`, mêmes refus : nom ambigu ou absent, id inconnu,
+> courriel joint sans octets), la taille LISTÉE jugée avant de demander le contenu
+> (Graph le sert en un seul corps JSON, sans flux), puis les octets. Tout consommateur
+> d'une `source` en hérite : `sharepoint_file op=upload` (même effet que tout dépôt),
+> `drive_file`, `oto_import`, les pièces d'`outlook`/`gmail`. `outlook(op="attachment")`
+> rend cette `source` sur chaque pièce, et TOUJOURS un lien vers l'original (dépôt
+> privé `upload_private`, comme le `raw_url` d'un PDF) — scans et images servis en
+> image compris, dans leur ligne de texte. ⚠️ Ce lien est une URL signée du stockage
+> objet, injoignable d'un bac à sable qui filtre sa sortie : c'est la `source` qui
+> transmet sans passer par l'agent.
+
 > **Livraison d'un projet COMPLET vers l'org d'un client (otomata-private#52).**
 > `oto_resource` : share/unshare acceptent un principal **org** (`org_id`, sans exigence
 > d'appartenance — on donne un accès) ; **`cascade=true`** sur share/transfer d'un projet

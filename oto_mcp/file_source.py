@@ -3,7 +3,7 @@ en récupérer les OCTETS côté serveur (oto-backend#60).
 
 Un agent MCP n'a pas de système de fichiers : il ne peut pas désigner un PDF par un
 chemin disque. Ce module résout une **référence typée** vers le contenu binaire d'un
-fichier qu'oto sait atteindre — pièce Gmail, fichier Drive, URL, fichier d'un projet,
+fichier qu'oto sait atteindre — pièce Gmail ou Outlook, fichier Drive, URL, fichier d'un projet,
 fichier déposé en transit par un outil —
 pour qu'un tool (upload Pennylane, etc.) l'ingère sans passer par le disque.
 
@@ -84,6 +84,39 @@ def _from_gmail(src: dict) -> ResolvedFile:
     att = client.get_attachment(message_id, filename, int(src.get("index", 0)))
     return ResolvedFile(att["data"], att.get("filename") or filename,
                         att.get("mimeType") or "application/octet-stream")
+
+
+def _from_outlook(src: dict, max_bytes: int) -> ResolvedFile:
+    """Une pièce jointe d'un message Outlook (`outlook`, service du porteur `microsoft`),
+    désignée comme `outlook(op="attachment")` la désigne : `message_id` et
+    `attachment_id` OU `filename`. Le lecteur est celui de l'outil
+    (`_microsoft_graph.attachment`, mêmes refus) ; la taille listée par Graph est
+    jugée AVANT de lire le contenu. Le compte est celui de l'appel (`_account=`, épingle,
+    défaut) ; `account` en désigne un autre — la boîte d'un compte, la bibliothèque
+    SharePoint d'un autre. Nom et type : ceux que Graph sert."""
+    mid, aid, nom = src.get("message_id"), src.get("attachment_id"), src.get("filename")
+    compte = src.get("account")
+    if not mid or (not aid) == (not nom):
+        raise FileSourceError(
+            "source outlook : `message_id` et `attachment_id` OU `filename` requis "
+            "(rendus par outlook op=get).")
+    if compte is not None and (not isinstance(compte, str) or not compte.strip()):
+        raise FileSourceError("source outlook : `account` est l'adresse d'un compte "
+                              "Microsoft lié.")
+    from oto.tools.microsoft import MailClient
+
+    from .mcp_errors import McpError
+    from .tools import _microsoft_graph as graph
+    try:
+        client = MailClient(graph.token("outlook", account=compte or None))
+        piece, data = graph.attachment(client, str(mid),
+                                       attachment_id=str(aid) if aid else None,
+                                       filename=str(nom) if nom else None,
+                                       max_bytes=max_bytes)
+    except McpError as e:
+        raise FileSourceError(f"source outlook : {e.error.message}") from None
+    return ResolvedFile(data, os.path.basename(piece.get("name") or "") or str(nom or aid),
+                        piece.get("contentType") or "application/octet-stream")
 
 
 def _assert_public_host(host: str) -> None:
@@ -467,7 +500,8 @@ _RESOLVERS = {"drive": _from_drive, "gmail": _from_gmail}
 # Les résolveurs qui bornent la taille EUX-MÊMES, avant de matérialiser les octets.
 _RESOLVERS_BORNES = {"url": _from_url, "project_file": _from_project_file,
                      "api": _from_api, "content": _from_content,
-                     "unipile": _from_unipile, "transit": _from_transit}
+                     "unipile": _from_unipile, "transit": _from_transit,
+                     "outlook": _from_outlook}
 
 
 #: Les `kind` renommés, refusés en nommant le nouveau — aucun alias : le connecteur
@@ -482,10 +516,12 @@ def resolve(source: Any, *, max_bytes: int = DEFAULT_MAX_BYTES,
             deadline: Optional[float] = None) -> ResolvedFile:
     """Résout une référence de fichier côté oto vers ses octets + métadonnées.
 
-    `source` = dict `{"kind": "drive"|"gmail"|"url"|"project_file"|"api"|"content"|
-    "unipile"|"transit", …}` :
+    `source` = dict `{"kind": "drive"|"gmail"|"outlook"|"url"|"project_file"|"api"|
+    "content"|"unipile"|"transit", …}` :
       - drive        : `{file_id, account?}`
       - gmail        : `{message_id, filename, index?, account?}`
+      - outlook      : `{message_id, attachment_id | filename, account?}` (pièce jointe
+                       Outlook, ids d'`outlook op=get` ; taille jugée avant lecture)
       - url          : `{url, filename?}` (http/https, redirections refusées ; nom :
                        `filename`, sinon `Content-Disposition`, sinon le chemin)
       - project_file : `{project_id, file_id}` (ids d'`oto_project_files op=list`)
@@ -510,8 +546,8 @@ def resolve(source: Any, *, max_bytes: int = DEFAULT_MAX_BYTES,
         fn = _RESOLVERS.get(kind)
         if fn is None:
             raise FileSourceError(
-                f"source `kind`={kind!r} inconnu (attendu : drive, gmail, url, project_file, "
-                f"api, content, unipile, transit).{_KINDS_RENOMMES.get(kind, '')}")
+                f"source `kind`={kind!r} inconnu (attendu : drive, gmail, outlook, url, "
+                f"project_file, api, content, unipile, transit).{_KINDS_RENOMMES.get(kind, '')}")
         try:
             rf = fn(source)
         except FileSourceError:
