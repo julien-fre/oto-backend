@@ -1231,3 +1231,50 @@ def test_a_described_destination_is_a_url_setting_the_engine_guards():
             if not champ.secret and any(m in champ.name.lower() for m in ("url", "host", "domain")):
                 assert champ.name in url, (c.name, champ.name)
 
+
+
+# --- Snowflake: a token and the account identifier, read-only SQL ----------------------------------------------------
+
+
+@pytest.fixture
+def snowflake(vendeur, monkeypatch):
+    """The real description mounted as the registry inscribes it, the token and the account by
+    `resolve_credential_fields`."""
+    from oto.tools.common import url_guard
+    champs = {"token": "pat-0", "account": "myorg-myaccount"}
+    monkeypatch.setattr(decrits.access, "resolve_credential_fields", lambda nom, *a, **k: dict(champs))
+    monkeypatch.setattr(url_guard.socket, "getaddrinfo", _resoudre_vers("93.184.216.34"))
+    yield {t.name: t for t in decrits.monter(FastMCP("snowflake"), "snowflake", descriptions.charger("snowflake"))}
+    connector_verify._REGISTRY.pop("snowflake", None)
+    connector_verify._COUVERTURE.pop("snowflake", None)
+
+
+def test_snowflake_is_inscribed_read_only_with_its_token_and_its_account(snowflake):
+    c = providers.REGISTRY["snowflake"]
+    assert (c.namespaces, c.auth_modes, c.secret_kind, c.keyed, c.decrit) == (
+        ("snowflake",), frozenset({"byo_user", "byo_org"}), "fields", False, True)
+    assert [(f.name, f.secret) for f in c.secret_fields] == [("token", True), ("account", False)]
+    assert descriptions.refus_de_montage(descriptions.charger("snowflake")) == []
+    assert set(snowflake) == {"snowflake"} and snowflake["snowflake"].annotations == LECTURE
+
+
+def test_snowflake_runs_a_read_on_the_account_with_the_token_type(snowflake, vendeur):
+    vendeur.answers.append((200, {"code": "090001", "statementHandle": "h", "statementStatusUrl": "/api/v2/statements/h",
+                                  "resultSetMetaData": {"numRows": 1}, "data": [["ACME", "12"]]}))
+    rendu = _appel(snowflake["snowflake"], op="run_query", statement="SELECT name, n FROM T WHERE c = ? LIMIT 5",
+                   bindings={"1": {"type": "TEXT", "value": "FR"}}, warehouse="WH", max_rows=5)
+    assert "ACME" in json.dumps(rendu) and "statementStatusUrl" not in json.dumps(rendu)
+    envoi = essai.envoyee(vendeur.requests[0])
+    assert (envoi["method"], envoi["url"]) == ("POST", "https://myorg-myaccount.snowflakecomputing.com/api/v2/statements")
+    assert envoi["headers"]["authorization"] == "Bearer pat-0"
+    assert envoi["headers"]["x-snowflake-authorization-token-type"] == "PROGRAMMATIC_ACCESS_TOKEN"
+    assert envoi["body"]["parameters"] == {"multi_statement_count": "1", "query_tag": "oto", "rows_per_resultset": 5}
+    assert envoi["body"]["bindings"] == {"1": {"type": "TEXT", "value": "FR"}} and envoi["body"]["warehouse"] == "WH"
+
+
+@pytest.mark.parametrize("sql", ["DELETE FROM T", "drop table t", "GRANT ROLE R TO USER U", "CALL p()",
+                                 "/* x */ SELECT 1"])
+def test_snowflake_refuses_what_does_not_open_like_a_read_before_sending(snowflake, vendeur, sql):
+    with pytest.raises(Exception):
+        _appel(snowflake["snowflake"], op="run_query", statement=sql)
+    assert vendeur.requests == []
