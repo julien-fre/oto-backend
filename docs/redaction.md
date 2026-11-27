@@ -258,6 +258,11 @@ objet) n'est ni signal ni contradiction : elle est ignorée. Le signal ne se che
 sinon `EMPTY_MESSAGE_DEFAULT`. La table vit dans la couche de rendu, pas au registre
 des connecteurs : un outil n'a pas à savoir comment on le rend.
 
+**Exceptions déclarées** : un comptage demandé (`COMPTAGES_EXPLICITES`) et une lecture de
+cellules (`LECTURES_STRUCTUREES`, `sheets_spreadsheet op=read`) se servent tels quels, vides
+compris — `{"rows": [], "count": 0}`, la forme de toute autre plage (signal 1471). Listes
+FERMÉES, jugées sur l'outil VISÉ (sous `oto_call` aussi).
+
 ⚠️ **Jamais phrase + structure dans le même canal texte** — y rajouter la structure
 « pour information » rétablirait exactement le déclencheur qu'on retire.
 

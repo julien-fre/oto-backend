@@ -258,6 +258,27 @@ def est_un_comptage(tool_name: str, arguments: dict | None) -> bool:
     return v is True or (isinstance(v, str) and v.strip().lower() == "true")
 
 
+#: Les LECTURES de cellules : outil -> (argument, valeur). Une plage lue sans valeur
+#: rend `{"rows": [], "count": 0}`, la MEME forme que toute autre plage : la phrase de
+#: recherche vide n'a pas de sens pour une plage (on lit des cellules, on ne cherche
+#: rien) et obligeait l'agent a gerer deux formes pour un seul appel (signal 1471).
+#: Liste FERMEE, declaree.
+LECTURES_STRUCTUREES: dict[str, tuple[str, str]] = {
+    "sheets_spreadsheet": ("op", "read"),
+}
+
+
+def est_une_lecture_structuree(tool_name: str, arguments: dict | None) -> bool:
+    """Vrai quand l'appel est une lecture de `LECTURES_STRUCTUREES` : son resultat vide
+    se sert tel quel. `arguments` = ceux de l'outil vise, comme `est_un_comptage`."""
+    decl = LECTURES_STRUCTUREES.get(tool_name)
+    if not decl or not isinstance(arguments, dict):
+        return False
+    arg, valeur = decl
+    v = arguments.get(arg)
+    return isinstance(v, str) and v.strip().lower() == valeur
+
+
 def empty_message(tool_name: str) -> str:
     """Phrase à servir pour un résultat vide de `tool_name` : son gabarit déclaré,
     sinon la phrase générique."""

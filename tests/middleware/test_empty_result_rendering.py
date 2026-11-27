@@ -402,3 +402,42 @@ def test_le_comptage_se_juge_sur_l_outil_VISE(nom, args, attendu):
 
     from oto_mcp.middleware.empty_result import _comptage_demande
     assert _comptage_demande(SimpleNamespace(name=nom, arguments=args)) is attendu
+
+
+# --- Signal 1471 : une plage lue vide rend `{rows: [], count: 0}` -----------
+
+def _sheets_spreadsheet():
+    def sheets_spreadsheet(op: str = "metadata") -> dict:
+        return {"rows": [], "count": 0}
+    return sheets_spreadsheet
+
+
+def test_une_plage_lue_vide_rend_la_structure_pas_la_phrase():
+    """RED avant le correctif : une plage vide sortait en phrase de recherche vide,
+    là où toute autre plage rend `{rows, count}`."""
+    texte, structure = _servir_avec(
+        _banc(_sheets_spreadsheet(), nom="sheets_spreadsheet"),
+        "sheets_spreadsheet", {"op": "read"})
+    assert texte.replace(" ", "") == '{"rows":[],"count":0}'
+    assert structure == {"rows": [], "count": 0}
+
+
+def test_un_autre_op_du_meme_outil_garde_le_rendu_du_vide():
+    texte, _ = _servir_avec(
+        _banc(_sheets_spreadsheet(), nom="sheets_spreadsheet"),
+        "sheets_spreadsheet", {})
+    assert texte == redaction.empty_message("sheets_spreadsheet")
+
+
+@pytest.mark.parametrize("nom,args,attendu", [
+    ("sheets_spreadsheet", {"op": "read"}, True),
+    ("sheets_spreadsheet", {"op": "write"}, False),
+    ("sheets_spreadsheet", {}, False),
+    ("fr_search", {"op": "read"}, False),
+    ("oto_call", {"name": "sheets_spreadsheet", "arguments": {"op": "read"}}, True),
+])
+def test_la_lecture_se_juge_sur_l_outil_VISE(nom, args, attendu):
+    from types import SimpleNamespace
+
+    from oto_mcp.middleware.empty_result import _lecture_structuree
+    assert _lecture_structuree(SimpleNamespace(name=nom, arguments=args)) is attendu
