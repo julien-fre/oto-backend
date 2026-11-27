@@ -481,3 +481,13 @@ def test_le_manifeste_refuse_un_role_a_perimetre_qui_ajoute_la_cle(monde):
     e = _refus(_apps, m, m["auteur"], op="update", manifest=vu["manifest"],
                expected_rev=vu["rev"])
     assert e.code == "invalid_manifest" and "unique key" in e.message
+
+
+def test_op_roles_dit_a_l_ecran_ce_que_chaque_role_borne(monde):
+    m = monde
+    out = _apps(m, m["auteur"], op="roles")
+    par_role = {r["key"]: r for r in out["roles"]}
+    assert par_role["partner"]["rows"] == {"fiches": {"partner_id": "$share"}}
+    assert par_role["contact"]["rows"] == {"fiches": {"contact_email": "$email"}}
+    assert par_role["free"]["rows"] is None
+    assert out["tables"] == {"fiches": str(m["ns_id"])}

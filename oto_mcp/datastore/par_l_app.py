@@ -62,6 +62,22 @@ def enregistrer_run(f: Callable[[str, str], Optional[str]],
     _NOTER_RUN = noter
 
 
+def peut_servir(sub: Optional[str]) -> bool:
+    """Une portée PEUT-elle s'ouvrir pour `sub` ici — sans rien lire de la base : l'appel
+    d'une app en cours pour lui, ou le travail hébergé de la requête est le sien. Faux
+    dans tout autre chemin : le store n'y paie rien de plus."""
+    if sub is None:
+        return False
+    p = _PORTEE.get()
+    if p is not None:
+        return sub == p.sub
+    if _DU_RUN is None:
+        return False
+    from .. import verrou_org
+    v = verrou_org.travail_de_la_requete()
+    return v is not None and v.job_id is not None and v.sub == sub
+
+
 def droit(sub: Optional[str], ns_id: str) -> Optional[str]:
     """Ce que la portée en cours ouvre à `sub` sur ce tableau — l'appel d'une app, ou le
     run d'un agent que `sub` a lancé depuis une app ; None sinon."""

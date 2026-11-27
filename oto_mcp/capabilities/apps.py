@@ -121,6 +121,11 @@ class AppInput(BaseModel):
         "(`user`), a team (`group`) or an organization (`org`), as op=roles lists them.")
     principal_id: Optional[str] = Field(
         default=None, description="set_role: their id, as op=roles lists it.")
+    as_role: Optional[str] = Field(
+        default=None, description="get: see the app AS one of the roles its manifest "
+        "declares — that role's narrowed manifest, HTML without the sections it doesn't "
+        "open, and its `access` (editors only, to preview a role). Rows scoped by `$share` "
+        "come back empty in such a preview: it is no one's share.")
     tables: Optional[list[str]] = Field(
         default=None, description="grant_through_app: the app's table names to open "
         "(default: every table it declares). reads: only these tables — the app's table "
@@ -220,6 +225,8 @@ class AppOut(BaseModel):
     # et chacun de ses partages avec son rôle d'app (None = le rôle par défaut).
     roles: Optional[list[dict]] = None
     default_role: Optional[str] = None
+    # roles : chaque nom de tableau du manifeste → son numéro.
+    tables: Optional[dict] = None
     grants: Optional[list[dict]] = None
     # grant_through_app : les tableaux de l'app qu'on n'a pas pu ouvrir (pas gérant).
     skipped: Optional[list[dict]] = None
@@ -348,17 +355,25 @@ def _cards(sub: str, rows: list[dict], writable: Optional[set[int]] = None) -> l
                           else _can(sub, r["id"], "write"))} for r in rows]
 
 
-def _view(sub: str, row: dict) -> dict:
+def _view(sub: str, row: dict, as_role: Optional[str] = None) -> dict:
     from . import apps_appel, apps_roles, apps_sections
     row = _cards(sub, [row])[0]
     row["can_use"] = bool(row.get("can_edit")) or apps_appel.peut_cliquer(sub, int(row["id"]))
     if "manifest" in row:
         # Un lecteur reçoit le manifeste de SON rôle, sans la définition des rôles ;
-        # qui peut modifier l'app le reçoit entier.
+        # qui peut modifier l'app le reçoit entier — sauf s'il l'ESSAIE sous un rôle
+        # (`as_role`) : il reçoit alors exactement ce que ce rôle reçoit.
         entier = row["manifest"] or {}
-        role = None if row.get("can_edit") else apps_roles.role_du_lecteur(sub, row)
+        essai = bool(as_role) and bool(row.get("can_edit"))
+        if as_role and not row.get("can_edit"):
+            raise AuthzDenied(403, "as_role_editors_only",
+                              "Only the app's editors can see it as another role.")
+        if essai and as_role not in (entier.get("roles") or {}):
+            raise AuthzDenied(400, "unknown_role", f"This app declares no role “{as_role}”.")
+        role = as_role if essai else (None if row.get("can_edit")
+                                      else apps_roles.role_du_lecteur(sub, row))
         row["access"] = apps_roles.acces(entier, role)
-        if not row.get("can_edit"):
+        if not row.get("can_edit") or essai:
             row["manifest"] = apps_roles.resserrer(entier, role)
             if "html" in row:
                 # Les éléments des sections que ce rôle n'ouvre pas ne partent pas
@@ -524,7 +539,11 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         return _roles(sub, row, inp)
 
     if inp.op == "get":
-        view = _view(sub, row)
+        # L'aperçu d'un rôle se fait sur l'app publiée : le brouillon remplacerait après
+        # coup le manifeste et le HTML resserrés par les siens, entiers.
+        _require(not (inp.draft and inp.as_role), "as_role_live_only",
+                 "A role preview opens the published app: publish the draft first.")
+        view = _view(sub, row, inp.as_role)
         if inp.draft:
             lu, courant = V.lire(row, view["can_edit"])
             return {"app": {**view, **{k: lu[k] for k in ("manifest", "html", "rev")}},
@@ -832,7 +851,13 @@ def _roles(sub: str, row: dict, inp: AppInput) -> dict:
             {"table": alias_de.get(str(a["ns_id"]), str(a["ns_id"])),
              "permission": a["permission"]})
     return {**({"skipped": skipped} if skipped is not None else {}),
-            "roles": [{"key": k, "label": roles[k].get("label") or k} for k in ordre(manifest)],
+            # Pour l'écran de partage : ce que chaque rôle borne par lignes (`rows`, par
+            # nom de tableau : `$share` = la valeur à poser sur le partage, `$email` =
+            # l'adresse vérifiée) et ses sections ; les numéros des tableaux nommés.
+            "roles": [{"key": k, "label": roles[k].get("label") or k,
+                       "rows": roles[k].get("rows") or None,
+                       "sections": roles[k].get("sections")} for k in ordre(manifest)],
+            "tables": {a: str(t.get("table")) for a, t in (manifest.get("tables") or {}).items()},
             "default_role": manifest.get("default_role"),
             "grants": [{"principal_type": g["principal_type"], "principal_id": g["principal_id"],
                         "share_role": g["role"], "app_role": g["app_role"],

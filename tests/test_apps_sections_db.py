@@ -163,3 +163,21 @@ def test_au_service_une_app_non_classee_n_est_pas_servie_au_lecteur(monde):
     assert e.value.code == "app_unavailable"
     assert "admin" not in e.value.message and "pipeline" not in e.value.message
     assert _apps(m, m["auteur"], op="get")["app"]["html"] == NON_CLASSE
+
+
+def test_l_editeur_voit_l_app_comme_un_role(monde):
+    """`op=get as_role` : exactement ce que ce rôle reçoit — manifeste resserré, HTML sans
+    ses sections fermées, son `access`. Refusé à un lecteur, et sur le brouillon."""
+    from oto_mcp.capabilities._types import AuthzDenied
+    m = monde
+    vu = _apps(m, m["auteur"], op="get", as_role="user")["app"]
+    assert "ADMIN-SECRET" not in vu["html"] and "PIPELINE" in vu["html"]
+    assert vu["access"]["role"] == "user" and "roles" not in vu["manifest"]
+    assert "ADMIN-SECRET" in _apps(m, m["auteur"], op="get", as_role="admin")["app"]["html"]
+    for kw in ({"as_role": "admin"}, {"as_role": "nope"}):
+        who = m["membre"] if kw["as_role"] == "admin" else m["auteur"]
+        with pytest.raises(AuthzDenied):
+            _apps(m, who, op="get", **kw)
+    with pytest.raises(AuthzDenied) as e:
+        _apps(m, m["auteur"], op="get", as_role="user", draft=True)
+    assert e.value.code == "as_role_live_only"

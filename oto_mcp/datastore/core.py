@@ -332,8 +332,10 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         if (self.sub is None or self.acting_org is not None or self.allowed_ns_ids is not None
                 or not str(datastore).isdigit()):
             return None
-        # Le lecteur tient-il déjà ce qu'il faut ? La résolution ordinaire le sert — et
-        # c'est le cas courant : rien de plus n'est lu.
+        # Hors d'un appel d'app ou d'un run : rien à servir, rien de lu (le cas courant).
+        if not par_l_app.peut_servir(self.sub):
+            return None
+        # Le lecteur tient-il déjà ce qu'il faut ? La résolution ordinaire le sert.
         if ownership.can_access(self.sub, ownership.TYPE_RESSOURCE_DATASTORE,
                                 str(datastore), "write" if write else "read"):
             return None

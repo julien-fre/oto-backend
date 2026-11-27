@@ -214,6 +214,10 @@ CREATE TABLE IF NOT EXISTS app_table_access (
     granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (app_id, ns_id, principal_type, principal_id)
 );
+-- La fusion de comptes repointe `principal_id` et `granted_by` d'un bloc : indexés, sinon
+-- un balayage complet de la table (garde `tests/test_repointer_residus_alias.py`).
+CREATE INDEX IF NOT EXISTS app_table_access_principal_idx ON app_table_access (principal_id);
+CREATE INDEX IF NOT EXISTS app_table_access_granted_by_idx ON app_table_access (granted_by);
 """
 
 LECTURES = """
