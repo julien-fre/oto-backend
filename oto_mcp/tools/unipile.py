@@ -20,6 +20,7 @@ local browser's session isolation (issue #5) — at the price of a paid SaaS.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import unicodedata
 from typing import Literal, Optional
@@ -104,6 +105,18 @@ _RL_DEFAULT_SECS = 30    # 429 without a readable delay → short backoff (burst
 _MSG_REPRISE_MAX_S = 8   # messaging READS: Unipile delay waited out once, up to this
 _RL_MAX_SECS = 3600      # cap: a "Retry in 12 hours" (rare/misleading) does not lock
                          #  the day — at worst we re-probe after 1h (self-correcting)
+# Unipile's SHORT per-account throttle ("We only allow 1 requests. Retry in 1 second"):
+# a client firing several reads at once on ONE LinkedIn account (parallel tool calls)
+# had every one refused. The reads of an account now queue behind each other in the
+# process (`_ACCOUNT_GATES`, a thread lock: these tools run in the server's threadpool),
+# and a 429 asking for a short wait is waited out ONCE, still holding the account's
+# turn. A longer wait, a second 429, or a turn not obtained in time is the
+# `unipile_rate_limited` refusal as before. READS only: no send goes through `_scrape`.
+_SHORT_RETRY_MAX_S = 3   # a 429 asking for at most this is waited out once
+_GATE_WAIT_MAX_S = 5     # longest a read waits for its account's turn: the wait
+                         #  holds a thread of the shared pool, so keep it short
+_ACCOUNT_GATES: dict[str, threading.Lock] = {}  # gate key -> lock (one per account)
+_ACCOUNT_GATES_LOCK = threading.Lock()
 
 
 def _fmt_wait(secs: float) -> str:
@@ -203,18 +216,57 @@ def _actor_key() -> str:
     return access.current_user_sub_or_raise()
 
 
-def _scrape(sub: str, fn):
+def _account_gate(sub: str, client) -> threading.Lock:
+    """The lock that queues the reads of ONE LinkedIn account: keyed on the Unipile
+    account id the client serves (Unipile throttles per account, whoever the caller),
+    on the actor when the client names none. Read here rather than through
+    `unipile_limites.compte_du_client`: queueing is not the sending limits' concern."""
+    acct = getattr(client, "_account_id", None)
+    key = f"account:{acct}" if isinstance(acct, str) and acct else f"actor:{sub}"
+    with _ACCOUNT_GATES_LOCK:
+        gate = _ACCOUNT_GATES.get(key)
+        if gate is None:
+            gate = _ACCOUNT_GATES[key] = threading.Lock()
+        return gate
+
+
+def _scrape(sub: str, fn, client=None):
     """Scrape LinkedIn under rate-limit discipline: refusal during an ongoing cooldown,
-    and on an upstream 429 we arm the cooldown (= Unipile's delay) + an actionable "slow down" error."""
+    and on an upstream 429 we arm the cooldown (= Unipile's delay) + an actionable "slow down" error.
+
+    Reads of the same account (`client`) are served one after another, and a 429 whose
+    delay is short (≤ `_SHORT_RETRY_MAX_S`) is waited out once before refusing. Only
+    READS go through here — a send is never replayed."""
     _rate_limit_guard(sub)
     from oto.tools.unipile.client import UnipileRateLimited
+    gate = _account_gate(sub, client)
+    if not gate.acquire(timeout=_GATE_WAIT_MAX_S):
+        raise _rate_limited(_SHORT_RETRY_MAX_S, (
+            "Unipile is rate-limiting this LinkedIn account (other reads of this account "
+            "are still queued ahead of this one)."))
     try:
-        return fn()
-    except UnipileRateLimited as e:
-        _note_rate_limited(sub, e)
+        # A read queued behind one that met a long throttle is refused without calling.
+        _rate_limit_guard(sub)
+        try:
+            return fn()
+        except UnipileRateLimited as e:
+            wait = getattr(e, "retry_after", None)
+            if wait is None or wait > _SHORT_RETRY_MAX_S:
+                err = e
+            else:
+                time.sleep(max(0, wait) + 0.5)
+                err = None
+        if err is None:
+            try:
+                return fn()
+            except UnipileRateLimited as e:
+                err = e
+        _note_rate_limited(sub, err)
         raise _rate_limited(_RATE_LIMIT_UNTIL[sub] - time.time(), (
-            f"Unipile is rate-limiting this LinkedIn account ({e}). Company profiles already seen "
+            f"Unipile is rate-limiting this LinkedIn account ({err}). Company profiles already seen "
             "are served from the cache — no need to re-read them."))
+    finally:
+        gate.release()
 
 
 # STRUCTURED filters of `linkedin_unipile_search` (≠ keywords): these are the ones
@@ -663,7 +715,7 @@ def _feed(client, limit: Optional[int], cursor: Optional[str],
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
             f"op='feed': `limit` must be ≥ 1 (got {count}).")))
     page = _scrape(_actor_key(), lambda: client.get_feed(
-        count=count, cursor=cursor, sort_order=_FEED_SORT_ORDER))
+        count=count, cursor=cursor, sort_order=_FEED_SORT_ORDER), client)
     if "_raw" in page:
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=(
             "The LinkedIn feed returned an unexpected structure (no `elements`): "
@@ -1562,12 +1614,13 @@ def register(mcp: FastMCP) -> None:
                      skills=skills, network_distance=network_distance,
                      advanced_keywords=advanced_keywords)
         facettes = tuple(n for n in _FACETTES_RECHERCHE if poses.get(n))
-        return _slim_search(_scrape(sub, lambda: unipile_client().search(
+        client = unipile_client()
+        return _slim_search(_scrape(sub, lambda: client.search(
             keywords=keywords, category=category, company=company, location=location,
             industry=industry, network_distance=network_distance,
             advanced_keywords=advanced_keywords, skills=skills, url=url, api=api,
             cursor=cursor,
-        )), facettes=facettes, page_suivante=bool(cursor))
+        ), client), facettes=facettes, page_suivante=bool(cursor))
 
     @mcp.tool()
     def linkedin_unipile_facets(facet_type: str, keywords: str, limit: int = 25) -> dict:
@@ -1675,7 +1728,7 @@ def register(mcp: FastMCP) -> None:
             # ONE visit, even when the slug is read twice (accent fallback).
             return _scrape(sub, lambda: _within_limits(
                 client, unipile_limites.VISITE, lambda: _read_li_slug(
-                    ident, lambda i: client.get_profile(i, sections=sections))))
+                    ident, lambda i: client.get_profile(i, sections=sections))), client)
 
         if op == "company":
             ident = _canonical_li_identifier(_need(identifier, "identifier", op),
@@ -1684,8 +1737,9 @@ def register(mcp: FastMCP) -> None:
             hit = _COMPANY_CACHE.get(key)
             if hit and time.time() - hit[0] < _COMPANY_TTL:
                 return hit[1]
+            client = unipile_client()
             res = _scrape(sub, lambda: _read_li_slug(
-                ident, lambda i: unipile_client().get_company(i)))
+                ident, lambda i: client.get_company(i)), client)
             if len(_COMPANY_CACHE) >= _COMPANY_CACHE_MAX:
                 _COMPANY_CACHE.clear()
             _COMPANY_CACHE[key] = (time.time(), res)
@@ -2001,7 +2055,7 @@ def register(mcp: FastMCP) -> None:
                 break
             try:
                 page = _scrape(sub, lambda o=off: fetch(post_id, offset=o or None,
-                                                        comment_id=comment_id))
+                                                        comment_id=comment_id), client)
             except McpError as e:
                 data = getattr(getattr(e, "error", None), "data", None) or {}
                 if items and data.get("code") == "unipile_rate_limited":
@@ -2116,7 +2170,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "get":
             pid = _need(post_id, "post_id", op)
-            return _scrape(_actor_key(), lambda: client.get_post(pid))
+            return _scrape(_actor_key(), lambda: client.get_post(pid), client)
 
         if op == "engagement":
             want = _ENGAGEMENT_DEFAULT if limit is None else limit

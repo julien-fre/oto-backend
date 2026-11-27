@@ -38,6 +38,7 @@ def client(monkeypatch):
     inst = MagicMock()
     monkeypatch.setattr(U, "unipile_client", lambda *a, **k: inst)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
+    monkeypatch.setattr(U.time, "sleep", lambda s: None)  # a short 429 is waited out
     U._RATE_LIMIT_UNTIL.clear()
     return inst
 
@@ -107,3 +108,4 @@ def test_get_est_enveloppe(client):
     with pytest.raises(McpError) as e:
         _tool()(op="get", post_id="urn:li:1")
     assert e.value.error.data["code"] == "unipile_rate_limited"
+    assert client.get_post.call_count == 2  # a short 429 is waited out once, not twice
