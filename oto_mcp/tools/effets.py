@@ -292,7 +292,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "brevo_account": "lire",
     "brevo_campaign": {"lire": "list report ab_test", "ecrire": "create update", "envoyer": "test"},
     # upsert with list_ids subscribes to sending lists; update unsubscribes or blacklists
-    "brevo_contact": {"lire": "list get stats attributes", "envoyer": "upsert", "detruire": "update delete"},
+    "brevo_contact": {"lire": "list get stats attributes", "envoyer": "upsert", "detruire": "update"},
     "brevo_crm_create": "ecrire",
     "brevo_crm_get": "lire",
     # unlink_contact_ids / unlink_ids detach linked records
@@ -304,7 +304,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     # list_ids / new_list put the contacts on sending lists
     "brevo_import_contacts": "envoyer",
     # add puts contacts on a list that feeds campaigns
-    "brevo_list": {"lire": "list get contacts folders segments", "ecrire": "create update", "envoyer": "add", "detruire": "remove delete"},
+    "brevo_list": {"lire": "list get contacts folders segments", "ecrire": "create update", "envoyer": "add", "detruire": "remove"},
     "brevo_send_email": "envoyer",
     "brevo_template": {"lire": "list", "ecrire": "create update"},
     "brevo_transactional": {"lire": "logs content events report blocked blocked_domains"},

@@ -16,12 +16,8 @@ contrôle. On verrouille ici le grain op :
   vrais emails et écrit de vrais contacts, un appel sans `op` ne doit rien déclencher ;
 - **chaque op qui écrit / envoie / consomme** a son cas propre, qui vérifie la méthode
   appelée ET le **mutisme des voisines dangereuses** ;
-- les ops destructives volontairement absentes (`delete` d'un modèle ou d'une campagne,
-  `send` d'une campagne) sont refusées comme n'importe quelle op inconnue ;
-- les deux suppressions servies (contact, liste — oto-core v1.254.0, brevo 2.0.0, où la
-  lib les déclare `sensitive`, `effect: destroy`, avec confirmation) vont en DEUX temps :
-  sans `confirm=True`, un aperçu qui ne supprime rien ; `confirm` hors `op="delete"` est
-  refusé.
+- les ops destructives volontairement absentes (`delete`, `send` d'une campagne) sont
+  refusées comme n'importe quelle op inconnue.
 """
 import asyncio
 from unittest.mock import MagicMock
@@ -34,7 +30,9 @@ DANGEROUS = (
     "send_email", "send_campaign_test", "create_campaign", "update_campaign",
     "import_contacts", "export_contacts", "upsert_contact", "update_contact",
     "create_list", "update_list", "add_to_list", "remove_from_list",
-    "create_template", "update_template", "delete_contact", "delete_list",
+    "create_template", "update_template",
+    # Présentes dans oto-core depuis v1.254.0, jamais servies ici (suppressions dans l'UI).
+    "delete_contact", "delete_list",
 )
 
 
@@ -138,25 +136,7 @@ def test_contact_upsert_refuses_without_email(client):
     _assert_silent(client)
 
 
-def test_contact_delete_without_confirm_is_a_preview(client):
-    """DESTRUCTION en deux temps : sans `confirm`, on LIT la fiche, rien ne part."""
-    client.get_contact.return_value = {"id": 42, "email": "a@b.c"}
-    out = _tool("brevo_contact")(op="delete", identifier="a@b.c")
-    client.get_contact.assert_called_once_with("a@b.c", identifier_type=None)
-    assert out["deleted"] is False and out["confirm_required"] is True
-    assert out["contact"] == {"id": 42, "email": "a@b.c"}
-    _assert_silent(client)
-
-
-def test_contact_delete_with_confirm_deletes_and_only_that(client):
-    out = _tool("brevo_contact")(op="delete", identifier="42",
-                                 identifier_type="contact_id", confirm=True)
-    client.delete_contact.assert_called_once_with("42", identifier_type="contact_id")
-    assert out["deleted"] is True and out["identifier"] == "42"
-    _assert_silent(client, "delete_contact")
-
-
-@pytest.mark.parametrize("op", ["get", "stats", "update", "delete"])
+@pytest.mark.parametrize("op", ["get", "stats", "update"])
 def test_contact_ops_refuse_without_identifier(client, op):
     with pytest.raises(McpError, match="identifier"):
         _tool("brevo_contact")(op=op)
@@ -225,41 +205,7 @@ def test_list_remove_writes_and_does_not_add(client):
     _assert_silent(client, "remove_from_list")
 
 
-def test_list_delete_without_confirm_is_a_preview(client):
-    client.get_list.return_value = {"id": 3, "name": "Newsletter", "uniqueSubscribers": 12}
-    out = _tool("brevo_list")(op="delete", list_id=3)
-    client.get_list.assert_called_once_with(3)
-    assert out["deleted"] is False and out["confirm_required"] is True
-    assert out["list"]["name"] == "Newsletter"
-    _assert_silent(client)
-
-
-def test_list_delete_with_confirm_deletes_and_only_that(client):
-    """DESTRUCTION : la liste part, ses contacts restent — `remove_from_list` (qui la
-    viderait) reste muette."""
-    out = _tool("brevo_list")(op="delete", list_id=3, confirm=True)
-    client.delete_list.assert_called_once_with(3)
-    assert out["deleted"] is True and out["list_id"] == 3
-    _assert_silent(client, "delete_list")
-
-
-@pytest.mark.parametrize("tool,kwargs", [
-    ("brevo_contact", {"op": "update", "identifier": "a@b.c"}),
-    ("brevo_contact", {"op": "list"}),
-    ("brevo_list", {"op": "remove", "list_id": 3, "all_contacts": True}),
-    ("brevo_list", {"op": "list"}),
-])
-def test_confirm_is_refused_outside_delete(client, tool, kwargs):
-    """`confirm` ne garde que la suppression : ailleurs, l'agent croirait qu'il garde une
-    écriture qu'il ne touche pas."""
-    with pytest.raises(McpError, match="confirm only applies to op='delete'"):
-        _tool(tool)(confirm=True, **kwargs)
-    _assert_silent(client)
-    client.list_contacts.assert_not_called()
-    client.list_lists.assert_not_called()
-
-
-@pytest.mark.parametrize("op", ["get", "contacts", "update", "add", "remove", "delete"])
+@pytest.mark.parametrize("op", ["get", "contacts", "update", "add", "remove"])
 def test_list_ops_refuse_without_list_id(client, op):
     with pytest.raises(McpError, match="list_id"):
         _tool("brevo_list")(op=op)
@@ -432,9 +378,10 @@ def test_unknown_op_is_refused_with_the_allowed_list(client, tool):
 
 
 @pytest.mark.parametrize("tool,op", [
-    # Les suppressions d'un modèle ou d'une campagne restent dans l'UI Brevo (cf.
-    # docstring du module) : le verbe ayant migré du NOM vers `op=`, c'est ici qu'on
-    # garde la décision. Contact et liste se suppriment en deux temps (plus haut).
+    # Les suppressions restent dans l'UI Brevo (cf. docstring du module) : le verbe
+    # ayant migré du NOM vers `op=`, c'est ici qu'on garde la décision.
+    ("brevo_contact", "delete"),
+    ("brevo_list", "delete"),
     ("brevo_template", "delete"),
     ("brevo_campaign", "delete"),
     # L'envoi de MASSE d'une campagne (`sendNow`) n'est pas exposé non plus.

@@ -73,15 +73,14 @@ def test_brevoauto_namespace_does_not_collide(brevo_tools):
 ])
 def test_destructive_writes_are_not_exposed(brevo_tools, forbidden):
     # ⚠️ Contrôle par NOM : depuis la consolidation `op=`, une suppression
-    # s'ajouterait sans créer de tool. Le pendant au grain op (`op="delete"` d'un
-    # modèle ou d'une campagne, `op="send"` refusés ; contact et liste en deux temps,
-    # `confirm=True`) vit dans `test_brevo_op_dispatch.py`.
+    # s'ajouterait sans créer de tool. Le pendant au grain op (`op="delete"`,
+    # `op="send"` refusés) vit dans `test_brevo_op_dispatch.py`.
     assert forbidden not in brevo_tools
 
 
 def test_transactional_send_stays_exposed(brevo_tools):
     # l'envoi unitaire (destinataires explicites) reste ; c'est l'envoi de MASSE
-    # (campagne) et la suppression d'un modèle ou d'une campagne qui sont retirés
+    # (campagne) et les suppressions qui sont retirés
     assert "brevo_send_email" in brevo_tools
     # l'envoi d'un test de campagne existe toujours — ex-`brevo_campaign_test`,
     # devenu `brevo_campaign(op="test")` (ADR 0047 §Amendement)

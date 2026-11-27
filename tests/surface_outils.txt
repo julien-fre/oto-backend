@@ -120,7 +120,7 @@ boondmanager_get	-	80195bdc3cb39bd0
 boondmanager_search	-	83eb2d231c02c195
 brevo_account	-	3e6332701bade85c
 brevo_campaign	ab_test create list report test update	04ffef65a5801cfe
-brevo_contact	attributes delete get list stats update upsert	f7b2f9f68de94dd4
+brevo_contact	attributes get list stats update upsert	c4fdff5d4d4be144
 brevo_crm_create	-	7a3b3e1ebf6eacaf
 brevo_crm_get	-	0c55b5367597c8fb
 brevo_crm_link	-	35fbf8f66efb3df4
@@ -129,7 +129,7 @@ brevo_crm_meta	-	052a552d5230681a
 brevo_crm_update	-	e14563a9f635fbb1
 brevo_export_contacts	-	8831b11b23100f16
 brevo_import_contacts	-	633b1808c2c7208c
-brevo_list	add contacts create delete folders get list remove segments update	669ed7d0765a6a19
+brevo_list	add contacts create folders get list remove segments update	30cb1403012f225f
 brevo_send_email	-	8cb263829c13328d
 brevo_template	create list update	d7069a61d13adc2a
 brevo_transactional	blocked blocked_domains content events logs report	0341077fc03a421c

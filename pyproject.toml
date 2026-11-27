@@ -61,8 +61,8 @@ dependencies = [
     # devant ça. Cf. docs/contributions-forks.md (amendement du 2026-09-01).
     # v1.254.0 = brevo 2.0.0 (connectors #305) : `get_account` sans login du relais SMTP ni
     # clé d'automatisation (retirés par le client), `delete_contact` et `delete_list`
-    # (sensibles, effet destroy, confirmation — servis en deux temps par `brevo_contact`
-    # et `brevo_list`, op="delete"), pagination des listes décrite, `create_campaign` servi
+    # (sensibles, effet destroy, confirmation — NON servis ici : les suppressions restent
+    # dans l'interface Brevo), pagination des listes décrite, `create_campaign` servi
     # côté act chez oto 2 (même méthode du client ici). Saute v1.252.0 (fod 2.0.0 : accès
     # OAuth d'une personne, `account_get`) et v1.253.0 (linkedin_unipile 1.4.0 : publications
     # d'une page entreprise par son id numérique, adresses ouvertes retirées ; `free_read`),

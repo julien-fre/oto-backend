@@ -9,17 +9,11 @@ session). Same vendor, disjoint surfaces: the v3 key does not open automation
 authoring, and the browser session does not open these tools.
 
 **Dangerous writes deliberately absent**: sending a campaign
-(`sendNow` / `sent` status), deleting a campaign / template, purging hard
-bounces. We design, we measure, we send ourselves a test — launching a mass
-send stays in the Brevo UI. `brevo_send_email` stays exposed: it is single
-transactional sending, explicit recipients.
-
-**Two deletions, in two steps** (oto-core v1.254.0, brevo 2.0.0, where both are
-`sensitive` with `effect: destroy` and a confirmation): `brevo_contact(op="delete")`
-and `brevo_list(op="delete")`. Without `confirm=True` the call only READS what
-would go (the contact's sheet, the list's sheet) and deletes nothing; with
-`confirm=True` it deletes, for good. `confirm` is refused on any other op: it would
-make the agent believe it guards a write it does not touch.
+(`sendNow` / `sent` status), deleting a contact / list / campaign / template,
+purging hard bounces. We design, we measure, we send ourselves a test — launching
+a mass send and deletions stay in the Brevo UI. `brevo_send_email` stays
+exposed: it is single transactional sending, explicit recipients. oto-core
+(v1.254.0) now has `delete_contact` and `delete_list`: they are NOT served here.
 
 `get_account` no longer returns the SMTP relay login nor the marketing
 automation key: the client strips both (`oto.tools.brevo.ACCOUNT_STRIPPED`).
@@ -79,17 +73,6 @@ def register(mcp: FastMCP) -> None:
             raise _bad(f"op='{op}' requires {name}")
         return value
 
-    def _confirm_only_on_delete(op: str, confirm: bool) -> None:
-        """`confirm` guards the deletion only: on another op it would guard nothing."""
-        if confirm and op != "delete":
-            raise _bad(f"confirm only applies to op='delete', not op='{op}'")
-
-    def _preview(what: str, target: dict, sheet: Any) -> dict:
-        """Step 1 of a deletion: what would go, nothing deleted."""
-        return {"deleted": False, "confirm_required": True, **target, what: sheet,
-                "note": (f"Nothing deleted. Deleting this {what} is permanent: call "
-                         "again with confirm=True to delete it.")}
-
     # --- Account --------------------------------------------------------------
 
     @mcp.tool()
@@ -111,7 +94,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def brevo_contact(
         op: Literal["list", "get", "stats", "attributes", "upsert",
-                    "update", "delete"] = "list",
+                    "update"] = "list",
         identifier: Optional[str] = None,
         identifier_type: Optional[str] = None,
         email: Optional[str] = None,
@@ -128,9 +111,8 @@ def register(mcp: FastMCP) -> None:
         created_since: Optional[str] = None,
         filter: Optional[str] = None,
         sort: Optional[str] = None,
-        confirm: bool = False,
     ) -> dict:
-        """A Brevo contact — list, read, create/update, delete, statistics, schema.
+        """A Brevo contact — list, read, create/update, statistics, schema.
 
         `op`:
         - **"list"** (default): lists contacts (paginated, **max 1000 per call**).
@@ -146,20 +128,15 @@ def register(mcp: FastMCP) -> None:
         - **"update"**: updates an **existing** contact. Returns an empty object on
           success. The way to **unsubscribe from a list** (`unlink_list_ids`) or
           **blacklist** (`email_blacklisted=True`, the contact will receive nothing anymore).
-        - **"delete"**: ⚠️ PERMANENT — deletes the contact, its attributes, its list
-          memberships and its history. Two steps: without `confirm=True` it only
-          returns the contact's sheet (nothing deleted); call again with
-          `confirm=True` to delete. To stop sending while keeping the contact:
-          op="update" with `email_blacklisted=True`.
 
         Bulk import/export = `brevo_import_contacts` / `brevo_export_contacts`
         (asynchronous jobs). Reading blocked contacts =
         `brevo_transactional(op="blocked")`.
 
         Args:
-            op: list (default) | get | stats | attributes | upsert | update | delete.
-            identifier: op="get"/"stats"/"update"/"delete" — email by default;
-                otherwise id, phone or EXT_ID.
+            op: list (default) | get | stats | attributes | upsert | update.
+            identifier: op="get"/"stats"/"update" — email by default; otherwise id,
+                phone or EXT_ID.
             identifier_type: `email_id` | `contact_id` | `phone_id` | `ext_id`.
             email: op="upsert" — the email of the contact to create/update.
             attributes: op="upsert"/"update" — Brevo attributes in UPPERCASE
@@ -180,9 +157,7 @@ def register(mcp: FastMCP) -> None:
             filter: op="list" — filter on attributes, `equals` operator ONLY —
                 e.g. `equals(FIRSTNAME,"Alex")`. No `contains` or `>`.
             sort: op="list" — `asc` | `desc` (default `desc`, by creation date).
-            confirm: op="delete" — True to really delete (after reading the preview).
         """
-        _confirm_only_on_delete(op, confirm)
         client = _client()
 
         if op == "list":
@@ -206,16 +181,8 @@ def register(mcp: FastMCP) -> None:
                 _need(identifier, "identifier", op), attributes=attributes,
                 list_ids=list_ids, unlink_list_ids=unlink_list_ids,
                 identifier_type=identifier_type, email_blacklisted=email_blacklisted)
-        if op == "delete":
-            ident = _need(identifier, "identifier", op)
-            target = {"identifier": ident, "identifier_type": identifier_type}
-            if not confirm:
-                return _preview("contact", target, client.get_contact(
-                    ident, identifier_type=identifier_type))
-            client.delete_contact(ident, identifier_type=identifier_type)
-            return {"deleted": True, **target}
-        raise _bad("op must be 'list', 'get', 'stats', 'attributes', 'upsert', "
-                   "'update' or 'delete'")
+        raise _bad("op must be 'list', 'get', 'stats', 'attributes', 'upsert' "
+                   "or 'update'")
 
     @mcp.tool()
     def brevo_import_contacts(
@@ -257,7 +224,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def brevo_list(
         op: Literal["list", "get", "contacts", "create", "update", "add",
-                    "remove", "delete", "folders", "segments"] = "list",
+                    "remove", "folders", "segments"] = "list",
         list_id: Optional[int] = None,
         name: Optional[str] = None,
         folder_id: Optional[int] = None,
@@ -267,7 +234,6 @@ def register(mcp: FastMCP) -> None:
         modified_since: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
-        confirm: bool = False,
     ) -> dict:
         """A Brevo contact list — and the folders/segments around it.
 
@@ -290,10 +256,6 @@ def register(mcp: FastMCP) -> None:
           `{contacts: {success: [...], failure: [...]}}` — **read `failure`**, an
           unknown contact fails without failing the call. `all_contacts=True`
           (op="remove" only) empties the entire list.
-        - **"delete"**: ⚠️ PERMANENT — deletes the list; its contacts stay in the
-          account, only their membership of this list goes. Two steps: without
-          `confirm=True` it only returns the list's sheet (nothing deleted); call
-          again with `confirm=True` to delete.
         - **"folders"**: list folders. Their `id` is required for op="create".
         - **"segments"**: segments (dynamic lists defined by a filter).
           Read-only, and a segment's `id` is passed to
@@ -301,9 +263,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             op: list (default) | get | contacts | create | update | add | remove |
-                delete | folders | segments.
-            list_id: op="get"/"contacts"/"update"/"add"/"remove"/"delete" — the
-                targeted list.
+                folders | segments.
+            list_id: op="get"/"contacts"/"update"/"add"/"remove" — the targeted list.
             name: op="create"/"update" — the list name.
             folder_id: op="create" (mandatory) / "update" (move) /
                 "list" (filter on a folder).
@@ -314,9 +275,7 @@ def register(mcp: FastMCP) -> None:
             modified_since: op="contacts" — ISO 8601 UTC.
             limit: page size (list, contacts, folders, segments).
             offset: pagination (list, contacts, folders, segments).
-            confirm: op="delete" — True to really delete (after reading the preview).
         """
-        _confirm_only_on_delete(op, confirm)
         client = _client()
 
         if op == "list":
@@ -340,19 +299,12 @@ def register(mcp: FastMCP) -> None:
             return client.remove_from_list(_need(list_id, "list_id", op),
                                            emails=emails, ids=ids,
                                            all_contacts=all_contacts)
-        if op == "delete":
-            lid = _need(list_id, "list_id", op)
-            if not confirm:
-                return _preview("list", {"list_id": lid}, client.get_list(lid))
-            client.delete_list(lid)
-            return {"deleted": True, "list_id": lid,
-                    "note": "the list's contacts stay in the account"}
         if op == "folders":
             return client.list_folders(limit=limit, offset=offset)
         if op == "segments":
             return client.list_segments(limit=limit, offset=offset)
         raise _bad("op must be 'list', 'get', 'contacts', 'create', 'update', "
-                   "'add', 'remove', 'delete', 'folders' or 'segments'")
+                   "'add', 'remove', 'folders' or 'segments'")
 
     # --- Transactional email ---------------------------------------------------
 

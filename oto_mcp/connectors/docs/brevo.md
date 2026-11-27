@@ -14,4 +14,3 @@ manage your brevo contact base, sends and crm.
 - "prepare a campaign for the clients list" → `brevo_campaign(op="create")` (draft; the mass send is triggered in the ui)
 - "how many opens on my last campaign" → `brevo_campaign(op="list")` (statistics)
 - "create a 10k€ deal" → `brevo_crm_create` (entity `deals`)
-- "delete this contact" / "delete this list" → `brevo_contact(op="delete")` / `brevo_list(op="delete")`: a preview first, the deletion only with `confirm=True` (a list's contacts stay in the account)
