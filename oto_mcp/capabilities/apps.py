@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field
 from .. import db, interrupteurs, org_suspension, ownership
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
-from .apps_html import avertissements
+from .apps_html import MAX_WARNINGS, avertissements
 from . import apps_versions as V
 from .apps_manifeste import auteur, forme, org_de_l_app
 from .orgs import partage_par_defaut
@@ -338,7 +338,7 @@ def _cards(sub: str, rows: list[dict], writable: Optional[set[int]] = None) -> l
 
 
 def _view(sub: str, row: dict) -> dict:
-    from . import apps_appel, apps_roles
+    from . import apps_appel, apps_roles, apps_sections
     row = _cards(sub, [row])[0]
     row["can_use"] = bool(row.get("can_edit")) or apps_appel.peut_cliquer(sub, int(row["id"]))
     if "manifest" in row:
@@ -349,6 +349,10 @@ def _view(sub: str, row: dict) -> dict:
         row["access"] = apps_roles.acces(entier, role)
         if not row.get("can_edit"):
             row["manifest"] = apps_roles.resserrer(entier, role)
+            if "html" in row:
+                # Les éléments des sections que ce rôle n'ouvre pas ne partent pas
+                # (`apps_sections.py`) ; sans rôle ou sans `sections`, le HTML entier.
+                row["html"] = apps_sections.retirer(row["html"], row["access"]["sections"])
     return {k: row[k] for k in AppView.model_fields if k in row}
 
 
@@ -356,7 +360,9 @@ def _avertir(manifest: Optional[dict], html: Optional[str]) -> dict:
     """`{"warnings": […]}` quand le HTML demande hors du manifeste, sinon `{}`.
     Appelé AVANT l'écriture : un défaut du lecteur de HTML refuse sans rien écrire,
     plutôt qu'un 500 après une création commitée qu'un agent rejouerait en doublon."""
-    w = avertissements(manifest or {}, html)
+    from . import apps_sections
+    w = (avertissements(manifest or {}, html)
+         + apps_sections.avertissements(manifest or {}, html))[:MAX_WARNINGS]
     return {"warnings": w} if w else {}
 
 
@@ -432,7 +438,9 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
             org_suspension.exiger(org)
         clean, problems = _problemes(sub, org, inp.manifest)
         out: dict = {"ok": not problems, "problems": problems}
-        if not problems:
+        # Les avertissements lisent le manifeste ENTIER (rôles, sections) et le HTML
+        # entier : à qui peut modifier l'app seulement, jamais à un lecteur.
+        if not problems and (app is None or _can(sub, app["id"], "write")):
             manifeste = app["manifest"] if inp.manifest is None and app is not None else clean
             html = inp.html if inp.html is not None else (app or {}).get("html")
             out.update(_avertir(manifeste, html))
@@ -845,7 +853,12 @@ def description_app(liens: bool) -> str:
             "their share (op=set_role `app_id`, `principal_type`, `principal_id`, `role`; "
             "op=roles lists roles and shares; managers only), else `default_role` — enforced "
             "on every app call; op=get returns the role's narrowed manifest and `access` {role, "
-            "sections}. Sections are display only. To let someone use the app WITHOUT any "
+            "sections}. Sections: mark markup with `data-oto-section=\"name\"` (several "
+            "names, space-separated: shown if the role opens any); op=get REMOVES every "
+            "marked element (with its content and inner scripts) whose sections the viewer's "
+            "role doesn't open — it never reaches them. Only marked markup is protected: data "
+            "in an unmarked <script> or built by JS still ships to everyone, so keep "
+            "section-only content inside marked elements. To let someone use the app WITHOUT any "
             "access to its tables elsewhere: op=grant_through_app (`app_id`, "
             "`principal_type`, `principal_id`, optional `tables`; you must be able to share "
             "each table) — they then read and write those tables only inside this app, as "

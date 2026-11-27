@@ -13,9 +13,11 @@ manifeste pour qui le tient, jamais plus :
 - `agents` : absent = ceux du manifeste ; présent = une liste de noms, ou
   `{nom: true | {run?, input?}}` (`run: false` : lire ses runs sans le lancer) ;
 - `files` : absent = comme le manifeste ; `false` = ni dépôt ni liste de fichiers ;
-- `sections` : des noms libres que l'app LIT (`oto.access()`) pour n'afficher que ses
-  parties ouvertes à ce rôle. ⚠️ **Ce n'est pas une barrière** : tout le HTML part
-  chez chaque lecteur. Ce qui protège, c'est le manifeste resserré, jugé au serveur.
+- `sections` : des noms libres. Le HTML marque ses parties (`data-oto-section="nom"`) ;
+  servi à qui tient le rôle (`op=get`), il perd au serveur tout élément marqué d'une
+  section que le rôle n'ouvre pas (`apps_sections.py`), et l'app lit les siennes par
+  `oto.access()`. ⚠️ Seul le balisage MARQUÉ est retiré : un script non marqué part
+  entier. Les données des tableaux, elles, sont protégées par le manifeste resserré.
 
 **Où le rôle s'applique** : une seule fois, à l'entrée de l'appel d'une app ouverte
 (`apps_appel._app_pour`) — le manifeste servi à TOUTE action (lectures, lot, agrégats,

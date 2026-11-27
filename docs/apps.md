@@ -91,7 +91,7 @@ qu'un rôle existe. Chaque rôle **resserre** le manifeste, jamais plus :
   refusé, 400 `invalid_manifest` ; ses champs sont jugés contre le schéma comme ceux
   du manifeste.
 - `agents` (liste de noms, ou `{nom: true | {run?, input?}}`), `files` (`false` = ni
-  dépôt ni liste), `sections` (noms libres), `label`.
+  dépôt ni liste), `sections` (noms libres, retirés du HTML marqué — ci-dessous), `label`.
 
 **Qui tient quel rôle.** Le rôle d'app d'un PARTAGE de l'app
 (`resource_grants.app_role`, révision `20261127_1200_app_roles`) : posé par qui
@@ -114,9 +114,41 @@ bornées sans le savoir. `op=get` sert au lecteur le manifeste de SON rôle, san
 définition des rôles, et `access` `{role, role_label, sections}` (ce que l'app lit par
 `oto.access()`) ; à qui peut la modifier, le manifeste entier et `role: null`.
 
-⚠️ **Les sections ne sont pas une barrière** : tout le HTML part chez chaque lecteur.
-Elles disent à l'app quoi AFFICHER ; ce qui protège, ce sont les données que le
-serveur refuse. ⚠️ Le rôle ne fait que retirer : Use reste nécessaire pour cliquer, et
+**Sections : le balisage marqué est retiré au serveur** (`capabilities/apps_sections.py`).
+L'auteur marque une partie du HTML par `data-oto-section="nom"` (plusieurs noms séparés
+par des blancs : visible si le rôle en ouvre UN). Servi à un lecteur borné par un rôle
+(`op=get` — le seul chemin qui rend du HTML à qui ne peut pas modifier l'app : le
+brouillon, `revision` et `restore` sont réservés aux éditeurs, `revisions` ne porte
+pas de HTML), le HTML perd **l'élément entier** — balise, contenu, `<script>` et
+`<style>` intérieurs — de chaque section que son rôle n'ouvre pas : il n'atteint pas le
+navigateur, « afficher la source » comprise. Un `<script data-oto-section="admin">` part
+aussi. Rôle sans `sections` : rien n'est retiré ; `sections: []` : tout élément marqué
+part ; qui peut modifier l'app, ou une app sans rôle : le HTML entier. `oto.access()`
+dit toujours à la page ses sections. Le reste du HTML est recopié à l'octet, et `rev`
+reste celui de l'app.
+
+- **Fermé du côté sûr.** Un lecteur linéaire suit le découpage du tokenizer HTML
+  (commentaires, valeurs entre guillemets contenant `>`, texte brut de `script` et de
+  ses états échappés, `style`, `textarea`, `title`, CDATA et `/>` en SVG/MathML) ; un
+  élément marqué ne finit qu'à SA balise fermante, au même niveau d'imbrication, jamais
+  par la fermeture d'un ancêtre, ni tant qu'un tableau, une cellule, un `template`, un
+  `select`… ouvert dedans reste ouvert. **Jamais fermé : tout jusqu'à la fin du document
+  part** (un avertissement le dit à l'écriture). Retirer trop casse l'affichage d'un
+  rôle ; retirer trop peu fuirait. Fermer explicitement chaque élément marqué (`</li>`,
+  `</p>`, `</td>` compris).
+- **Ce qui n'est PAS protégé** : tout ce qui vit hors d'un élément marqué — une
+  constante ou un appel dans un `<script>` non marqué, un gabarit HTML construit en JS
+  (`'<div data-oto-section="admin">'` dans une chaîne n'est PAS lu), le CSS, les
+  attributs d'éléments non marqués. Mettre ce qui n'appartient qu'à une section DANS un
+  élément marqué (un `<script data-oto-section="admin">` pour son code, un
+  `<template data-oto-section="admin">` pour son gabarit). Les données des tableaux sont
+  protégées par le rôle de toute façon : ce qu'il ne lit pas n'est jamais servi.
+- **À l'écriture**, en `warnings` (jamais un refus) : une section qu'un rôle ouvre sans
+  qu'aucun élément ne la porte (ce que la page cache pour elle par script part chez
+  tous), une marque qu'aucun rôle ne déclare (retirée pour tout rôle à `sections`), un
+  élément marqué jamais fermé. `op=validate` ne les rend qu'à qui peut modifier l'app.
+
+⚠️ Le rôle ne fait que retirer : Use reste nécessaire pour cliquer, et
 chaque geste reste jugé auteur ∩ lecteur. Un lecteur qui tient le tableau par un
 partage ORDINAIRE le lit en entier hors de l'app : pour que le rôle soit la seule
 porte, ouvrir le tableau **par l'app seulement** (ci-dessous) au lieu de le partager.
