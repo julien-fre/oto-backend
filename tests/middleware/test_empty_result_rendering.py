@@ -426,7 +426,7 @@ def test_un_autre_op_du_meme_outil_garde_le_rendu_du_vide():
     texte, _ = _servir_avec(
         _banc(_sheets_spreadsheet(), nom="sheets_spreadsheet"),
         "sheets_spreadsheet", {})
-    assert texte == redaction.EMPTY_MESSAGE_DEFAULT
+    assert texte == redaction.empty_message("sheets_spreadsheet")
 
 
 @pytest.mark.parametrize("nom,args,attendu", [
