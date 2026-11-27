@@ -1273,8 +1273,25 @@ def test_snowflake_runs_a_read_on_the_account_with_the_token_type(snowflake, ven
 
 
 @pytest.mark.parametrize("sql", ["DELETE FROM T", "drop table t", "GRANT ROLE R TO USER U", "CALL p()",
-                                 "/* x */ SELECT 1"])
+                                 "/* x */ SELECT 1", "SELECT 1 ->> DROP TABLE T", "SHOW TABLES ->> DELETE FROM T"])
 def test_snowflake_refuses_what_does_not_open_like_a_read_before_sending(snowflake, vendeur, sql):
     with pytest.raises(Exception):
         _appel(snowflake["snowflake"], op="run_query", statement=sql)
     assert vendeur.requests == []
+
+
+def test_snowflake_async_answers_the_handle_at_once(snowflake, vendeur):
+    vendeur.answers.append((202, {"code": "333334", "message": "Asynchronous execution in progress.",
+                                  "statementHandle": "01b2c3d4-0000-1111-0000-00000000abcd",
+                                  "statementStatusUrl": "/api/v2/statements/01b2c3d4-0000-1111-0000-00000000abcd"}))
+    rendu = _appel(snowflake["snowflake"], op="run_query", statement="SELECT * FROM BIG", **{"async": True})
+    assert "01b2c3d4-0000-1111-0000-00000000abcd" in json.dumps(rendu) and "333334" in json.dumps(rendu)
+    assert essai.envoyee(vendeur.requests[0])["query"] == [("async", "true")]
+
+
+def test_snowflake_a_sql_error_reaches_the_agent_with_snowflakes_message(snowflake, vendeur):
+    vendeur.answers.append((422, {"code": "002003", "sqlState": "42S02", "statementHandle": "h",
+                                  "message": "SQL compilation error:\nObject 'NOPE' does not exist or not authorized."}))
+    with pytest.raises(Exception) as e:
+        _appel(snowflake["snowflake"], op="run_query", statement="SELECT * FROM NOPE")
+    assert "does not exist or not authorized" in str(e.value) and "pat-0" not in str(e.value)
