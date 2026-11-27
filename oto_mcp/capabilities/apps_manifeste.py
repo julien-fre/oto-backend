@@ -190,10 +190,11 @@ def auteur(sub: str, project_org: Optional[int], clean: dict) -> list[str]:
     from ..datastore.core import DatastoreAmbigu, DatastoreNotFound, make_store
     from ..datastore.errors import TableauParNom
 
-    from .apps_roles import champs_nommes
+    from .apps_roles import TYPES_DE_PERIMETRE, champs_de_perimetre, champs_nommes
 
     problems: list[str] = []
     roles_nomment = champs_nommes(clean)
+    perimetres = champs_de_perimetre(clean)
     store = make_store(sub)
     for alias, t in clean["tables"].items():
         try:
@@ -211,7 +212,20 @@ def auteur(sub: str, project_org: Optional[int], clean: dict) -> list[str]:
                             "organization.")
             continue
         t["table"] = str(ns_id)
-        declared = {f.get("key") for f in (schema or {}).get("fields") or [] if isinstance(f, dict)}
+        types = {f.get("key"): f.get("type") for f in (schema or {}).get("fields") or []
+                 if isinstance(f, dict)}
+        declared = set(types)
+        # Un périmètre de lignes (`roles.<r>.rows`) vise une colonne DÉCLARÉE, d'un type
+        # qu'une égalité compare — jugé même sur un tableau sans schéma : un champ
+        # inconnu n'y matcherait aucune ligne, sans rien dire.
+        for champ in sorted(perimetres.get(alias, set())):
+            if champ not in declared:
+                problems.append(f"tables.{alias}: a role's rows scope names `{champ}`, "
+                                "which the table doesn't declare.")
+            elif types[champ] not in TYPES_DE_PERIMETRE:
+                problems.append(f"tables.{alias}: a role's rows scope can't use `{champ}` "
+                                f"(type {types[champ]}): a text, number, email, enum or "
+                                "link column only.")
         if not declared:
             continue
         named = (set(t["fields"] or []) | set(t["set"]) | set(t["add"])

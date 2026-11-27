@@ -333,10 +333,48 @@ def _au_role(sub: str, app: dict, as_role: Optional[str]) -> dict:
                          "Only the app's editors can see it as another role.")
         if as_role not in (manifest.get("roles") or {}):
             raise _refus(400, "unknown_role", f"This app declares no role “{as_role}”.")
-        role = as_role
+        # L'éditeur qui ESSAIE un rôle n'a pas de partage retenu : `$email` se résout
+        # sur SA propre adresse vérifiée, `$share` ne trouve rien (aucune ligne).
+        choix = {"editeur": False, "role": as_role, "portees": []}
     else:
-        role = apps_roles.role_du_lecteur(sub, app)
-    return {**app, "manifest": apps_roles.resserrer(manifest, role), "app_role": role}
+        choix = apps_roles.choix_du_lecteur(sub, app)
+    role = choix["role"]
+    # Le PÉRIMÈTRE DE LIGNES (`docs/apps.md` § Périmètre de lignes), résolu ICI une fois
+    # comme le rôle : `_lire`, `_geste` (donc le consentement) et `_droit_du_run` ne
+    # lisent que `app["row_scope"]`. Qui modifie l'app (hors `as_role`) n'en a aucun.
+    lignes = ({} if choix["editeur"] else apps_roles.lignes_du_lecteur(
+        manifest, role, choix["portees"], lambda: _email_verifie(sub)))
+    return {**app, "manifest": apps_roles.resserrer(manifest, role), "app_role": role,
+            "row_scope": lignes}
+
+
+def _email_verifie(sub: str) -> Optional[str]:
+    """L'adresse du lecteur que `$email` compare : celle de l'annuaire, et seulement
+    quand le jeton de CETTE requête la dit vérifiée (`email_verified`). Sans le claim
+    (jeton API, « voir en tant que », run d'agent) : None — aucune ligne."""
+    from ..api.base import email_verifie_de
+
+    if email_verifie_de(sub) is not True:
+        return None
+    e = (db.emails_by_subs([sub]) or {}).get(sub)
+    return e.strip() if isinstance(e, str) and "@" in e else None
+
+
+def _perimetre(app: dict, ns: str):
+    """Le périmètre de lignes du lecteur sur ce tableau : `(clauses, champs)` — None
+    s'il n'en a aucun ; `champs` = `{champ: valeur à poser}`, None quand le périmètre
+    ne se résout pas (aucune ligne, aucun geste)."""
+    from . import apps_roles
+
+    lignes = app.get("row_scope")
+    if lignes is None:
+        # Une app qui n'est pas passée par `_au_role` : aucun chemin servi n'en produit.
+        raise _refus(500, "row_scope_unresolved", "This app call wasn't judged for its viewer.")
+    if str(ns) not in lignes:
+        return None
+    p = lignes[str(ns)]
+    champs = None if p is apps_roles.RIEN else {c: spec["pose"] for c, spec in p.items()}
+    return apps_roles.clauses(p), champs
 
 
 def _table(app: dict, alias: Optional[str], want: str = "read") -> tuple[str, dict]:
@@ -452,6 +490,31 @@ def _resume(app: dict, action: str, target: dict, content: dict, text: str) -> d
             "target": target, "content": content, "text": text}
 
 
+def _dans_le_perimetre(ctx: ResolvedCtx, app: dict, ns: str, row_id: str,
+                       field: Optional[str]) -> None:
+    """`write_cell` sur un tableau au périmètre de lignes : la ligne visée doit en être,
+    lue au serveur par la MÊME requête qu'une lecture de l'app (clauses du périmètre +
+    `_id`), jamais comparée ici — couches et types se lisent comme à la lecture. Sinon
+    le refus d'une ligne qui n'existe pas (404 `row_not_found`) : rien ne dit qu'elle
+    existe chez un autre. Jugé AVANT l'écriture, donc avant le 409 de révision qui
+    citerait la révision du voisin. La révision attendue tient le reste : une ligne
+    sortie du périmètre entre ce contrôle et l'écriture a changé de révision."""
+    from .datastore import rows as R
+
+    p = _perimetre(app, ns)
+    if p is None:
+        return
+    clauses, champs = p
+    if champs is not None and field in champs:
+        raise _refus(403, "row_scope_field",
+                     f"“{field}” places a row in your scope: it can't be changed here.")
+    trouve = R._list_rows(ctx, R.ListRowsInput(
+        datastore=ns, limit=1, fields=["_id"],
+        filters=json.dumps(clauses + [{"field": "_id", "op": "eq", "value": str(row_id)}])))
+    if not trouve.get("rows"):
+        raise AuthzDenied(404, "row_not_found")
+
+
 def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
     """Juge un geste qui écrit ou lance — TOUT ce que l'appel jugera, sans rien
     faire — et rend `(faire, résumé)` : de quoi le faire, et ce que l'écran hôte
@@ -472,6 +535,7 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
             # ce qu'un autre a changé depuis.
             raise _refus(400, "revision_required",
                          "An app's write names the row's `_revision` as it was shown.")
+        _dans_le_perimetre(ctx, app, ns, inp.row_id, inp.field)
 
         def faire(_consent_id: int) -> dict:
             row = R._update_row(ctx, R.UpdateRowInput(
@@ -491,11 +555,20 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
         cols = t.get("add") or []
         if not cols:
             raise _refus(403, "undeclared_write", "This app may not add rows to this table.")
-        extra = sorted(k for k in values if k not in cols)
+        p = _perimetre(app, ns)
+        imposes = {} if p is None else p[1]
+        if imposes is None:
+            raise _refus(403, "row_scope_unresolved",
+                         "Your rows in this table can't be told apart (no value set on "
+                         "your share, or no verified email): you can't add one.")
+        # Les champs du périmètre ne se choisissent pas : la valeur du lecteur les
+        # REMPLACE, déclarés ou non dans `add` — sa ligne naît dans son périmètre.
+        extra = sorted(k for k in values if k not in cols and k not in imposes)
         if extra:
             raise _refus(403, "undeclared_write", f"This app may not fill: {', '.join(extra)}.")
         if not values:
             raise _refus(400, "empty_row", "The new row is empty.")
+        values = {**values, **imposes}
 
         def faire(_consent_id: int) -> dict:
             row = R._append_row(ctx, R.AppendRowInput(datastore=ns, row=values))
@@ -988,10 +1061,12 @@ def _droit_du_run(sub: str, ns: str) -> Optional[str]:
     (consentement `start_agent` brûlé sur ce travail, `app_consents.job_id`) lit, le
     temps de son run, ce que ce lecteur lit par CETTE app — jugé à chaque fois comme
     l'appel le jugerait (partage vivant de l'app, rôle, auteur qui peut partager le
-    tableau). Deux bornes de plus, parce que l'agent lit par les outils de tableau,
-    qui ne projettent pas : LECTURE seule (une écriture d'agent ne passerait pas par
-    `set` / `add`), et seulement d'un tableau que le rôle ouvre ENTIER (sans liste de
-    champs) — sinon l'agent verrait des champs que son lanceur ne voit pas."""
+    tableau). Trois bornes de plus, parce que l'agent lit par les outils de tableau,
+    qui ne projettent ni ne filtrent : LECTURE seule (une écriture d'agent ne passerait
+    pas par `set` / `add`), seulement d'un tableau que le rôle ouvre ENTIER (sans liste
+    de champs) — sinon l'agent verrait des champs que son lanceur ne voit pas —, et
+    JAMAIS d'un tableau où le lanceur a un périmètre de lignes (il verrait les lignes
+    des autres)."""
     from .. import verrou_org
 
     v = verrou_org.travail_de_la_requete()
@@ -1008,6 +1083,10 @@ def _droit_du_run(sub: str, ns: str) -> Optional[str]:
     t = next((t for t in (app["manifest"].get("tables") or {}).values()
               if isinstance(t, dict) and str(t.get("table")) == str(ns)), None)
     if t is None or t.get("fields") is not None:
+        return None
+    if str(ns) in app["row_scope"]:
+        # Un tableau au périmètre de lignes ne s'hérite PAS : l'agent lit par les outils
+        # de tableau, qui ne posent pas ce filtre — il verrait les lignes du voisin.
         return None
     if not ownership.can_govern(app["updated_by"], ownership.TYPE_RESSOURCE_DATASTORE, str(ns)):
         return None
@@ -1097,6 +1176,11 @@ def _lire(ctx: ResolvedCtx, app: dict, action: str, alias: Optional[str], o: dic
     from .datastore import rows as R
 
     ns, t = _table(app, alias)
+    # Le périmètre de lignes du lecteur part dans `filters` — la forme riche, en ET avec
+    # le `filter` de l'app (`_filter_clauses`) et avec la recherche `q` (`_ds_where`) :
+    # aucun argument de l'app ne le remplace, ni ne l'élargit.
+    p = _perimetre(app, ns)
+    portee = json.dumps(p[0]) if p is not None else None
 
     if action == "read_rows":
         order_by = o.get("order_by")
@@ -1118,7 +1202,8 @@ def _lire(ctx: ResolvedCtx, app: dict, action: str, alias: Optional[str], o: dic
                     else [f for f in champs if isinstance(f, str)] + sorted(_META - {"_id"})),
             offset=max(_entier(o, "offset", 0), 0), order_by=order_by,
             order_dir="asc" if o.get("order_dir") == "asc" else "desc",
-            q=q if isinstance(q, str) and q else None, filter=_filtre(t, o.get("filter"))))
+            q=q if isinstance(q, str) and q else None, filter=_filtre(t, o.get("filter")),
+            filters=portee))
         return {"rows": [_projeter(t, r) for r in page.get("rows") or []],
                 "total": page.get("total")}
 
@@ -1141,7 +1226,7 @@ def _lire(ctx: ResolvedCtx, app: dict, action: str, alias: Optional[str], o: dic
                         "label": m.get("label") if isinstance(m.get("label"), str) else f"m{i}"})
     out = R._aggregate(ctx, R.AggregateInput(
         datastore=ns, group_by=group_by, metrics=json.dumps(propres),
-        filter=_filtre(t, o.get("filter"))))
+        filter=_filtre(t, o.get("filter")), filters=portee))
     return {"groups": out.get("groups") or []}
 
 

@@ -91,7 +91,8 @@ qu'un rôle existe. Chaque rôle **resserre** le manifeste, jamais plus :
   refusé, 400 `invalid_manifest` ; ses champs sont jugés contre le schéma comme ceux
   du manifeste.
 - `agents` (liste de noms, ou `{nom: true | {run?, input?}}`), `files` (`false` = ni
-  dépôt ni liste), `sections` (noms libres), `label`.
+  dépôt ni liste), `sections` (noms libres), `label`, `rows` (périmètre de lignes,
+  plus bas).
 
 **Qui tient quel rôle.** Le rôle d'app d'un PARTAGE de l'app
 (`resource_grants.app_role`, révision `20261127_1200_app_roles`) : posé par qui
@@ -154,8 +155,72 @@ par défaut tous ceux que l'app déclare), `op=revoke_through_app` pour le retir
   rend `through_app` (app, principal, droit) ; `oto_apps op=revoke_through_app` avec
   `tables` (numéros) lui suffit, sans aucun droit sur l'app.
 
-Un périmètre de LIGNES par partage (« sa fiche seulement ») se posera sur cette même
-portée : il n'est pas dans ce lot.
+### Périmètre de lignes (`roles.<r>.rows`, `resource_grants.app_scope`)
+
+Un lecteur peut ne voir d'un tableau que **SES lignes** — un partenaire sa fiche, jamais
+celle du voisin. Deux façons de le dire, cumulables :
+
+- **Une valeur posée sur le partage** : `oto_apps op=set_scope` (`app_id`,
+  `principal_type`, `principal_id`, `scope` `{tableau: {champ: valeur}}` ; sans `scope`
+  = retiré). Rangé par NUMÉRO de tableau (`resource_grants.app_scope`, même révision
+  `20261127_1200_app_roles`) : renommer le tableau dans le manifeste ne l'éteint pas ;
+  `op=roles` le rend par nom (`grants[].scope`). Gardes : gouverner l'app ET pouvoir
+  partager chaque tableau du périmètre posé et de celui qu'il remplace (403
+  `forbidden`) ; un partage existant (404 `not_shared`) ; chaque champ une colonne
+  déclarée d'un type qu'une égalité compare (texte, nombre, email, url, téléphone, enum,
+  lien, booléen — ni date, ni JSON, ni formule, ni composite) et chaque valeur un
+  scalaire non vide (400 `invalid_scope`, rien d'écrit). Il part avec le partage et suit
+  la fusion de comptes comme lui.
+- **Une colonne déclarée par le rôle** : `roles.partner.rows = {fiches: {contact_email:
+  "$email"}}` — l'adresse VÉRIFIÉE du lecteur (celle de l'annuaire, seulement quand le
+  jeton de la requête porte `email_verified: true`) — ou `"$share"` — la valeur posée
+  sur son partage pour ce champ. Jugé à l'écriture : tableau déclaré ET ouvert par le
+  rôle, nom de colonne nu, valeur `$email` ou `$share`, champ que le rôle ne peut PAS
+  poser (`set` : sinon il déplacerait une ligne vers le voisin), puis contre le schéma
+  (`apps_manifeste.auteur`, même sur un tableau sans liste de champs) : déclaré, d'un
+  type comparable.
+
+**Ce qui s'applique, une fois, à l'entrée de l'appel** (`apps_appel._au_role` →
+`apps_roles.lignes_du_lecteur`, rangé dans `app["row_scope"]`) : par tableau du manifeste
+resserré, chaque contrainte RESTREINT (ET) — la valeur du rôle et chaque valeur posée
+sur un partage retenu ; deux valeurs différentes pour un champ = aucune ligne.
+**Fail-closed** : `$share` sans valeur posée, `$email` sans adresse vérifiée (jeton API,
+« voir en tant que », claim absent) = le tableau ne sert AUCUNE ligne et refuse tout
+geste. L'égalité est exacte ; pour `$email`, l'adresse telle que l'annuaire la tient
+ou en minuscules.
+
+**Quel partage** : celui dont le rôle a été retenu (nominatif > équipe > org, puis ordre
+du manifeste) ; au rôle par défaut, ou sans rôles, les partages du type le plus précis
+qu'il tient. Plusieurs partages retenus (deux équipes, même rôle) : tous leurs
+périmètres s'appliquent (ET). Un partage nominatif sans périmètre l'emporte donc sur un
+partage d'org qui en porte un : c'est le partage le plus précis qui dit ce qu'il voit.
+
+**Toutes les portes** :
+- `read_rows`, `read_aggregate`, chaque lecture d'un `batch` : le périmètre part au
+  store en `filters` (la forme riche), en ET avec le `filter` de l'app et la recherche
+  `q` — l'app ne peut ni le remplacer (nommer le même champ ne fait que restreindre) ni
+  en sortir par la recherche.
+- `write_cell` : la ligne visée est relue au serveur par la même requête (périmètre +
+  `_id`) avant tout — hors du périmètre, 404 `row_not_found`, le refus d'une ligne qui
+  n'existe pas (jamais le 409 de révision qui citerait celle du voisin) ; un champ du
+  périmètre ne se change pas (403 `row_scope_field`). La révision attendue couvre la
+  course : une ligne sortie du périmètre entre le contrôle et l'écriture a changé de
+  révision.
+- `add_row` : les champs du périmètre sont IMPOSÉS — la valeur du lecteur remplace la
+  sienne, qu'ils soient dans `add` ou non ; le résumé du consentement montre la valeur
+  imposée ; périmètre non résolu → 403 `row_scope_unresolved`.
+- le consentement juge exactement comme l'appel (`_geste`), et l'appel rejuge.
+- **un run d'agent n'hérite JAMAIS d'un tableau à périmètre** (`_droit_du_run`) : l'agent
+  lit par les outils de tableau, qui ne posent pas ce filtre.
+
+**Qui n'est pas borné** : qui peut modifier l'app (il réécrirait le manifeste). Par
+`as_role`, il essaie un rôle sans partage retenu : `$email` se résout sur SA propre
+adresse vérifiée, `$share` ne trouve rien (aucune ligne). ⚠️ Comme le rôle, le
+périmètre ne borne que l'appel de l'app : un lecteur qui tient le tableau par un partage
+ordinaire le lit entier ailleurs — ouvrir le tableau **par l'app seulement**.
+⚠️ Résidu connu : `add_row` sur un tableau à clé métier rend 409 `business_key_exists`
+si la clé est déjà portée, y compris par une ligne hors du périmètre — choisir une clé
+qui contient le champ du périmètre, ou aucune.
 
 ## Ce que le serveur juge
 
