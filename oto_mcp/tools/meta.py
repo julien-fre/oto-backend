@@ -334,6 +334,10 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
         # noqa: SILENT — best-effort: `_trace_target_call` falls back on its own read
         except Exception:
             pass
+        # The context-reminder line (`middleware/rappel_contexte`) names the org the
+        # TARGET resolved under, not the caller's default org: noted before the reset.
+        from ..middleware.rappel_contexte import noter_org_cible
+        noter_org_cible(target_org)
         target_run = session_org.current_call_run()
         # The target's settlement (L8), under the target's context (its axes are undone
         # below): what it noted on ITS record, settled once — its failure too.

@@ -44,8 +44,10 @@ from typing import Optional
 
 # L'outil qui LIT le contexte : sa réussite éteint le rappel.
 OUTIL_CONTEXTE = "oto_context"
-# Jamais rappelé sur ces outils : la lecture elle-même, et l'identité pure.
-EXEMPTS = frozenset({OUTIL_CONTEXTE, "oto_whoami"})
+# Jamais rappelé sur ces outils : la lecture elle-même, l'identité pure, et la lecture
+# d'un schéma d'outil — qui n'agit dans AUCUNE org : un rappel y nommait l'org par
+# défaut du compte, pas celle où l'agent travaille.
+EXEMPTS = frozenset({OUTIL_CONTEXTE, "oto_whoami", "oto_tool_schema"})
 
 TTL_S = 60.0
 MAX_ENTREES = 10_000
@@ -104,20 +106,26 @@ def _retenir(sub: str, org_id: int, texte: Optional[str], maintenant: float) -> 
         _cache[(sub, org_id)] = (maintenant + TTL_S, texte)
 
 
-def pour_l_appel(outil: str) -> tuple[Optional[tuple[str, int]], Optional[str]]:
+def pour_l_appel(outil: str, org_id: Optional[int] = None
+                 ) -> tuple[Optional[tuple[str, int]], Optional[str]]:
     """`(clé (sub, org) de l'appel, ligne à servir)` pour l'appel MCP en cours.
 
     **Sync (DB) — via `run_in_threadpool`**, dans la portée du contexte d'appel (l'org
     de l'appel est celle que `CallContextMiddleware` a posée : `_org=`, projet, run).
     La clé est rendue même sans ligne : c'est elle que `constater_lecture` éteint
     quand l'outil est `oto_context`. `(None, None)` hors compte, hors org, ou pour un
-    travail du runner."""
+    travail du runner.
+
+    `org_id` = l'org où la CIBLE d'un `oto_call` s'est résolue (ses `_org=`/`_project=`
+    sont posés DANS `oto_call`, donc hors de la portée du contexte d'appel) ; omis,
+    c'est l'org que le contexte d'appel a posée."""
     from . import access
     from .auth import hooks
     sub = hooks.current_user_sub_from_token()
     if not sub or hooks.current_token_axes().get("token_kind") == "delegation":
         return None, None
-    org_id = access.current_org(sub)
+    if org_id is None:
+        org_id = access.current_org(sub)
     if org_id is None:
         return None, None
     cle = (sub, int(org_id))
