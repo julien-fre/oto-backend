@@ -97,7 +97,9 @@ class LotsMixin:
             ns_id, schema, readonly_override or bool(force), force)
         # oto#140 : `@keep` et `@clear` sur le chemin des imports aussi — jugés sur le
         # lot ENTIER avant la première ligne : le refus sans moitié de lot déjà écrite.
-        mdp.controler(*(r for r in rows if isinstance(r, dict)))
+        # Il nomme les lignes fautives, à leur rang dans le geste (signal 1481).
+        mdp.controler(*rows, lot=True, key=key,
+                      premier_rang=(fusions.decalage if fusions is not None else 0) + 1)
         # oto#124 : une colonne non déclarée — le lot ENTIER est jugé ici, avant sa
         # première ligne.
         cnd.juger_le_lot(schema, rows)

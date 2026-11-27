@@ -49,6 +49,54 @@ def test_le_refus_dit_le_remplacement_de_chaque_mot_sans_date():
     assert "octobre" not in t and "déprécié" not in t and "October" not in t and "deprecated" not in t
 
 
+def test_un_lot_refuse_nomme_la_couche_les_lignes_et_le_geste_signal_1481():
+    """Signal 1481 : un lot de 46 lignes (clé `linkedin_url`), dont 44 ne voulaient
+    réécrire que `comment`/`link` d'une colonne en gardant sa valeur par `@keep`. Le
+    refus nommait la colonne, ni la couche ni les lignes, ni le geste exact."""
+    rows = [{"linkedin_url": "https://profil.example/neuf", "nom": "Neuf"}]
+    rows += [{"linkedin_url": {"valeur": f"https://profil.example/{i}", "comment": "vu"},
+              "statut": {"valeur": dsl.GARDE, "comment": "relu", "link": "https://l.example"}}
+             for i in range(44)]
+    rows.append({"linkedin_url": "https://profil.example/dernier", "note": dsl.EFFACEMENT})
+    with pytest.raises(RowValidationError) as e:
+        mdp.controler(*rows, lot=True, key="linkedin_url")
+    t = str(e.value)
+    assert "`@keep` (`statut`) at `statut.valeur`" in t
+    assert "on 44 of the 46 rows of the batch" in t
+    assert "row 2 (linkedin_url=https://profil.example/0)" in t
+    assert "row 1 " not in t and "row 7 " not in t        # cinq lignes citées, pas le lot
+    assert "WITHOUT `valeur`" in t and "the stored value stays" in t
+    assert "`@clear` (`note`), on 1 of the 46 rows of the batch: row 46 " in t
+    mots = {w["word"]: w for w in e.value.details["words"]}
+    assert e.value.details["code"] == "retired_word"
+    assert mots[dsl.GARDE]["cells"] == ["statut.valeur"]
+    assert mots[dsl.GARDE]["row_count"] == 44 and len(mots[dsl.GARDE]["rows"]) == 20
+    assert mots[dsl.EFFACEMENT]["rows"] == ["row 46 (linkedin_url=https://profil.example/dernier)"]
+
+
+def test_le_rang_d_un_lot_part_du_premier_rang_de_la_tranche():
+    with pytest.raises(RowValidationError, match=r"row 501 \(k=b\)"):
+        mdp.controler({"k": "a"}, {"k": "b", "x": dsl.GARDE}, lot=True, key="k",
+                      premier_rang=500)
+
+
+def test_une_ecriture_seule_nomme_la_case_sans_parler_de_lignes():
+    with pytest.raises(RowValidationError) as e:
+        mdp.controler({"c": [{"nom": "A", "fonction": dsl.GARDE}]},
+                      {"c": [{"nom": "A", "fonction": dsl.GARDE}]})
+    t = str(e.value)
+    assert "`@keep` (`c`) at `c[0].fonction`" in t
+    assert "rows of the batch" not in t and "WITHOUT `valeur`" not in t
+
+
+def test_les_lots_et_l_import_designent_leurs_lignes():
+    from oto_mcp import upload_tokens
+    from oto_mcp.datastore import lots
+
+    for mod in (lots, upload_tokens):
+        assert "lot=True" in inspect.getsource(mod), mod.__name__
+
+
 def test_la_description_de_data_write_porte_la_regle():
     from oto_mcp.tools import datastore as tools_ds
 
