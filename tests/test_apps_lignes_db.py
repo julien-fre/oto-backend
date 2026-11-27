@@ -424,3 +424,60 @@ def test_le_champ_du_perimetre_se_juge_contre_le_schema(monde):
         assert problems == []
         problems = auteur(m["auteur"], m["org"], clean)
         assert any(attendu in p for p in problems), problems
+
+
+# ── La clé métier : unique sur tout le tableau, elle ne se choisit pas d'un périmètre ──
+
+def _cle(m, champ):
+    """La clé métier posée APRÈS l'écriture du manifeste : jugée sur le schéma vivant."""
+    from oto_mcp.datastore.core import make_store
+    make_store(m["auteur"]).set_schema(str(m["ns_id"]), {**SCHEMA, "key": champ})
+
+
+def test_un_perimetre_ne_choisit_pas_la_cle_meme_libre(monde):
+    """La clé du voisin ET une clé libre reçoivent le MÊME refus : rien ne dit laquelle
+    est prise."""
+    m = monde
+    _cle(m, "name")
+    for nom in ("Beta", "Inconnu-42"):
+        e = _refus(_consentir, m, m["p1"], action="add_row", table="fiches",
+                   values={"name": nom, "status": "open"})
+        assert (e.status, e.code) == (403, "row_scope_key")
+    # Sans la clé, l'ajout passe : la ligne naît sans clé, dans son périmètre.
+    out = _geste(m, m["p1"], action="add_row", table="fiches", values={"status": "open"})
+    assert out["row"]["partner_id"] == "P-1"
+
+
+def test_un_perimetre_ne_reecrit_pas_la_cle(monde, monkeypatch):
+    """`status` ne peut pas être une clé ici (trois lignes `open`) : le schéma vivant est
+    remplacé par sa lecture, seule source que le garde consulte."""
+    from oto_mcp.capabilities import apps_appel as C
+    m = monde
+    monkeypatch.setattr(C, "_cle_du_tableau", lambda ns: "status")
+    r = m["lignes"]["Alpha"]
+    e = _refus(_consentir, m, m["p1"], action="write_cell", table="fiches", row_id=r["_id"],
+               field="status", value="won", expected_revision=r["_revision"])
+    assert (e.status, e.code) == (403, "row_scope_key")
+
+
+def test_le_refus_d_une_cle_deja_portee_ne_nomme_pas_la_ligne(monde):
+    """Un lecteur SANS périmètre (rôle `free`) qui ajoute une clé déjà portée : le 409 ne
+    livre ni l'identifiant ni les valeurs de la ligne en place."""
+    m = monde
+    _cle(m, "name")
+    _apps(m, m["auteur"], op="set_role", principal_type="user", principal_id=m["p3"],
+          role="free")
+    e = _refus(_geste, m, m["p3"], action="add_row", table="fiches",
+               values={"name": "Beta", "status": "open"})
+    assert (e.status, e.code) == (409, "row_conflict")
+    assert m["lignes"]["Beta"]["_id"] not in (e.message or "")
+    assert not e.details
+
+
+def test_le_manifeste_refuse_un_role_a_perimetre_qui_ajoute_la_cle(monde):
+    m = monde
+    _cle(m, "name")
+    vu = _apps(m, m["auteur"], op="get")["app"]
+    e = _refus(_apps, m, m["auteur"], op="update", manifest=vu["manifest"],
+               expected_rev=vu["rev"])
+    assert e.code == "invalid_manifest" and "unique key" in e.message

@@ -226,6 +226,21 @@ def auteur(sub: str, project_org: Optional[int], clean: dict) -> list[str]:
                 problems.append(f"tables.{alias}: a role's rows scope can't use `{champ}` "
                                 f"(type {types[champ]}): a text, number, email, enum or "
                                 "link column only.")
+        # Un rôle à périmètre de lignes ne CHOISIT pas la clé métier (unique sur tout le
+        # tableau : « existe déjà » trahirait la ligne d'un autre). Dit ici pour l'auteur ;
+        # jugé à chaque geste sur le schéma vivant (`apps_appel._cle_hors_perimetre`).
+        cle = (schema or {}).get("key")
+        if isinstance(cle, str) and cle:
+            from .apps_roles import resserrer
+            for nom, r in (clean.get("roles") or {}).items():
+                lignes = (r.get("rows") or {}).get(alias)
+                if not lignes or cle in lignes:
+                    continue
+                vu = (resserrer(clean, nom).get("tables") or {}).get(alias) or {}
+                if cle in (vu.get("add") or []) or cle in (vu.get("set") or {}):
+                    problems.append(f"roles.{nom}: `{cle}` is the unique key of table "
+                                    f"`{alias}`, which this role scopes to its rows — it "
+                                    "can't add or set it (remove it from `add` / `set`).")
         if not declared:
             continue
         named = (set(t["fields"] or []) | set(t["set"]) | set(t["add"])

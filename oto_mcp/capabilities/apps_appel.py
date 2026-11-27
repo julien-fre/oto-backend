@@ -525,6 +525,46 @@ def _dans_le_perimetre(ctx: ResolvedCtx, app: dict, ns: str, row_id: str,
         raise AuthzDenied(404, "row_not_found")
 
 
+def _cle_du_tableau(ns: str) -> Optional[str]:
+    """La clé métier DÉCLARÉE du tableau, lue sur son schéma VIVANT (elle peut être posée
+    ou changée après l'écriture du manifeste) — jamais par les droits du lecteur : c'est
+    le serveur qui juge."""
+    ligne = db.get_datastore_by_id(int(ns))
+    k = ((ligne or {}).get("schema") or {}).get("key")
+    return k if isinstance(k, str) and k else None
+
+
+def _cle_hors_perimetre(app: dict, ns: str, champs: set) -> None:
+    """Un lecteur au PÉRIMÈTRE DE LIGNES ne choisit pas la clé métier du tableau : elle est
+    unique sur TOUT le tableau, et le refus d'une clé déjà portée (« existe déjà ») lui
+    dirait qu'une ligne hors de son périmètre la porte. Refusé sans regarder les données
+    — le refus est le même que la clé soit libre ou non. Sauf si son périmètre IMPOSE
+    cette colonne (sa valeur, pas son choix). Ajouter sans la clé reste permis : la
+    ligne naît sans clé, non rapprochable."""
+    p = _perimetre(app, ns)
+    if p is None:
+        return
+    cle = _cle_du_tableau(ns)
+    if cle is None or cle not in champs:
+        return
+    if p[1] is not None and cle in p[1]:
+        return
+    raise _refus(403, "row_scope_key",
+                 f"“{cle}” is this table's unique key: it can't be chosen from your "
+                 "scope. Leave it out.")
+
+
+def _ajout_neutre(e: AuthzDenied) -> AuthzDenied:
+    """Le 409 `business_key_exists` d'un ajout NOMME la ligne en place (`id`, `details`) :
+    servi tel quel à un lecteur d'app, il livrerait l'identifiant d'une ligne que son
+    rôle, son périmètre ou ses champs ne lui montrent pas. Ramené à un refus sans rien
+    de la ligne."""
+    if e.code != "business_key_exists":
+        return e
+    return AuthzDenied(409, "row_conflict",
+                       "This row can't be added: it collides with an existing row.")
+
+
 def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
     """Juge un geste qui écrit ou lance — TOUT ce que l'appel jugera, sans rien
     faire — et rend `(faire, résumé)` : de quoi le faire, et ce que l'écran hôte
@@ -545,6 +585,7 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
             # ce qu'un autre a changé depuis.
             raise _refus(400, "revision_required",
                          "An app's write names the row's `_revision` as it was shown.")
+        _cle_hors_perimetre(app, ns, {inp.field} if inp.field else set())
         _dans_le_perimetre(ctx, app, ns, inp.row_id, inp.field)
 
         def faire(_consent_id: int) -> dict:
@@ -578,10 +619,14 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
             raise _refus(403, "undeclared_write", f"This app may not fill: {', '.join(extra)}.")
         if not values:
             raise _refus(400, "empty_row", "The new row is empty.")
+        _cle_hors_perimetre(app, ns, set(values))
         values = {**values, **imposes}
 
         def faire(_consent_id: int) -> dict:
-            row = R._append_row(ctx, R.AppendRowInput(datastore=ns, row=values))
+            try:
+                row = R._append_row(ctx, R.AppendRowInput(datastore=ns, row=values))
+            except AuthzDenied as e:
+                raise _ajout_neutre(e) from None
             return {"row": _projeter(t, row)}
         return faire, _resume(
             app, inp.action, {"table": inp.table, "table_id": ns}, {"row": values},
