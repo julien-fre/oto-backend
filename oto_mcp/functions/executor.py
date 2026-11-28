@@ -183,7 +183,7 @@ def executer(*, sources: dict, entrypoint: str, requirements: list[str], mode: s
     if distant.actif():
         return _executer_sur_la_ferme(sources=sources, entrypoint=entrypoint,
                                       requirements=requirements, mode=mode, sub=sub,
-                                      entree=entree)
+                                      entree=entree, org_id=org_id)
     racine = _repertoire()
     roues = _roues(racine, requirements)
     nonce = secrets.token_hex(16)
@@ -214,7 +214,8 @@ def executer(*, sources: dict, entrypoint: str, requirements: list[str], mode: s
 
 
 def _executer_sur_la_ferme(*, sources: dict, entrypoint: str, requirements: list[str],
-                           mode: str, sub: Optional[str], entree: Optional[dict]) -> dict:
+                           mode: str, sub: Optional[str], entree: Optional[dict],
+                           org_id: Optional[int] = None) -> dict:
     """L'aller simple sur la ferme de recettes (`distant.py`) : la même tâche, avec les
     chemins de Pyodide et des roues que la box rend à l'ouverture. La place de
     `places.py` est prise ICI (part équitable par compte) ; la ferme a les siennes."""
@@ -229,7 +230,7 @@ def _executer_sur_la_ferme(*, sources: dict, entrypoint: str, requirements: list
                 "job": {"sources": sources, "entrypoint": entrypoint, "mode": mode,
                         "input": entree if entree is not None else {}}}
 
-    with places.place(sub, DELAI_S + places.MARGE_ARRET_S):
+    with places.place(sub, DELAI_S + places.MARGE_ARRET_S, org_id=org_id):
         debut = time.monotonic()
         try:
             code, sortie, erreurs = distant.jouer_aller(
