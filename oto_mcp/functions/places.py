@@ -6,9 +6,14 @@ bornait leur NOMBRE. Tout compte qui lit une fonction peut la lancer, tout membr
 le compte des exécutions en cours :
 
 - au plus `OTO_FUNCTIONS_MAX_SIMULTANEES` (défaut `MAX_DEFAUT`) dans le processus ;
-- au plus `par_compte()` par compte (`sub`) = le plafond MOINS une réserve
+- au plus `par_compte()` par compte = le plafond MOINS une réserve
   (`OTO_FUNCTIONS_RESERVE`, défaut `RESERVE_DEFAUT` = 1, au moins une place par compte) :
   un compte prend les places LIBRES, mais en laisse toujours une à un autre.
+
+**Un « compte », c'est une personne DANS une org : la clé `(sub, org_id)`** (décision de
+Julien, 28/11/2026). Une personne membre de plusieurs orgs n'est pas bornée d'une org à
+l'autre : ses exécutions dans l'org A ne prennent rien de sa part dans l'org B. `org_id`
+None (contexte personnel, sans org) est une clé à part entière, `(sub, None)`.
 
 **Places partagées, part équitable, attente bornée (28/11/2026).** Jusque-là : UNE place
 par compte, et un refus IMMÉDIAT au-delà. Mesuré en prod du 27/11 13:41 au 28/11 06:25 UTC
@@ -163,10 +168,19 @@ def verifier_configuration() -> None:
     attente_max_s()
 
 
+#: Ce que la part par compte compte : une personne dans une org, `(sub, org_id)`.
+Compte = tuple[Optional[str], Optional[int]]
+
+
+def compte(sub: Optional[str], org_id: Optional[int] = None) -> Compte:
+    """La clé d'un compte : la personne ET l'org de l'exécution (cf. docstring)."""
+    return (sub, None if org_id is None else int(org_id))
+
+
 @dataclass(frozen=True)
 class _Tenue:
     """Une place tenue : par qui, depuis quand, jusqu'à quand au plus tard."""
-    sub: Optional[str]
+    compte: Compte
     debut: float
     #: L'instant (`time.monotonic`) où la place est rendue au plus tard ; None = inconnu.
     echeance: Optional[float]
@@ -175,7 +189,7 @@ class _Tenue:
 @dataclass(eq=False)
 class _Demande:
     """Un demandeur dans la file : qui, dans quel ordre, et comment le réveiller."""
-    sub: Optional[str]
+    compte: Compte
     rang: int
     duree_max_s: Optional[float]
     #: Rempli par `_attribuer` (sous le verrou) quand une place lui revient.
@@ -188,7 +202,7 @@ class _Demande:
 
 
 _verrou = threading.Lock()
-_par_compte: dict[Optional[str], int] = {}
+_par_compte: dict[Compte, int] = {}
 _tenues: dict[int, _Tenue] = {}
 _file: list[_Demande] = []
 _jetons = itertools.count(1)
@@ -226,25 +240,25 @@ def _signaler(depassees: list[_Tenue], maintenant: float) -> None:
                        "il y a %.0f s)", maintenant - t.echeance, maintenant - t.debut)
 
 
-def _tenir(sub: Optional[str], duree_max_s: Optional[float], maintenant: float) -> int:
-    """Compte une place pour `sub`. Sous `_verrou`."""
+def _tenir(cle: Compte, duree_max_s: Optional[float], maintenant: float) -> int:
+    """Compte une place pour le compte `cle`. Sous `_verrou`."""
     global _total
-    _par_compte[sub] = _par_compte.get(sub, 0) + 1
+    _par_compte[cle] = _par_compte.get(cle, 0) + 1
     _total += 1
     jeton = next(_jetons)
-    _tenues[jeton] = _Tenue(sub, maintenant, None if duree_max_s is None
+    _tenues[jeton] = _Tenue(cle, maintenant, None if duree_max_s is None
                             else maintenant + duree_max_s)
     return jeton
 
 
-def _liberer(sub: Optional[str], jeton: Optional[int]) -> None:
+def _liberer(cle: Compte, jeton: Optional[int]) -> None:
     """Décompte une place. Sous `_verrou`."""
     global _total
-    reste = _par_compte.get(sub, 0) - 1
+    reste = _par_compte.get(cle, 0) - 1
     if reste > 0:
-        _par_compte[sub] = reste
+        _par_compte[cle] = reste
     else:
-        _par_compte.pop(sub, None)
+        _par_compte.pop(cle, None)
     _total -= 1
     _tenues.pop(jeton, None)
 
@@ -255,12 +269,12 @@ def _attribuer(maintenant: float) -> None:
     Sous `_verrou`, sans E/S : un réveil de futur passe par `call_soon_threadsafe`."""
     maximum, par_un = plafond(), par_compte()
     while _total < maximum and _file:
-        eligibles = [d for d in _file if _par_compte.get(d.sub, 0) < par_un]
+        eligibles = [d for d in _file if _par_compte.get(d.compte, 0) < par_un]
         if not eligibles:
             return
-        elu = min(eligibles, key=lambda d: (_par_compte.get(d.sub, 0), d.rang))
+        elu = min(eligibles, key=lambda d: (_par_compte.get(d.compte, 0), d.rang))
         _file.remove(elu)
-        elu.jeton = _tenir(elu.sub, elu.duree_max_s, maintenant)
+        elu.jeton = _tenir(elu.compte, elu.duree_max_s, maintenant)
         if elu.evenement is not None:
             elu.evenement.set()
         elif elu.futur is not None and elu.boucle is not None:
@@ -272,20 +286,20 @@ def _resoudre(futur: asyncio.Future) -> None:
         futur.set_result(None)
 
 
-def _refus(sub: Optional[str]) -> BacASableOccupe:
-    """Le refus servi à `sub` après son attente : lequel des deux plafonds le retient, et
+def _refus(cle: Compte) -> BacASableOccupe:
+    """Le refus servi au compte `cle` après son attente : lequel des deux plafonds le retient, et
     quand une place se libère au plus tard. Prend le verrou."""
     maximum, par_un = plafond(), par_compte()
     with _verrou:
         maintenant = time.monotonic()
-        if _par_compte.get(sub, 0) >= par_un:
-            siennes = [t for t in _tenues.values() if t.sub == sub]
+        if _par_compte.get(cle, 0) >= par_un:
+            siennes = [t for t in _tenues.values() if t.compte == cle]
             attente, depassees = _attente(siennes, maintenant)
             depuis = (f" (the first started {max(0, int(maintenant - min(t.debut for t in siennes)))} s ago)"
                       if siennes else "")
             refus = BacASableOccupe(
-                f"sandbox_busy: this account already has {par_un} execution(s) running "
-                f"in the sandbox{depuis} — the per-account limit, which leaves "
+                f"sandbox_busy: this person already has {par_un} execution(s) running "
+                f"in the sandbox in this org{depuis} — the per-person-per-org limit, which leaves "
                 f"{maximum - par_un} place(s) to others; retry in {attente} s, once one "
                 "has finished.", retry_after=attente)
         else:
@@ -315,7 +329,7 @@ def _renoncer(demande: _Demande) -> None:
         if demande in _file:
             _file.remove(demande)
         if demande.jeton is not None:
-            _liberer(demande.sub, demande.jeton)
+            _liberer(demande.compte, demande.jeton)
             demande.jeton = None
             _attribuer(time.monotonic())
 
@@ -324,7 +338,7 @@ def _rendre(demande: _Demande) -> None:
     """La place d'une exécution finie, rendue et attribuée au suivant. Prend le verrou."""
     with _verrou:
         if demande.jeton is not None:
-            _liberer(demande.sub, demande.jeton)
+            _liberer(demande.compte, demande.jeton)
             demande.jeton = None
         _attribuer(time.monotonic())
 
@@ -335,20 +349,21 @@ def _delai(attente_s: Optional[float]) -> float:
 
 @contextlib.contextmanager
 def place(sub: Optional[str], duree_max_s: Optional[float] = None,
-          attente_s: Optional[float] = None) -> Iterator[None]:
-    """Une place pour UNE exécution de `sub`, depuis un FIL (l'aller simple). Attend son
+          attente_s: Optional[float] = None, org_id: Optional[int] = None) -> Iterator[None]:
+    """Une place pour UNE exécution de `sub` dans l'org `org_id`, depuis un FIL (l'aller simple). Attend son
     tour au plus `attente_s` (défaut `attente_max_s()`), puis `BacASableOccupe` sans rien
     avoir pris. La place est rendue en sortant, quoi qu'il arrive. `duree_max_s` : le
     temps au bout duquel elle est rendue au plus tard — ce que le `Retry-After` d'un refus
     annonce. ⚠️ Jamais depuis la boucle : elle attendrait bloquée — `place_async`."""
-    demande = _Demande(sub, next(_rangs), duree_max_s, evenement=threading.Event())
+    cle = compte(sub, org_id)
+    demande = _Demande(cle, next(_rangs), duree_max_s, evenement=threading.Event())
     if not _entrer(demande):
         servie = demande.evenement.wait(_delai(attente_s))
         if not servie:
             _renoncer(demande)
             # Une place a pu arriver entre la fin de l'attente et le renoncement : rendue
             # par `_renoncer`, elle n'est pas prise ici, et le refus reste juste.
-            raise _refus(sub)
+            raise _refus(cle)
     try:
         yield
     finally:
@@ -357,19 +372,21 @@ def place(sub: Optional[str], duree_max_s: Optional[float] = None,
 
 @contextlib.asynccontextmanager
 async def place_async(sub: Optional[str], duree_max_s: Optional[float] = None,
-                      attente_s: Optional[float] = None) -> AsyncIterator[None]:
+                      attente_s: Optional[float] = None,
+                      org_id: Optional[int] = None) -> AsyncIterator[None]:
     """`place` depuis la BOUCLE (le pont des recettes-code) : l'attente est un futur
     asyncio, la boucle n'est jamais bloquée. Annulée pendant l'attente (client parti,
     tâche annulée), la demande sort de la file et rend ce qu'elle aurait reçu."""
     boucle = asyncio.get_running_loop()
-    demande = _Demande(sub, next(_rangs), duree_max_s, futur=boucle.create_future(),
+    cle = compte(sub, org_id)
+    demande = _Demande(cle, next(_rangs), duree_max_s, futur=boucle.create_future(),
                        boucle=boucle)
     if not _entrer(demande):
         try:
             await asyncio.wait_for(asyncio.shield(demande.futur), _delai(attente_s))
         except asyncio.TimeoutError:
             _renoncer(demande)
-            raise _refus(sub) from None
+            raise _refus(cle) from None
         except BaseException:
             # Annulation (ou toute autre sortie) pendant l'attente : rien ne fuit.
             _renoncer(demande)

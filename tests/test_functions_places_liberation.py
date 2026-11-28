@@ -241,8 +241,8 @@ def test_le_refus_par_compte_annonce_ce_qui_reste_a_son_execution(monkeypatch):
                 pytest.fail("un compte a tenu deux exécutions à la fois")
     assert 99 <= e.value.retry_after <= 100
     message = str(e.value)
-    assert message.startswith("sandbox_busy: this account already has 1 execution(s) running")
-    assert "per-account limit" in message and f"retry in {e.value.retry_after} s" in message
+    assert message.startswith("sandbox_busy: this person already has 1 execution(s) running")
+    assert "per-person-per-org limit" in message and f"retry in {e.value.retry_after} s" in message
 
 
 def test_le_refus_du_plafond_annonce_la_premiere_place_a_se_liberer(monkeypatch):

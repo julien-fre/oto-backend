@@ -80,7 +80,7 @@ def test_un_compte_prend_les_places_libres_jusqu_a_la_reserve():
     elle reste à un autre compte."""
     assert places.par_compte() == 3
     with places.place("a"), places.place("a"), places.place("a"):
-        with pytest.raises(places.BacASableOccupe, match="this account"):
+        with pytest.raises(places.BacASableOccupe, match="this person"):
             with places.place("a"):
                 pytest.fail("un compte a pris la place réservée aux autres")
         with places.place("b"):
@@ -105,7 +105,7 @@ def test_une_attente_illisible_leve(monkeypatch, brut):
 def test_le_meme_compte_deux_fois_sous_l_ancienne_regle(monkeypatch):
     _un_par_compte(monkeypatch)
     with places.place("a"):
-        with pytest.raises(places.BacASableOccupe, match="this account"):
+        with pytest.raises(places.BacASableOccupe, match="this person"):
             with places.place("a"):
                 pytest.fail("un compte a tenu deux exécutions à la fois")
         assert places.en_cours() == 1

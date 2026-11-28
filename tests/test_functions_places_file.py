@@ -155,7 +155,7 @@ def test_un_compte_a_sa_limite_passe_son_tour(monkeypatch):
     mais a ne peut pas la prendre — elle reste à b, qui arrive après."""
     _regler(monkeypatch, plafond=3, reserve=1, attente=0.2)
     with places.place("a"), places.place("a"):
-        with pytest.raises(places.BacASableOccupe, match="per-account limit"):
+        with pytest.raises(places.BacASableOccupe, match="per-person-per-org limit"):
             with places.place("a"):
                 pytest.fail("a a pris la place réservée aux autres")
         with places.place("b"):
@@ -303,3 +303,70 @@ def test_la_borne_de_dernier_recours_des_recettes_couvre_l_attente(monkeypatch):
     places.attente_max_s.cache_clear()
     assert avec - cap_recettes._borne_s(corps) == 25
     assert cap_recettes._borne_s(corps) == 10 + pont.GRACE_S + cap_recettes._MARGE_S
+
+
+# ── Le compte = une personne DANS une org, `(sub, org_id)` (décision du 28/11/2026) ─────
+
+
+def test_une_personne_a_sa_limite_dans_l_org_a_prend_une_place_dans_l_org_b(monkeypatch):
+    """Une personne membre de deux orgs n'est pas bornée d'une org à l'autre."""
+    _regler(monkeypatch, plafond=4, reserve=1, attente=0)
+    with places.place("u", org_id=1), places.place("u", org_id=1), places.place("u", org_id=1):
+        # Sa part dans l'org 1 est pleine (3 = 4 − 1) …
+        with pytest.raises(places.BacASableOccupe, match="this person"):
+            with places.place("u", org_id=1):
+                pass
+        # … mais l'org 2 est un autre compte : la dernière place lui revient.
+        with places.place("u", org_id=2):
+            assert places.en_cours() == 4
+
+
+def test_deux_personnes_d_une_meme_org_ont_chacune_leur_part(monkeypatch):
+    _regler(monkeypatch, plafond=3, reserve=1, attente=0)
+    with places.place("a", org_id=7), places.place("a", org_id=7):
+        with places.place("b", org_id=7):
+            assert places.en_cours() == 3
+
+
+def test_sans_org_est_un_compte_a_part(monkeypatch):
+    _regler(monkeypatch, plafond=2, reserve=1, attente=0)
+    with places.place("u", org_id=5):
+        with places.place("u"):  # org None : (u, None), distinct de (u, 5)
+            assert places.en_cours() == 2
+    assert places.compte("u", "5") == ("u", 5)
+
+
+def test_la_part_equitable_compte_par_personne_et_par_org(monkeypatch):
+    """La place libérée va au compte (sub, org) qui en tient le moins : la même personne
+    dans une AUTRE org passe devant elle-même dans l'org où elle en tient déjà."""
+    _regler(monkeypatch, plafond=2, reserve=0, attente=5)
+    servis: list[str] = []
+    liberer = [threading.Event(), threading.Event()]
+
+    def occupant(i):
+        with places.place("u", org_id=1):
+            liberer[i].wait(5)
+
+    occupants = [threading.Thread(target=occupant, args=(i,)) for i in (0, 1)]
+    for t in occupants:
+        t.start()
+    _attendre(lambda: places.en_cours() == 2)
+
+    def demandeur(nom, org):
+        with places.place("u", org_id=org):
+            servis.append(nom)
+
+    # Arrivée d'abord : la même personne dans l'org 1 (qui y tient déjà 2 places)…
+    d1 = threading.Thread(target=demandeur, args=("org1", 1))
+    d1.start()
+    _attendre(lambda: places.en_attente() == 1)
+    # … puis dans l'org 2 (0 place tenue) : elle passe devant.
+    d2 = threading.Thread(target=demandeur, args=("org2", 2))
+    d2.start()
+    _attendre(lambda: places.en_attente() == 2)
+    liberer[0].set()                      # UNE place se libère : elle va à l'org 2
+    _attendre(lambda: len(servis) >= 1)   # (l'org 2 rend aussitôt la sienne à l'org 1)
+    liberer[1].set()
+    for t in (*occupants, d1, d2):
+        t.join(5)
+    assert servis == ["org2", "org1"]

@@ -108,7 +108,9 @@ Chaque exécution est bornée (1 Go, un cœur, 64 tâches, sa durée) ; leur NOM
 
 - au plus `OTO_FUNCTIONS_MAX_SIMULTANEES` exécutions simultanées dans le processus
   (défaut **4** : 4 × 1 Go au pire, sous les ~6 Go que la box laisse libres) ;
-- au plus le plafond **moins une réserve** par compte (`sub`) — `OTO_FUNCTIONS_RESERVE`,
+- au plus le plafond **moins une réserve** par compte — un compte = une personne DANS une
+  org, la clé `(sub, org_id)` (28/11/2026 : une personne membre de plusieurs orgs n'est pas
+  bornée d'une org à l'autre ; sans org, `(sub, None)`) — `OTO_FUNCTIONS_RESERVE`,
   défaut 1, au moins une place par compte : un compte prend les places libres, mais en
   laisse toujours une à un autre (28/11/2026 ; c'était **une** par compte).
 

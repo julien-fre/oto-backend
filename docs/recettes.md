@@ -127,7 +127,7 @@ en Python. Une recette-code se range comme les autres (mêmes tables, même cycl
   deux outils additionne deux unités. Atteint, les appels suivants sont refusés et le reçu le dit (`stopped`).
 - **Une place dans le bac à sable** : une recette-code en prend une, comme une fonction
   (`docs/fonctions.md` §Combien d'exécutions à la fois) — au plus le plafond moins une
-  réserve par compte, au plus `OTO_FUNCTIONS_MAX_SIMULTANEES` par processus ; une recette
+  réserve par compte (une personne dans une org, `(sub, org_id)`), au plus `OTO_FUNCTIONS_MAX_SIMULTANEES` par processus ; une recette
   sans place attend son tour (au plus `OTO_FUNCTIONS_ATTENTE_MAX_S`, file équitable), puis
   429 `sandbox_busy` avec `Retry-After`, rien n'est lancé ni appelé.
 - **Pas de reprise** (`resume_not_supported`) : une relance repart du début, et ses
