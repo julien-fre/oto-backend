@@ -54,6 +54,19 @@ class RecipeSpec(BaseModel):
         "for a declarative recipe."))
 
 
+def spec(brut: Any) -> dict:
+    """`recipe` tel que l'entrée le porte (un objet nu : les schémas d'outil MCP sont
+    PLATS, sans `$defs` — `test_with_signature_flat`), validé par `RecipeSpec`."""
+    from pydantic import ValidationError
+    try:
+        return RecipeSpec.model_validate(brut).model_dump()
+    except ValidationError as e:
+        raise AuthzDenied(400, "invalid_recipe_spec",
+                          "`recipe` = {slug, version?, params?, datastore?} : "
+                          + "; ".join(f"{'.'.join(str(x) for x in err['loc']) or 'recipe'}: {err['msg']}"
+                                      for err in e.errors())) from None
+
+
 def exiger_un_worker(org_id: int) -> None:
     """Refuse de promettre une exécution qu'aucun worker `recette` vivant n'assure —
     la garde `no_runner_armed` / `exige_servi` des agents, dite pour une recette."""

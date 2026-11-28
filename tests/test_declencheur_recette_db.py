@@ -341,3 +341,15 @@ def test_x_oto_run_lie_la_requete_rest_au_run(monkeypatch):
     assert r.status_code == 200, r.text
     assert vu["run"] == "run-42"
     assert cap  # la capacité est enregistrée
+
+
+def test_recipe_est_un_objet_nu_valide_par_recipespec():
+    """Le schéma d'outil reste PLAT (`recipe` = dict) ; la forme se valide au geste."""
+    import pytest as _pytest
+    from oto_mcp.capabilities import _declencheur_recette as dr
+    from oto_mcp.capabilities._types import AuthzDenied
+    assert dr.spec({"slug": "x", "version": 2, "params": {"a": 1}, "datastore": 5}) == {
+        "slug": "x", "version": 2, "params": {"a": 1}, "datastore": 5}
+    with _pytest.raises(AuthzDenied) as e:
+        dr.spec({"version": "deux"})
+    assert e.value.code == "invalid_recipe_spec"

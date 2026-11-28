@@ -383,7 +383,7 @@ class TriggerInput(BaseModel):
         ))
 
     # Un AGENT-RECETTE (sans modèle) : la recette publiée qu'il joue.
-    recipe: Optional[_declencheur_recette.RecipeSpec] = Field(default=None, description=(
+    recipe: Optional[dict[str, Any]] = Field(default=None, description=(
         "create/update: makes this a RECIPE agent — it runs a published recipe of the "
         "org, with NO model, on its schedule (`cron`) or its webhook, or with "
         "`run_now`: {slug, version?, params?, datastore?}. The version is PINNED (the "
@@ -1614,7 +1614,7 @@ def _creer_un_agent_recette(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             runner_tick.validate_cron(inp.cron, tz)
         except ValueError as e:
             raise AuthzDenied(400, "invalid_schedule", str(e))
-    recette = _declencheur_recette.valider(ctx.org_id, inp.recipe.model_dump())
+    recette = _declencheur_recette.valider(ctx.org_id, _declencheur_recette.spec(inp.recipe))
     _exiger_projet_de_l_org(ctx, inp.project_id)
     # Sous un jeton de délégation, l'agent créé n'appelle pas plus que le travail qui
     # le crée (`tools_human_only`) : la liste de son travail, c'est ce que cite la
@@ -2522,7 +2522,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         _refuser_les_champs_d_agent(inp)
         if inp.recipe is not None:
             champs["recipe"] = _declencheur_recette.valider(
-                ctx.org_id, inp.recipe.model_dump(), _actuel().get("recipe"))
+                ctx.org_id, _declencheur_recette.spec(inp.recipe), _actuel().get("recipe"))
     if "procedure" in champs:
         # Repointer l'agent : la même règle qu'à sa pose, pour son PROPRIÉTAIRE — c'est
         # sous lui qu'il tourne et lit, quel que soit l'éditeur (#1499).
