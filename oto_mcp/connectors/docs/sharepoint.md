@@ -18,7 +18,7 @@ on the "SharePoint & OneDrive" card, click **Authorize SharePoint & OneDrive** a
 - "find the Dupont contract" → `sharepoint_file(op="search", query="Dupont contract")` in your OneDrive, or with `drive_id=` in a library
 - "read this document" → `sharepoint_file(op="download", drive_id="…", item_id="…")`: a Word or PowerPoint comes back as text (converted to PDF by Microsoft), an Excel as CSV, a PDF as text
 - each response is a trimmed view (name, size, type, folder, link, last modified); `full=true` returns the complete Microsoft Graph object
-- "drop this meeting report" → `sharepoint_file(op="upload", drive_id="…", path="Meeting reports", name="cr-2026-10-01.md", content_text="…")`; a binary file in `content_base64`; a file you never held (a PDF of several MB from the project, a signed URL another tool returned) in `source={"kind":"project_file","project_id":…,"file_id":…}` or `{"kind":"url","url":"https://…"}` — the server fetches it, same 25 MB limit, `name` defaults to the source's filename
+- "drop this meeting report" → `sharepoint_file(op="upload", drive_id="…", path="Meeting reports", name="cr-2026-10-01.md", content_text="…")`; a binary file in `content_base64`; a file you never held (a PDF of several MB from the project, a signed URL another tool returned) in `source={"kind":"project_file","project_id":…,"file_id":…}` or `{"kind":"url","url":"https://…"}`, an Outlook attachment in `{"kind":"outlook","message_id":…,"attachment_id":…}` (or `"filename"`) — the server fetches it, same 25 MB limit, `name` defaults to the source's filename
 
 ## note — what is misleading
 

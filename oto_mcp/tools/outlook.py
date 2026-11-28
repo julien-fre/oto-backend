@@ -33,7 +33,7 @@ writes only drafts; its default is `op="search"` — a READ.
 """
 from __future__ import annotations
 
-import base64
+import json
 import logging
 import os
 from typing import Literal, Optional, Union
@@ -42,7 +42,8 @@ from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
 
 from .. import access, file_content, file_source, output_projection
-from ._microsoft_graph import bad, markdown_html, need, raw, refuse_ignored, run, token
+from ._microsoft_graph import (attachment, bad, markdown_html, need, raw, refuse_ignored,
+                               run, token)
 from .lecture import ACTE, SIMULATION, documente
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,23 @@ def _message(m: dict) -> dict:
 
 def _piece(a: dict) -> dict:
     return {k: a.get(k) for k in ("id", "name", "contentType", "size", "isInline")}
+
+
+def _avec_source(out: Union[dict, ToolResult], message_id: str,
+                 attachment_id: str) -> Union[dict, ToolResult]:
+    """The attachment's `source` (`file_source`, kind `outlook`) added to what
+    op="attachment" serves: the reference another tool takes to file it elsewhere
+    (`sharepoint_file`, `drive_file`, … `op="upload"`) without its bytes going through the
+    agent. In the dict as `source`; on an image answer, in its free-text line (a JSON
+    there would have the response re-emitted without its image blocks)."""
+    source = {"kind": "outlook", "message_id": message_id, "attachment_id": attachment_id}
+    if isinstance(out, dict):
+        return {**out, "source": source}
+    ligne = out.content[0]
+    out.content[0] = ligne.model_copy(update={"text": (
+        f"{ligne.text} To file it elsewhere without downloading it, pass "
+        f"source={json.dumps(source)} to the tool that drops it.")})
+    return out
 
 
 def _dossier(f: dict) -> dict:
@@ -223,8 +241,13 @@ confirm.
   `filename` (from op="get"). Small text and PDF come back as text inline, a spreadsheet
   as CSV per sheet (`sheet`, `max_rows`). An image (png/jpeg/gif/webp, ≤3 MB) and a
   scanned PDF whose pages are JPEG (≤5 pages, ≤3 MB) come back as IMAGE CONTENT you can
-  look at — nothing stored. Anything else, or over those caps, comes as a short-lived
-  signed URL (`image_unavailable` says why an image or scan was not served as image).
+  look at. Anything else, or over those caps, comes as a short-lived signed URL
+  (`image_unavailable` says why an image or scan was not served as image). EVERY answer
+  also carries a short-lived signed link to the original file (`url`, `raw_url`, or in
+  the text line of an image answer) and its `source` — `{{"kind": "outlook",
+  "message_id": …, "attachment_id": …}}` — that `sharepoint_file`, `drive_file` and the
+  other tools with a `source` take to file it elsewhere: the server fetches it, its
+  bytes never go through you.
 - **"drafts"**: the drafts, most recent first — a draft `id` is what
   `outlook_act(op="send", draft_id=…)` sends.
 - **"folders"**: the top-level mail folders (`id`, `displayName`, counts) — a folder id
@@ -485,30 +508,19 @@ def register(mcp: FastMCP) -> None:
             if (attachment_id is None) == (filename is None):
                 raise bad("op='attachment' requires `attachment_id` OR `filename` "
                           "(only one) — both come from op='get'.")
-            aid = attachment_id
-            if aid is None:
-                pieces = _run(lambda: c.list_attachments(mid))
-                memes = [a for a in pieces if a.get("name") == filename]
-                if len(memes) != 1:
-                    noms = [(a.get("name"), a.get("id")) for a in pieces]
-                    raise bad(f"{len(memes)} attachments are named {filename!r} on this "
-                              f"message — pass `attachment_id` (name, id): {noms}.")
-                aid = memes[0]["id"]
-            piece = _run(lambda: c.get_attachment(mid, aid))
-            if piece.get("contentBytes") is None:
-                raise bad(f"« {piece.get('name')} » is not a file attachment "
-                          f"({piece.get('@odata.type')}): an attached email or a link "
-                          "has no content to read here — open the message in Outlook "
-                          "(`webLink` of op='get').")
-            data = base64.b64decode(piece["contentBytes"])
+            piece, data = attachment(c, mid, attachment_id=attachment_id,
+                                     filename=filename, label=_LABEL)
+            aid = piece["id"]
             sub = access.current_user_sub_or_raise()
             try:
-                return file_content.render_attachment_for_agent(
+                out = file_content.render_attachment_for_agent(
                     data, piece.get("name") or aid,
                     piece.get("contentType") or "application/octet-stream",
-                    sub=sub, prefix="outlook-attachments", sheet=sheet, max_rows=max_rows)
+                    sub=sub, prefix="outlook-attachments", sheet=sheet, max_rows=max_rows,
+                    lien=True)
             except (file_content.MediaUnavailable, file_content.SpreadsheetError) as e:
                 raise bad(str(e)) from None
+            return _avec_source(out, mid, aid)
 
         # Structurally unreachable (input guard above).
         raise bad(_ops_error(_OPS))

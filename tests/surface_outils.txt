@@ -852,7 +852,7 @@ serper_scrape	-	238d3e8a73834807
 serper_search	-	b5f9d8e347f07f95
 sharepoint_excel	range sheets	2d4b796ea392726d
 sharepoint_excel_act	update_range	08c0f66dd71cbce2
-sharepoint_file	create_folder download get list search upload	71548fca01d9a9ca
+sharepoint_file	create_folder download get list search upload	2de801e02476de06
 sharepoint_site	drives get search	1023081e240273ee
 sheets_chart	add delete list	6ca56b12e3448086
 sheets_create	-	9724ca91b2f76777
