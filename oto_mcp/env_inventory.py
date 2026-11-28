@@ -331,6 +331,18 @@ _REGLAGES: tuple[Variable, ...] = (
              "qui en tient le moins, puis au plus ancien. 0 = refus immédiat (le comportement "
              "d'avant). Pas un nombre ≥ 0 : refus de démarrer.",
              ("oto_mcp/functions/places.py:147",)),
+    Variable("OTO_FUNCTIONS_FERME", Classe.REGLAGE, "",
+             "`hôte:port` de la FERME de recettes (`functions/distant.py`, agent "
+             "`ferme_recettes/agent.py`) : seul le processus du bac à sable part sur cette "
+             "box privée, le serveur garde le pont et les gardes des appels d'outils. Vide = "
+             "le bac à sable tourne ici (le défaut). Ferme pleine, injoignable ou d'une autre "
+             "empreinte : 429 `sandbox_busy` avec `Retry-After`, avant tout départ.",
+             ("oto_mcp/functions/distant.py:64",)),
+    Variable("OTO_FUNCTIONS_FERME_SECRET", Classe.REGLAGE, "",
+             "Le secret partagé avec l'agent de la ferme de recettes "
+             "(`FERME_RECETTES_SECRET` chez lui), présenté à chaque exécution et comparé en "
+             "temps constant. Exigé quand `OTO_FUNCTIONS_FERME` est posée.",
+             ("oto_mcp/functions/distant.py:79",)),
     Variable("OTO_ABONNEMENT_OUVERT_A_TOUS", Classe.REGLAGE, "",
              "Agents sur l'abonnement Claude de la personne : ouverts à TOUT compte "
              "de l'instance (`1`, `true`, `yes`, `on`). Absente, vide ou un non = "

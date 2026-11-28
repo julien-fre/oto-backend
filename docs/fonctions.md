@@ -268,6 +268,32 @@ disant).
 `test_la_version_de_pyodide_est_la_meme_partout` garde alignés ; régénérer le verrou par
 `deno cache --no-config --lock=oto_mcp/functions/deno.lock oto_mcp/functions/sandbox.ts`.
 
+## La ferme de recettes : le processus ailleurs, les gardes ici (28/11/2026)
+
+Avec `OTO_FUNCTIONS_FERME` (`hôte:port`) et `OTO_FUNCTIONS_FERME_SECRET`, seul le
+**processus** du bac à sable part sur une box dédiée (`ferme_recettes/agent.py`, réseau
+privé) ; le serveur garde le pont, le budget et toutes les gardes des appels d'outils —
+la box n'a aucun secret de production. Non posée : le bac à sable reste ici (le défaut).
+Les deux chemins passent par la ferme : le pont des recettes-code et l'aller simple
+d'`oto_function`.
+
+- **Le protocole** (`functions/distant.py`) : une ligne d'en-tête (secret, empreinte du
+  bac à sable, script, dépendances, durée), une ligne de réponse (les chemins de Pyodide
+  et des roues chez la box, ou un refus), puis des trames dans les deux sens (`i`/`c`
+  vers l'agent, `o`/`e`/`x` vers le serveur). Fermer l'entrée est une trame : la fin de
+  la connexion veut toujours dire « coupée », et l'agent tue le processus.
+- **L'empreinte** (`executor.empreinte()` : Pyodide, verrou Deno, scripts, harnais) doit
+  être la même des deux côtés ; différente, l'agent refuse.
+- **Avant le départ**, ferme pleine, injoignable, d'une autre empreinte ou secret refusé :
+  le même `BacASableOccupe` qu'en local (429 `sandbox_busy`, `Retry-After`) — une recette
+  programmée est remise en file, jamais tuée. **Après le départ**, une mort est un échec,
+  jamais rejouée.
+- **Qui fait foi pour la capacité** : l'agent (`FERME_RECETTES_PLACES`, file FIFO,
+  attente bornée, durée maximale par processus). Les places de `places.py` restent prises
+  côté serveur pour la part équitable par compte ; `OTO_FUNCTIONS_MAX_SIMULTANEES` se
+  règle alors au nombre de places de la ferme.
+- **Mesuré** : un processus en cours tient environ 200 Mo (recette de calcul pur).
+
 ## Ce que le journal garde
 
 Chaque appel passe par `tool_calls` comme tout outil — arguments compris
