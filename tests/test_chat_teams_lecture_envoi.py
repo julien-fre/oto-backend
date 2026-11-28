@@ -56,8 +56,8 @@ def clients(monkeypatch):
                         lambda account=None: (etat.comptes.append(("chat", account)),
                                               etat.chat)[1])
     monkeypatch.setattr(coeur, "TeamsClient",
-                        lambda jeton: (etat.comptes.append(("teams", jeton)),
-                                       etat.teams)[1])
+                        lambda jeton, *, session: (
+                            etat.comptes.append(("teams", jeton)), etat.teams)[1])
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
     monkeypatch.setattr("oto_mcp.auth.microsoft.access_token_for",
                         lambda sub, service, renew=False: "AT")

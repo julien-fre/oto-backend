@@ -5,8 +5,9 @@ Ce que ce fichier verrouille :
 - `file_source.resolve({"kind": "outlook", …})` : la pièce désignée comme
   `outlook(op="attachment")` la désigne (`message_id` + `attachment_id` OU `filename`),
   lue par le même lecteur (`_microsoft_graph.attachment`), nom et type venus de Graph ;
-- la taille LISTÉE par Graph est jugée AVANT de lire le contenu : une pièce trop grosse
-  est refusée sans que son contenu soit demandé ;
+- le contenu se lit par `MailClient.get_attachment_content`, borné au plafond de
+  l'appelant ; ses deux refus (trop grosse, pas un fichier) deviennent des refus nommés
+  (la lecture en flux elle-même : `test_outlook_piece_en_flux.py`) ;
 - une pièce introuvable (nom ou id) est refusée en la nommant, avec la liste des pièces ;
 - le compte : celui de l'appel par défaut (jeton demandé sans compte), `account` dans la
   source en désigne un autre ;
@@ -17,12 +18,12 @@ Le cœur Microsoft est MOQUÉ à sa frontière (`oto.tools.microsoft` posé dans
 `sys.modules`) : aucun appel à Graph.
 """
 import asyncio
-import base64
 import sys
 import types
 from unittest.mock import MagicMock
 
 import pytest
+from oto_mcp.file_source import DEFAULT_MAX_BYTES
 from oto_mcp.mcp_errors import McpError
 
 PIECES = [{"id": "a1", "name": "arret.pdf", "contentType": "application/pdf", "size": 4},
@@ -32,18 +33,36 @@ PIECES = [{"id": "a1", "name": "arret.pdf", "contentType": "application/pdf", "s
 @pytest.fixture
 def graph(monkeypatch):
     """Faux `MailClient` et `FilesClient`, et les jetons demandés `(service, compte)`."""
+    import oto.tools.microsoft as vrai
+    from oto.tools.common.errors import UpstreamHTTPError
+
     mail, files, jetons = MagicMock(name="MailClient"), MagicMock(name="FilesClient"), []
     mail.list_attachments.return_value = PIECES
-    mail.get_attachment.side_effect = lambda mid, aid: {
-        **next(p for p in PIECES if p["id"] == aid),
-        "contentBytes": base64.b64encode(b"%PDF").decode()}
+
+    def contenu(mid, aid, *, max_bytes):
+        # Ce que fait la lib : la taille déclarée jugée avant le contenu, un id inconnu
+        # refusé par Graph (404). Les pièces sont celles que liste le message.
+        piece = next((p for p in mail.list_attachments.return_value if p["id"] == aid),
+                     None)
+        if piece is None:
+            raise UpstreamHTTPError(404, {"error": {"message": "not found"}},
+                                    service="microsoft")
+        if piece["size"] > max_bytes:
+            raise vrai.AttachmentTooLarge(piece["name"], max_bytes, size=piece["size"])
+        return vrai.AttachmentContent(name=piece["name"], content_type=piece["contentType"],
+                                      content=b"%PDF")
+
+    mail.get_attachment_content.side_effect = contenu
     files.get_my_drive.return_value = {"id": "d-moi"}
     files.upload.return_value = {"id": "n1", "name": "déposé"}
 
     coeur = types.ModuleType("oto.tools.microsoft")
-    coeur.MailClient = lambda jeton: mail
-    coeur.FilesClient = lambda jeton: files
+    coeur.MailClient = lambda jeton, *, session: mail
+    coeur.FilesClient = lambda jeton, *, session: files
     coeur.WorkbookClient = MagicMock(name="WorkbookClient")
+    coeur.AttachmentContent = vrai.AttachmentContent
+    coeur.AttachmentTooLarge = vrai.AttachmentTooLarge
+    coeur.UnsupportedAttachment = vrai.UnsupportedAttachment
 
     class MicrosoftAuthError(ValueError):
         status_code = 401
@@ -72,7 +91,10 @@ def test_source_outlook_par_id_nom_et_type_de_graph(graph):
     mail, _ = graph
     rf = _resolve({"kind": "outlook", "message_id": "m1", "attachment_id": "a1"})
     assert (rf.data, rf.filename, rf.mime) == (b"%PDF", "arret.pdf", "application/pdf")
-    mail.get_attachment.assert_called_once_with("m1", "a1")
+    # Lue d'emblée par son id, bornée au plafond de l'appelant : aucune liste.
+    mail.get_attachment_content.assert_called_once_with("m1", "a1",
+                                                        max_bytes=DEFAULT_MAX_BYTES)
+    mail.list_attachments.assert_not_called()
     # Le compte de l'appel : le jeton se demande pour `outlook`, sans compte nommé.
     assert mail.jetons == [("outlook", None)]
 
@@ -81,7 +103,8 @@ def test_source_outlook_par_nom(graph):
     mail, _ = graph
     rf = _resolve({"kind": "outlook", "message_id": "m1", "filename": "arret.pdf"})
     assert rf.filename == "arret.pdf"
-    mail.get_attachment.assert_called_once_with("m1", "a1")
+    mail.get_attachment_content.assert_called_once_with("m1", "a1",
+                                                        max_bytes=DEFAULT_MAX_BYTES)
 
 
 def test_source_outlook_compte_designe(graph):
@@ -102,7 +125,6 @@ def test_source_outlook_piece_introuvable_refus_nomme(graph, source, motif):
     with pytest.raises(FileSourceError, match=motif) as e:
         _resolve({"kind": "outlook", "message_id": "m1", **source})
     assert "source outlook" in str(e.value) and "arret.pdf" in str(e.value)
-    mail.get_attachment.assert_not_called()
 
 
 def test_source_outlook_trop_grosse_refusee_avant_lecture(graph):
@@ -112,7 +134,8 @@ def test_source_outlook_trop_grosse_refusee_avant_lecture(graph):
     with pytest.raises(FileSourceError, match="photo.jpg.*900 bytes.*over the 100"):
         _resolve({"kind": "outlook", "message_id": "m1", "attachment_id": "a2"},
                  max_bytes=100)
-    mail.get_attachment.assert_not_called()
+    # Le plafond de l'appelant est celui que reçoit la lib.
+    assert mail.get_attachment_content.call_args.kwargs == {"max_bytes": 100}
 
 
 @pytest.mark.parametrize("source", [
@@ -132,9 +155,11 @@ def test_source_outlook_mal_formee(graph, source):
 def test_source_outlook_message_ou_courriel_joint_refuse(graph):
     from oto_mcp.file_source import FileSourceError
 
+    from oto.tools.microsoft import UnsupportedAttachment
+
     mail, _ = graph
-    mail.get_attachment.side_effect = lambda mid, aid: {
-        "id": aid, "name": "Fwd", "@odata.type": "#microsoft.graph.itemAttachment"}
+    mail.get_attachment_content.side_effect = UnsupportedAttachment(
+        "a1", "#microsoft.graph.itemAttachment")
     with pytest.raises(FileSourceError, match="not a file attachment"):
         _resolve({"kind": "outlook", "message_id": "m1", "attachment_id": "a1"})
 
@@ -189,5 +214,5 @@ def test_depot_sharepoint_piece_trop_grosse_refusee_avant_lecture(graph):
         _sharepoint_file()(op="upload", drive_id="d1",
                            source={"kind": "outlook", "message_id": "m1",
                                    "attachment_id": "a1"})
-    mail.get_attachment.assert_not_called()
+    assert mail.get_attachment_content.call_args.kwargs == {"max_bytes": X._UPLOAD_MAX}
     files.upload.assert_not_called()

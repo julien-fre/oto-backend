@@ -25,7 +25,8 @@ from typing import Literal, Optional
 from fastmcp import FastMCP
 
 from .. import output_projection
-from ._microsoft_graph import bad, need, raise_refusal, raw, refuse_ignored, run, token
+from ._microsoft_graph import (bad, client_for, need, raise_refusal, raw, refuse_ignored,
+                               run)
 from .lecture import ACTE, LECTURE
 
 #: The Microsoft service this tool calls: its scopes, its card (`auth/microsoft`).
@@ -61,7 +62,7 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> DirectoryClient:
         """The Graph client of THIS caller, with their current token."""
-        return DirectoryClient(token(_SERVICE))
+        return client_for(DirectoryClient, _SERVICE)
 
     def _run(fn):
         return run(fn, _LABEL)

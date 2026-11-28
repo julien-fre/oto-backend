@@ -32,8 +32,8 @@ def construits(monkeypatch):
     ce banc vérifie l'adaptateur, pas la lib."""
     inst, calls = MagicMock(), []
 
-    def fabrique(*args, **kw):
-        assert not kw, "le client se construit avec le seul jeton"
+    def fabrique(*args, session, **kw):
+        assert not kw, "le client se construit avec le jeton et la session gardée"
         calls.append(args)
         return inst
 

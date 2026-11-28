@@ -186,6 +186,19 @@ def _coeur():
             f"Detail: {e}") from e
 
 
+def graph_session(service: str):
+    """The guarded `requests.Session` (`egress_transport`) every request of a Microsoft
+    client goes out through — Graph and Power BI, the token travelling with each request,
+    never on the session (oto-core v1.255.0). The destination is the library's own,
+    fixed in its code and public: no exception of `OTO_EGRESS_ALLOW` can serve it, so
+    the holder is `egress.AUCUN` — none is granted, whatever the account's row
+    (`docs/connector-vault.md` §Egress). One new session per client."""
+    from .. import egress, egress_transport
+
+    return egress_transport.session(connector=service, field="base_url",
+                                    titulaire=egress.AUCUN)
+
+
 # --- scopes, per service -------------------------------------------------------
 
 def _scopes():
@@ -725,7 +738,8 @@ def persist_grant(sub: str, org_id: int, grant, tenant: Optional[str] = None,
     linked account is the default (Google rule) — not at the org or team tier, where an
     admin picks it; a reconnection keeps the row's default status and clears its health
     mark. `scope`/`group`: the tier written (`connector` bounds a shared row's scopes)."""
-    me = _coeur().FilesClient(grant.access_token).get_me() or {}
+    me = _coeur().FilesClient(grant.access_token,
+                              session=graph_session(connector)).get_me() or {}
     microsoft_id = me.get("id")
     adresse = (me.get("mail") or me.get("userPrincipalName") or "").strip()
     if not microsoft_id or not adresse:

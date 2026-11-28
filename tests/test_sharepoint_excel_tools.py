@@ -27,8 +27,9 @@ def classeur(monkeypatch):
     f = create_autospec(coeur.FilesClient, instance=True)
     f.get_my_drive.return_value = {"id": "me-drive"}
     jetons = []
-    monkeypatch.setattr(coeur, "WorkbookClient", lambda jeton: jetons.append(jeton) or w)
-    monkeypatch.setattr(coeur, "FilesClient", lambda jeton: f)
+    monkeypatch.setattr(coeur, "WorkbookClient",
+                        lambda jeton, *, session: jetons.append(jeton) or w)
+    monkeypatch.setattr(coeur, "FilesClient", lambda jeton, *, session: f)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
 
     def jeton(sub, service):

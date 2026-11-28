@@ -108,11 +108,18 @@ def _contenu(body: Optional[str], html: Optional[str], op: str) -> str:
 def register(mcp: FastMCP) -> None:
     from oto.tools.microsoft import OneNoteClient
 
+    from ..auth import microsoft as ms_auth
+
     def _client(group_id: Optional[str], site_id: Optional[str]) -> OneNoteClient:
         """The Graph client of THIS caller, with their current token, on ONE root."""
         if group_id and site_id:
             raise bad("Name `group_id` or `site_id`, not both: a notebook has one place.")
-        return OneNoteClient(token(_SERVICE), group_id=group_id, site_id=site_id)
+        c = OneNoteClient(token(_SERVICE), group_id=group_id, site_id=site_id)
+        # oto-core's `OneNoteClient` does not take `session=` (its own `__init__` stops
+        # at the token): the guarded session replaces the one it opened, before any
+        # request — every request goes through `self.session`.
+        c.session = ms_auth.graph_session(_SERVICE)
+        return c
 
     def _run(fn):
         return run(fn, _LABEL)

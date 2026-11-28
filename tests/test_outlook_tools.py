@@ -25,6 +25,7 @@ from unittest.mock import create_autospec
 
 import pytest
 from oto_mcp.mcp_errors import McpError
+from oto_mcp.tools._microsoft_graph import EXCHANGE_ATTACHMENT_MAX
 
 
 @pytest.fixture
@@ -33,10 +34,12 @@ def client(monkeypatch):
     import oto.tools.microsoft as coeur
 
     inst = create_autospec(coeur.MailClient, instance=True)
+    inst.sessions = []
     jetons = []
 
-    def fabrique(jeton):
+    def fabrique(jeton, *, session):
         jetons.append(jeton)
+        inst.sessions.append(session)
         return inst
 
     monkeypatch.setattr(coeur, "MailClient", fabrique)
@@ -64,6 +67,11 @@ def _tool(name):
     return asyncio.run(_mcp().get_tool(name)).fn
 
 
+def _contenu(nom, mime, octets):
+    from oto.tools.microsoft import AttachmentContent
+    return AttachmentContent(name=nom, content_type=mime, content=octets)
+
+
 def _upstream(status):
     from oto.tools.common.errors import UpstreamHTTPError
     return UpstreamHTTPError(status, {"error": {"message": "nope"}}, service="microsoft")
@@ -86,6 +94,10 @@ def test_le_client_porte_le_jeton_de_l_appelant(client):
     client.search_messages.return_value = []
     _tool("outlook")()
     assert client.jetons == ["AT-sub-1"]
+    # Et la session gardée de la plateforme (`auth/microsoft.graph_session`).
+    from oto_mcp.egress_transport import AdaptateurEpingle
+    (session,) = client.sessions
+    assert isinstance(session.get_adapter("https://graph.microsoft.com"), AdaptateurEpingle)
 
 
 def test_un_compte_sans_outlook_recoit_le_refus_du_porteur(client, monkeypatch):
@@ -170,15 +182,15 @@ def depots(monkeypatch):
 
 def test_piece_jointe_par_nom_rendue_pour_l_agent(client, monkeypatch, depots):
     client.list_attachments.return_value = [{"id": "a1", "name": "f.pdf"}]
-    client.get_attachment.return_value = {
-        "name": "f.pdf", "contentType": "application/pdf",
-        "contentBytes": base64.b64encode(b"%PDF").decode()}
+    client.get_attachment_content.return_value = _contenu("f.pdf", "application/pdf",
+                                                          b"%PDF")
     vus = []
     monkeypatch.setattr("oto_mcp.file_content.render_for_agent",
                         lambda data, nom, mime, **kw: vus.append((data, nom, mime, kw))
                         or {"encoding": "text"})
     out = _tool("outlook")(op="attachment", message_id="m1", filename="f.pdf")
-    client.get_attachment.assert_called_once_with("m1", "a1")
+    client.get_attachment_content.assert_called_once_with(
+        "m1", "a1", max_bytes=EXCHANGE_ATTACHMENT_MAX)
     data, nom, mime, kw = vus[0]
     assert (data, nom, mime) == (b"%PDF", "f.pdf", "application/pdf")
     assert kw["prefix"] == "outlook-attachments" and kw["sub"] == "sub-1"
@@ -188,9 +200,8 @@ def test_piece_jointe_par_nom_rendue_pour_l_agent(client, monkeypatch, depots):
 
 def test_piece_jointe_texte_en_ligne_porte_aussi_un_lien(client, depots):
     """Un texte rendu en ligne n'avait aucun lien : il en porte un (`raw_url`)."""
-    client.get_attachment.return_value = {
-        "id": "a1", "name": "notes.txt", "contentType": "text/plain",
-        "contentBytes": base64.b64encode(b"bonjour").decode()}
+    client.get_attachment_content.return_value = _contenu("notes.txt", "text/plain",
+                                                          b"bonjour")
     out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a1")
     assert out["encoding"] == "text" and out["content"] == "bonjour"
     assert out["raw_url"].startswith("https://stockage.example/tmp/outlook-attachments/")
@@ -206,9 +217,7 @@ def test_piece_jointe_image_revient_en_image_avec_lien_et_source(client, depots)
     from mcp.types import ImageContent
 
     jpeg = jpeg_minimal()
-    client.get_attachment.return_value = {
-        "name": "photo.jpg", "contentType": "image/jpeg",
-        "contentBytes": base64.b64encode(jpeg).decode()}
+    client.get_attachment_content.return_value = _contenu("photo.jpg", "image/jpeg", jpeg)
     out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a1")
     assert isinstance(out, ToolResult)
     texte, image = out.content
@@ -228,9 +237,8 @@ def test_piece_jointe_scannee_revient_en_images_avec_un_lien(client, depots):
     from mcp.types import ImageContent
 
     scan = pdf_scanne([("/DCTDecode", jpeg_minimal())] * 2)
-    client.get_attachment.return_value = {
-        "id": "a9", "name": "arret.pdf", "contentType": "application/pdf",
-        "contentBytes": base64.b64encode(scan).decode()}
+    client.get_attachment_content.return_value = _contenu("arret.pdf", "application/pdf",
+                                                          scan)
     out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a9")
     assert isinstance(out, ToolResult)
     texte, *images = out.content
@@ -248,10 +256,8 @@ def test_piece_jointe_scannee_sans_stockage_le_dit(client, monkeypatch):
         raise media_store.MediaError(500, "upload_failed", "boom")
 
     monkeypatch.setattr("oto_mcp.media_store.upload_private", panne)
-    client.get_attachment.return_value = {
-        "id": "a9", "name": "arret.pdf", "contentType": "application/pdf",
-        "contentBytes": base64.b64encode(pdf_scanne([("/DCTDecode",
-                                                       jpeg_minimal())])).decode()}
+    client.get_attachment_content.return_value = _contenu(
+        "arret.pdf", "application/pdf", pdf_scanne([("/DCTDecode", jpeg_minimal())]))
     out = _tool("outlook")(op="attachment", message_id="m1", attachment_id="a9")
     assert "Original file not stored" in out.content[0].text
 
@@ -261,9 +267,12 @@ def test_piece_jointe_ambigue_ou_non_fichier_refusee(client):
                                                                         "name": "x"}]
     with pytest.raises(McpError, match="attachment_id"):
         _tool("outlook")(op="attachment", message_id="m1", filename="x")
-    client.get_attachment.return_value = {"name": "Fwd", "@odata.type":
-                                          "#microsoft.graph.itemAttachment"}
-    with pytest.raises(McpError, match="not a file attachment"):
+    from oto.tools.microsoft import UnsupportedAttachment
+
+    client.get_attachment_content.side_effect = UnsupportedAttachment(
+        "a1", "#microsoft.graph.itemAttachment")
+    with pytest.raises(McpError, match="« a1 » is not a file attachment "
+                                       r"\(#microsoft.graph.itemAttachment\)"):
         _tool("outlook")(op="attachment", message_id="m1", attachment_id="a1")
 
 
