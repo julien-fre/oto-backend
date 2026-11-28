@@ -353,3 +353,96 @@ def test_recipe_est_un_objet_nu_valide_par_recipespec():
     with _pytest.raises(AuthzDenied) as e:
         dr.spec({"version": "deux"})
     assert e.value.code == "invalid_recipe_spec"
+
+
+# ── Le report : un refus AVANT démarrage rend le travail à la file ──────────
+
+def _prendre_en_worker_recette(monkeypatch, t):
+    _delegue_factice(monkeypatch)
+    RT._triggers_sync(_ctx(), RT.TriggerInput(op="run_now", trigger_id=t["id"]))
+    worker = ResolvedCtx(sub="w-recette", org_id=None, platform_worker=True)
+    pris = RJ._jobs(worker, RJ.JobsInput(op="claim", provider="recette",
+                                          org_ids=[ORG], lease_seconds=900))["job"]
+    return worker, pris
+
+
+def _ligne(job_id):
+    from oto_mcp import db
+    with db._connect() as conn:
+        return dict(conn.execute(
+            "SELECT status, attempts, max_attempts, run_id, claimed_by, last_error, "
+            "payload, due_at > NOW() AS plus_tard FROM runner_jobs WHERE id = %s",
+            (job_id,)).fetchone())
+
+
+def test_defer_rend_le_travail_sans_tentative_et_sans_run(live, monkeypatch):
+    """Le bac à sable plein ne tue plus l'unique tentative : `pending`, tentative
+    rendue, run détaché (la reprise ouvre un run neuf), échéance reculée."""
+    from oto_mcp import db
+    _vider()
+    t = _creer()
+    worker, pris = _prendre_en_worker_recette(monkeypatch, t)
+    with db._connect() as conn:
+        conn.execute("INSERT INTO runs (run_id, sub, org_id, label) VALUES "
+                     "('run-avant', %s, %s, 'recette') ON CONFLICT DO NOTHING", (A, ORG))
+    db.bind_job_run(pris["id"], "w-recette", "run-avant")
+    rep = RJ._jobs(worker, RJ.JobsInput(op="defer", job_id=pris["id"],
+                                         retry_after_seconds=1,
+                                         reason="sandbox_busy: account slot held"))
+    assert rep["status"] == "pending" and rep["reports"] == 1
+    ligne = _ligne(pris["id"])
+    assert ligne["status"] == "pending" and ligne["attempts"] == 0
+    assert ligne["run_id"] is None and ligne["claimed_by"] is None
+    assert ligne["plus_tard"] is True          # borné à 5 s minimum
+    assert ligne["last_error"].startswith("deferred: sandbox_busy")
+    # Repris : la tentative est la première, aucun run lié — la garde « jamais
+    # rejouée » du worker (tentative > 1 ou run lié) ne le prend pas pour un rejeu.
+    with db._connect() as conn:
+        conn.execute("UPDATE runner_jobs SET due_at = NOW() WHERE id = %s", (pris["id"],))
+    repris = RJ._jobs(worker, RJ.JobsInput(op="claim", provider="recette",
+                                            org_ids=[ORG], lease_seconds=900))["job"]
+    assert repris["id"] == pris["id"]
+    assert repris["attempts"] == 1 and not repris.get("run_id")
+
+
+def test_defer_au_dela_du_plafond_echoue_recipe_never_started(live, monkeypatch):
+    from oto_mcp import db
+    _vider()
+    t = _creer()
+    worker, pris = _prendre_en_worker_recette(monkeypatch, t)
+    with db._connect() as conn:
+        conn.execute("UPDATE runner_jobs SET payload = jsonb_set(payload, '{_reports}', "
+                     "to_jsonb(%s::int)) WHERE id = %s", (db.REPORTS_RECETTE_MAX, pris["id"]))
+    rep = RJ._jobs(worker, RJ.JobsInput(op="defer", job_id=pris["id"],
+                                         retry_after_seconds=30, reason="sandbox_busy"))
+    assert rep["status"] == "failed"
+    ligne = _ligne(pris["id"])
+    assert ligne["status"] == "failed"
+    assert ligne["last_error"].startswith("recipe_never_started: sandbox_busy")
+
+
+def test_defer_refuse_hors_prise_et_hors_recette(live, monkeypatch):
+    from oto_mcp import db
+    _vider()
+    t = _creer()
+    worker, pris = _prendre_en_worker_recette(monkeypatch, t)
+    intrus = ResolvedCtx(sub="w-autre", org_id=None, platform_worker=True)
+    with pytest.raises(AuthzDenied) as e:
+        RJ._jobs(intrus, RJ.JobsInput(op="defer", job_id=pris["id"],
+                                       retry_after_seconds=10, reason="x"))
+    assert e.value.code == "job_not_found"
+    with pytest.raises(AuthzDenied) as e:
+        RJ._jobs(worker, RJ.JobsInput(op="defer", job_id=pris["id"]))
+    assert e.value.code == "missing_fields"
+    # Un travail d'agent à modèle ne se reporte pas : il a ses tentatives.
+    job = db.enqueue_job(ORG, "start", payload={"input": "go", "tools": [],
+                                                "model_family": "anthropic"}, sub=A)
+    jid = job["id"] if isinstance(job, dict) else job
+    with db._connect() as conn:
+        conn.execute("UPDATE runner_jobs SET status = 'claimed', claimed_by = 'w-recette', "
+                     "lease_until = NOW() + INTERVAL '5 minutes' WHERE id = %s", (jid,))
+    with pytest.raises(AuthzDenied) as e:
+        RJ._jobs(worker, RJ.JobsInput(op="defer", job_id=jid,
+                                       retry_after_seconds=10, reason="x"))
+    assert e.value.code == "defer_recipe_only"
+    _vider()

@@ -3893,6 +3893,14 @@ Module : `capabilities/_declencheur_recette.py`.
   délégué en plus du fil (`api.base.ROUTES_DE_LA_DELEGATION`), et elle n'y sert QUE ce
   corps-là, égal à la charge du travail (`recipes._exiger_la_recette_du_travail`,
   `delegation_recipe_mismatch` sinon). Un travail recette n'est jamais rejoué.
+- **Report au lieu d'échec (28/11/2026).** Un travail recette n'a qu'une tentative ; un
+  refus AVANT démarrage (429 `sandbox_busy` du bac à sable, plafond de la route lourde) le
+  tuait alors que rien n'avait tourné. Le worker appelle `runner.jobs op=defer`
+  `{job_id, retry_after_seconds, reason}` (worker qui tient le travail, famille `recette`
+  seulement : `defer_recipe_only`) : `pending`, tentative rendue, run détaché (la reprise
+  ouvre un run neuf), échéance reculée de `Retry-After` borné 5–600 s, compte `_reports`
+  dans la charge. Au-delà de `REPORTS_RECETTE_MAX` (30) : `failed`,
+  `recipe_never_started: <raison>`.
 - **Base partagée avec l'ancien code.** La ligne garde `procedure = ''`, `tools = []`,
   `model = NULL` (servie `procedure: null`) : l'ancien tick et l'ancien webhook la lisent
   sans modèle et sautent l'occurrence (`refused_no_model`) — jamais un run de modèle.

@@ -53,7 +53,11 @@ class JobsInput(BaseModel):
                 "reserve", "meter",
                 # Ce que la SONDE du worker a vu du forfait, AVANT le run (21/10/2026) :
                 # le backend le porte et tranche — voir `_trancher_le_forfait`.
-                "forfait"]
+                "forfait",
+                # Un travail de RECETTE refusé AVANT d'avoir démarré (bac à sable plein,
+                # route lourde au plafond) retourne à la file sans tentative comptée —
+                # voir `_reporter_la_recette` (28/11/2026).
+                "defer"]
     # enqueue —
     kind: Optional[Literal["start", "continue"]] = None
     payload: Optional[dict[str, Any]] = None
@@ -120,6 +124,10 @@ class JobsInput(BaseModel):
     # complete — résultat déclaré par le worker (usage_tokens, stopped, steps…),
     # lu par un ordonnanceur de flotte (garde budget, R5). Jamais du contenu de fil.
     result: Optional[dict[str, Any]] = None
+    # defer — dans combien de secondes le refus dit de réessayer (`Retry-After`), et
+    # pourquoi : borné 5–600 s côté serveur.
+    retry_after_seconds: Optional[int] = None
+    reason: Optional[str] = None
     # list — surveillance dashboard : la file de l'org, du plus récent au plus ancien.
     status: Optional[Literal["pending", "claimed", "done", "failed"]] = None
     source: Optional[Literal["batch", "scheduled", "manual"]] = Field(
@@ -1086,6 +1094,33 @@ def _reprise_future(ligne: dict) -> Optional[datetime]:
     return reprise if reprise is not None and reprise > datetime.now(timezone.utc) else None
 
 
+def _reporter_la_recette(ctx, inp: JobsInput) -> dict:
+    """`op=defer` : un travail de RECETTE que le serveur a refusé AVANT de le démarrer
+    (429 `sandbox_busy`, la route lourde au plafond) retourne à la file, tentative non
+    comptée, au lieu de mourir sur son unique tentative (`db.reporter_recette`).
+
+    ⚠️ Réservé au worker qui TIENT le travail (comme `complete`/`extend` : un autre
+    obtient le même 404 qu'un travail inconnu), et à la famille `recette` : un agent à
+    modèle a ses propres tentatives et ses propres reculs (`complete_job`)."""
+    if inp.retry_after_seconds is None or not (inp.reason or "").strip():
+        raise AuthzDenied(400, "missing_fields",
+                          "defer exige `retry_after_seconds` et `reason`")
+    conclu = db.porteur_et_famille(inp.job_id) or {}
+    if not conclu or not db.tenu_par(inp.job_id, ctx.sub):
+        raise AuthzDenied(404, "job_not_found", "job inconnu")
+    if conclu.get("model_family") != runner_models.FAMILLE_RECETTE:
+        raise AuthzDenied(400, "defer_recipe_only",
+                          "`op=defer` ne vaut que pour un travail de recette (famille "
+                          "`recette`) : un agent à modèle conclut par `complete`, qui "
+                          "porte ses tentatives et ses reculs.")
+    res = db.reporter_recette(inp.job_id, ctx.sub, inp.reason.strip()[:300],
+                              inp.retry_after_seconds)
+    if res is None:
+        raise AuthzDenied(404, "job_not_found", "job inconnu")
+    return {"ok": True, "status": res["status"], "reports": res["reports"],
+            "reports_max": db.REPORTS_RECETTE_MAX}
+
+
 def _trancher_le_forfait(ctx, inp: JobsInput) -> dict:
     """`op=forfait` : ce que la SONDE du worker a vu du forfait, AVANT le run.
 
@@ -1569,7 +1604,7 @@ def charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
 #: Ce qu'un worker sait faire — et rien d'autre. Enfiler, lister, lire un
 #: travail sont des gestes d'organisation : ils exigent une org, et un worker
 #: n'en a pas.
-_VERBES_DU_WORKER = frozenset({"claim", "bind_run", "extend", "complete", "reserve",
+_VERBES_DU_WORKER = frozenset({"claim", "bind_run", "extend", "complete", "reserve", "defer",
                                "meter"})
 
 
@@ -1941,6 +1976,9 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
 
     if inp.op == "forfait":
         return _trancher_le_forfait(ctx, inp)
+
+    if inp.op == "defer":
+        return _reporter_la_recette(ctx, inp)
 
     if inp.op == "complete":
         if inp.ok is None:

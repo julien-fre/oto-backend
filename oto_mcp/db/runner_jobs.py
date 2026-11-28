@@ -1800,6 +1800,55 @@ def rendre_a_la_file(job_id: int, worker_sub: str, raison: str,
         return bool(cur.rowcount)
 
 
+#: Combien de fois un travail de RECETTE peut être rendu à la file avant d'avoir démarré
+#: (`reporter_recette`) : au-delà, il meurt `recipe_never_started` — une recette que le
+#: bac à sable refuse depuis des heures ne doit pas tourner en rond sans fin.
+REPORTS_RECETTE_MAX = 30
+#: Les bornes du délai d'un report : jamais une relance en rafale, jamais plus de 10 min.
+REPORT_DELAI_MIN_S = 5
+REPORT_DELAI_MAX_S = 600
+
+
+def reporter_recette(job_id: int, worker_sub: str, raison: str,
+                     delai_s: int) -> Optional[dict]:
+    """Rend à la file un travail de RECETTE refusé AVANT d'avoir démarré (le bac à
+    sable plein, la route lourde au plafond) — sans compter la tentative.
+
+    Un travail de recette n'a qu'UNE tentative (`enqueue_job`) : un refus de place le
+    tuait alors que rien n'avait tourné. Ici, comme `rendre_a_la_file` : `pending`,
+    tentative rendue, bail effacé, échéance reculée de `delai_s` (borné 5–600 s) ; et en
+    plus le run lié est DÉTACHÉ (`run_id` NULL) — la reprise ouvre un run neuf, et la garde
+    « jamais rejouée » du worker (un run déjà lié) ne la prend pas pour un rejeu. Le
+    compte des reports vit dans la charge (`_reports`) ; au-delà de
+    `REPORTS_RECETTE_MAX`, le travail échoue `recipe_never_started` avec la raison.
+
+    Rend `{status, reports}`, ou None si ce worker ne tient pas (ou plus) ce travail."""
+    delai = max(REPORT_DELAI_MIN_S, min(int(delai_s), REPORT_DELAI_MAX_S))
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = CASE WHEN COALESCE((payload->>'_reports')::int, 0) + 1 > %s
+                                 THEN 'failed' ELSE 'pending' END,
+                   finished_at = CASE WHEN COALESCE((payload->>'_reports')::int, 0) + 1 > %s
+                                      THEN NOW() ELSE finished_at END,
+                   claimed_by = NULL, lease_until = NULL, run_id = NULL,
+                   attempts = GREATEST(attempts - 1, 0),
+                   due_at = NOW() + make_interval(secs => %s),
+                   payload = jsonb_set(payload, '{_reports}',
+                       to_jsonb(COALESCE((payload->>'_reports')::int, 0) + 1)),
+                   last_error = CASE WHEN COALESCE((payload->>'_reports')::int, 0) + 1 > %s
+                                     THEN 'recipe_never_started: ' || %s
+                                     ELSE 'deferred: ' || %s END
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+         RETURNING status, (payload->>'_reports')::int AS reports
+            """,
+            (REPORTS_RECETTE_MAX, REPORTS_RECETTE_MAX, delai, REPORTS_RECETTE_MAX,
+             raison, raison, job_id, worker_sub),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def tenu_par(job_id: int, worker_sub: str) -> bool:
     """Le travail est-il pris, bail courant, par ce worker ? La garde d'un rapport qui
     agit sur la connexion d'un tiers (`op=forfait`) : on ne parle que de ce qu'on tient."""
