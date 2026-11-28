@@ -67,13 +67,6 @@ Ils sont ici, chacun nommé, chacun jouable seul :
                                             défaut ; pour google, APRÈS le déploiement
                                             du code qui n'y range plus le jeton — PAS
                                             un travail : voir plus bas
-    oto-mcp maintenance qonto-deux-champs [--appliquer]
-                                            range au format deux champs les clés
-                                            `qonto` qui portent encore la paire
-                                            `login:clé` dans le chiffré : la clé seule
-                                            au coffre, le login dans `meta.login`
-                                            (#1906) — À BLANC par défaut, des comptes
-                                            seulement — PAS un travail : voir plus bas
     oto-mcp maintenance secrets-d-application [--appliquer] [--sans-effacer]
                                             scelle au coffre les secrets d'application
                                             OAuth de l'instance encore en clair dans
@@ -1049,40 +1042,6 @@ def jetons_en_meta(argv: list[str]) -> int:
     return JETONS_RESTE if jm.reste(rapport) else JETONS_FAIT
 
 
-# Codes de sortie de `qonto-deux-champs`.
-QONTO_FAIT = 0
-QONTO_ERREUR = 2       # base injoignable, ou au moins une ligne en erreur (elle est
-                       # intacte ; les autres sont traitées) : relancer à blanc
-
-
-def qonto_deux_champs(argv: list[str]) -> int:
-    """`oto-mcp maintenance qonto-deux-champs` : range au format deux champs les clés
-    `qonto` d'avant le partage (`connectors/qonto_deux_champs.py`). À blanc par défaut."""
-    from .connectors import qonto_deux_champs as q
-    p = argparse.ArgumentParser(
-        prog="oto-mcp maintenance qonto-deux-champs",
-        description=(
-            "Range au format deux champs les clés qonto dont le chiffré porte encore la "
-            "paire login:clé : la clé seule au coffre, le login dans meta.login. Une "
-            "ligne dont meta.login diffère du préfixe n'est jamais convertie. "
-            "N'imprime que des comptes, jamais une valeur. À blanc par défaut."))
-    p.add_argument("--appliquer", action="store_true",
-                   help="écrit ; sans lui, compte ce qui serait converti et ne touche à rien")
-    args = p.parse_args(argv)
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    try:
-        rapport = q.convertir(appliquer=args.appliquer)
-    except Exception as e:
-        # Le type seul : un message d'erreur de base peut citer une ligne.
-        logger.error("qonto-deux-champs : ERREUR (%s) — rien n'est à tenir pour "
-                     "converti ; relancer à blanc", type(e).__name__)
-        return QONTO_ERREUR
-    print("\n".join(q.lignes_du_rapport(rapport)))
-    return QONTO_ERREUR if rapport.erreurs else QONTO_FAIT
-
-
 # Codes de sortie de `secrets-d-application` — ceux d'`orphelins`. Un geste d'exploitant
 # joué depuis le commit (la clé maître est requise : une révision ne peut pas chiffrer).
 SECRETS_FAIT = 0
@@ -1371,8 +1330,6 @@ def main(argv: list[str] | None = None) -> int:
         return orphelins(argv[1:])
     if argv and argv[0] == "jetons-en-meta":
         return jetons_en_meta(argv[1:])
-    if argv and argv[0] == "qonto-deux-champs":
-        return qonto_deux_champs(argv[1:])
     if argv and argv[0] == "secrets-d-application":
         return secrets_d_application(argv[1:])
     if argv and argv[0] == "jetons-de-lien":

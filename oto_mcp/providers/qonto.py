@@ -18,10 +18,8 @@ from ._model import CredentialField, _c
 # joined by a colon in `Authorization`, sent as is (no Basic, no base64). People
 # pasted the pair wrong (an email for the login, a missing colon), so the form asks
 # for each half: `login` is not secret and lives in `meta` (`in_meta`), `key` holds
-# the secret key ALONE in the vault. A single-field vault blob is the raw value, so
-# keys saved before the split (`login:secret-key` in `key`) still read as is: the
-# tool joins the two halves (`tools/qonto.py:_authorization`), and takes a `key`
-# that already carries a colon as the whole pair.
+# the secret key ALONE in the vault. The tool joins the two halves
+# (`tools/qonto.py:_authorization`) and refuses a `key` that carries a colon.
 #
 # Strict BYOK (`byo_user` + `byo_org`, no platform mode): the customer's own bank
 # account. Read-only: an API key reaches no payment route (Qonto keeps those
@@ -33,11 +31,9 @@ CONNECTOR = _c(
          "supplier and client invoices",
     href="https://qonto.com",
     credential_fields=(
-        # Not required by the form: a key saved before the split, or set by an older
-        # client through `api_key` alone, carries the login inside `key`. The probe
-        # refuses a secret key without a login (`tools/qonto.py:_authorization`).
+        # Required: the login is read nowhere else (`tools/qonto.py:_authorization`).
         CredentialField(
-            "login", "Login", secret=False, required=False, in_meta=True,
+            "login", "Login", secret=False, in_meta=True,
             help="Qonto → Settings → Integrations and partnerships → API key: the "
                  "Login (like acme-1234), not your email. Only an owner or admin sees "
                  "this page."),

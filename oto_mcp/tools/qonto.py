@@ -4,7 +4,8 @@ Wraps `oto.tools.qonto.QontoClient` (Business API v2, `Authorization:
 login:secret-key`), credential resolved per call via `access.resolve_credential("qonto")`
 (member → team → org, never a platform key: it opens ONE company's bank account).
 The form asks for the login and the secret key in two boxes; `_authorization` joins
-them (and still reads a key saved before the split, `login:secret-key` in one box).
+them. A secret key that still carries the login (`login:secret-key` in one box) is
+refused, never split.
 
 The connector is read-only, so it serves ONE tool, `qonto` (LECTURE), the read verb
 in `op` — no `qonto_act` (`tests/test_convention_act.py`). An API key reaches no
@@ -132,15 +133,14 @@ def _month(value: Optional[str]) -> Optional[str]:
 def _authorization(key: Optional[str], login: Optional[str] = None) -> str:
     """The `Authorization` value Qonto wants, `login:secret-key`, from the two boxes.
 
-    The secret key is what follows the last colon of `key` (a key saved before the
-    split, or the pair pasted into the secret box out of habit, carries the login in
-    front of it); the login is the `login` field, else that prefix. Raises
-    `ValueError` (actionable) when a half is missing."""
+    The login comes ONLY from `login`; the secret key holds the secret alone. Raises
+    `ValueError` (actionable) when a half is missing or when `key` holds a colon (the
+    pair pasted in the secret box)."""
     key, login = (key or "").strip(), (login or "").strip()
-    prefix, _, secret = key.rpartition(":")
-    login = login or prefix.strip()
-    secret = secret.strip()
-    if not secret:
+    if ":" in key:
+        raise ValueError("The Secret key box holds the Login too: put the Login (like "
+                         "acme-1234) in the Login box and only the Secret key here.")
+    if not key:
         raise ValueError("The Qonto Secret key is empty: copy it from Settings → "
                          "Integrations and partnerships → API key (click Generate if "
                          "it is empty).")
@@ -148,7 +148,7 @@ def _authorization(key: Optional[str], login: Optional[str] = None) -> str:
         raise ValueError("The Qonto Login is missing: it is shown above the Secret key "
                          "in Settings → Integrations and partnerships → API key (like "
                          "acme-1234, not your email).")
-    return f"{login}:{secret}"
+    return f"{login}:{key}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
@@ -177,8 +177,7 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> QontoClient:
         rc = access.resolve_credential(_NAME, want="auto")
-        # The login lives in the row's `meta`; it wins over a login carried inside a
-        # key saved before the split, as in `_verify` (`_authorization`).
+        # The login lives in the row's `meta`, the secret key alone in the vault.
         return QontoClient(api_key=_authorization(rc.key, rc.config.get("login")))
 
     def _run(fn):
