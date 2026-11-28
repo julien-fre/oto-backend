@@ -115,7 +115,9 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
     l'instance n'en a pas, `executor.BacASableOccupe` si `sub` ou le processus n'a plus
     de place (`places.py`) — la place est tenue jusqu'à la mort du processus, annulation
     comprise, et au plus `duree_max_s(budget)` : ce que le refus d'un autre annonce."""
-    with places.place(sub, duree_max_s(budget)):
+    # L'attente d'une place est un futur asyncio (`places.place_async`) : la boucle n'est
+    # jamais bloquée pendant qu'une recette attend son tour.
+    async with places.place_async(sub, duree_max_s(budget)):
         return await _executer_avec_pont(sources=sources, entrypoint=entrypoint,
                                          appeler=appeler, budget=budget,
                                          requirements=requirements, entree=entree)
