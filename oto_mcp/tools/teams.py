@@ -38,8 +38,8 @@ from fastmcp.tools.tool import ToolResult
 from mcp.types import TextContent
 
 from .. import access
-from ._microsoft_graph import (bad, markdown_html, need, raise_refusal, raw, refuse_ignored,
-                               run, token)
+from ._microsoft_graph import (bad, client_for, markdown_html, need, raise_refusal, raw,
+                               refuse_ignored, run)
 from .lecture import ACTE, LECTURE
 
 #: The Microsoft service these tools call: its scopes, its card (`auth/microsoft`).
@@ -120,7 +120,7 @@ def register(mcp: FastMCP) -> None:
     def _client(renew: bool = False) -> TeamsClient:
         """The Graph client of THIS caller — `renew=True` with a token renewed
         whatever the cache holds."""
-        return TeamsClient(token(_SERVICE, renew=renew))
+        return client_for(TeamsClient, _SERVICE, renew=renew)
 
     def _run(fn):
         return run(fn, _LABEL)

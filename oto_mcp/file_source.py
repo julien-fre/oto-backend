@@ -90,8 +90,8 @@ def _from_outlook(src: dict, max_bytes: int) -> ResolvedFile:
     """Une pièce jointe d'un message Outlook (`outlook`, service du porteur `microsoft`),
     désignée comme `outlook(op="attachment")` la désigne : `message_id` et
     `attachment_id` OU `filename`. Le lecteur est celui de l'outil
-    (`_microsoft_graph.attachment`, mêmes refus) ; la taille listée par Graph est
-    jugée AVANT de lire le contenu. Le compte est celui de l'appel (`_account=`, épingle,
+    (`_microsoft_graph.attachment`, mêmes refus) ; la taille déclarée par Graph est
+    jugée AVANT de lire le contenu, lu ensuite en flux et coupé au plafond. Le compte est celui de l'appel (`_account=`, épingle,
     défaut) ; `account` en désigne un autre — la boîte d'un compte, la bibliothèque
     SharePoint d'un autre. Nom et type : ceux que Graph sert."""
     mid, aid, nom = src.get("message_id"), src.get("attachment_id"), src.get("filename")
@@ -108,7 +108,7 @@ def _from_outlook(src: dict, max_bytes: int) -> ResolvedFile:
     from .mcp_errors import McpError
     from .tools import _microsoft_graph as graph
     try:
-        client = MailClient(graph.token("outlook", account=compte or None))
+        client = graph.client_for(MailClient, "outlook", account=compte or None)
         piece, data = graph.attachment(client, str(mid),
                                        attachment_id=str(aid) if aid else None,
                                        filename=str(nom) if nom else None,

@@ -39,7 +39,7 @@ from fastmcp import FastMCP
 from .. import access, file_source
 from ._microsoft_graph import bad as _bad, need as _need, raw as _brut
 from ._microsoft_graph import refuse_ignored as _refuse_ignored
-from ._microsoft_graph import raise_refusal, run, token
+from ._microsoft_graph import client_for, raise_refusal, run
 from .lecture import ACTE, LECTURE
 
 # Read as PDF by default: Graph converts them, and it is the PDF's text that the agent
@@ -143,7 +143,7 @@ def register(mcp: FastMCP) -> None:
     def _client() -> FilesClient:
         """The Graph client of THIS caller, with their current token (renewed
         by `auth/microsoft.py` if it expires)."""
-        return FilesClient(token(_SERVICE))
+        return client_for(FilesClient, _SERVICE)
 
     def _run(fn):
         return run(fn, _LABEL, _CONFLIT)
@@ -407,7 +407,7 @@ def register(mcp: FastMCP) -> None:
         if not item_id and not path:
             raise _bad("the workbook is `item_id` or `path` (from sharepoint_file "
                        "op='list'/'search').")
-        return WorkbookClient(token(_SERVICE)), _drive_id(_client(), drive_id, user)
+        return client_for(WorkbookClient, _SERVICE), _drive_id(_client(), drive_id, user)
 
     @mcp.tool(annotations=LECTURE)
     def sharepoint_excel(

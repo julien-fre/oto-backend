@@ -23,7 +23,8 @@ def client(monkeypatch):
 
     inst = create_autospec(coeur.PowerBIClient, instance=True)
     jetons = []
-    monkeypatch.setattr(coeur, "PowerBIClient", lambda jeton: jetons.append(jeton) or inst)
+    monkeypatch.setattr(coeur, "PowerBIClient",
+                        lambda jeton, *, session: jetons.append(jeton) or inst)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
 
     def jeton(sub, service):

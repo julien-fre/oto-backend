@@ -56,7 +56,7 @@ def client(monkeypatch):
     inst = create_autospec(coeur.DirectoryClient, instance=True)
     construits = []
     monkeypatch.setattr(coeur, "DirectoryClient",
-                        lambda jeton: construits.append(jeton) or inst)
+                        lambda jeton, *, session: construits.append(jeton) or inst)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
 
     def jeton(sub, service):

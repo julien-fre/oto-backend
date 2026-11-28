@@ -22,7 +22,7 @@ from typing import Literal, Optional
 from fastmcp import FastMCP
 
 from .. import output_projection
-from ._microsoft_graph import bad, need, raw, refuse_ignored, run, token
+from ._microsoft_graph import bad, client_for, need, raw, refuse_ignored, run
 from .lecture import LECTURE
 
 #: The Microsoft service these tools call: its scopes, its card (`auth/microsoft`).
@@ -59,7 +59,7 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> PowerBIClient:
         """The Power BI client of THIS caller, with their current Power BI token."""
-        return PowerBIClient(token(_SERVICE))
+        return client_for(PowerBIClient, _SERVICE)
 
     def _run(fn):
         return run(fn, _LABEL)

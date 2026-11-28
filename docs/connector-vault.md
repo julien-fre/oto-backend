@@ -347,8 +347,15 @@ v1.250.0) la reçoivent gardée, et TOUTES leurs requêtes y passent : `api`
 `oauth2` sur `token_url` par une session à part, `token_session=` ; le pont MCP
 `connectors/api_mcp` aussi), `wordpress` (sonde, index public, appels — `site_url`),
 `lighton` (`base_url`, SaaS compris), `salesforce` (l'échange du refresh token sur
-`login_url` et les appels sur l'`instance_url` rendue, chacun nommé dans le refus) et
-`threecx` (jeton ET appels — `base_url`). Politique : celle de l'ORIGINE du credential,
+`login_url` et les appels sur l'`instance_url` rendue, chacun nommé dans le refus),
+`threecx` (jeton ET appels — `base_url`) et les clients Microsoft (Graph et Power BI,
+oto-core v1.255.0 : le jeton part avec chaque requête, plus jamais posé sur la session) —
+tous construits par `tools/_microsoft_graph.client_for`, la lecture de `/me` à la
+connexion comprise, sur `auth/microsoft.graph_session` ; `OneNoteClient`, dont le
+constructeur ne prend pas `session=`, la reçoit par affectation avant toute requête.
+Leur destination est fixée par la lib et publique : titulaire `egress.AUCUN`, aucune
+exception ne la sert. L'échange et le renouvellement du jeton Entra
+(`oto.tools.microsoft.auth`, `requests.post` au niveau module) restent hors session. Politique : celle de l'ORIGINE du credential,
 la même pour leur `check_url` précoce et leur session (ci-dessous). Les sessions
 gardées reprennent le magasin de certificats de l'environnement (`REQUESTS_CA_BUNDLE`,
 puis `CURL_CA_BUNDLE`) pour la seule vérification TLS — une autorité privée chez un

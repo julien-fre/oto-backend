@@ -22,7 +22,8 @@ from typing import Literal, Optional
 
 from fastmcp import FastMCP
 
-from ._microsoft_graph import bad, markdown_html, need, raw, refuse_ignored, run, token
+from ._microsoft_graph import (bad, client_for, markdown_html, need, raw, refuse_ignored,
+                               run)
 
 #: The Microsoft service these tools call: its scopes, its card (`auth/microsoft`).
 _SERVICE = "outlook_calendar"
@@ -78,7 +79,7 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> CalendarClient:
         """The Graph client of THIS caller, with their current token."""
-        return CalendarClient(token(_SERVICE))
+        return client_for(CalendarClient, _SERVICE)
 
     def _run(fn):
         return run(fn, _LABEL)

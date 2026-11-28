@@ -42,8 +42,8 @@ from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
 
 from .. import access, file_content, file_source, output_projection
-from ._microsoft_graph import (attachment, bad, markdown_html, need, raw, refuse_ignored,
-                               run, token)
+from ._microsoft_graph import (EXCHANGE_ATTACHMENT_MAX, attachment, bad, client_for,
+                               markdown_html, need, raw, refuse_ignored, run)
 from .lecture import ACTE, SIMULATION, documente
 
 logger = logging.getLogger(__name__)
@@ -316,7 +316,7 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> MailClient:
         """The Graph client of THIS caller, with their current token."""
-        return MailClient(token(_SERVICE))
+        return client_for(MailClient, _SERVICE)
 
     def _run(fn):
         return run(fn, _LABEL)
@@ -509,7 +509,8 @@ def register(mcp: FastMCP) -> None:
                 raise bad("op='attachment' requires `attachment_id` OR `filename` "
                           "(only one) — both come from op='get'.")
             piece, data = attachment(c, mid, attachment_id=attachment_id,
-                                     filename=filename, label=_LABEL)
+                                     filename=filename, max_bytes=EXCHANGE_ATTACHMENT_MAX,
+                                     label=_LABEL)
             aid = piece["id"]
             sub = access.current_user_sub_or_raise()
             try:

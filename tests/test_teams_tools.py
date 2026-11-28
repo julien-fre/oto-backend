@@ -39,7 +39,8 @@ def env(monkeypatch):
     inst = create_autospec(coeur.TeamsClient, instance=True)
     etat = types.SimpleNamespace(client=inst, jetons=[], meta={"scopes": SANS_ADMIN},
                                  apres_renouvellement=None, liens=[])
-    monkeypatch.setattr(coeur, "TeamsClient", lambda jeton: etat.jetons.append(jeton) or inst)
+    monkeypatch.setattr(coeur, "TeamsClient",
+                        lambda jeton, *, session: etat.jetons.append(jeton) or inst)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
 
     def jeton(sub, service, renew=False):
