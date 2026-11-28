@@ -378,6 +378,13 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
         payload = {k: v for k, v in payload.items()
                   if k not in (_CHAMP_PLATEFORME, "_perime_apres_s", CHAMP_CHAINE)}
     charge = dict(payload) if payload is not None else None
+    # Un travail de RECETTE ne se rejoue jamais (ses écritures ont pu être faites) :
+    # UNE tentative. Sans ça, un échec repartait en file avec backoff, le worker le
+    # refusait (`recipe_job_not_replayed`) et ce refus écrasait la vraie cause dans
+    # `last_error` (vu en e2e local, 28/11/2026). Ici, une seule fois pour l'horloge,
+    # le webhook et `run_now`.
+    if charge and charge.get("recipe"):
+        max_attempts = 1
     if perime_apres_s:
         charge = charge or {}
         charge["_perime_apres_s"] = int(perime_apres_s)

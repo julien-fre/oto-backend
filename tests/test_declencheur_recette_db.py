@@ -213,6 +213,20 @@ def test_run_now_enfile_la_meme_charge_au_nom_de_l_appelant(live):
     assert e.value.code == "run_already_queued"
 
 
+def test_un_travail_de_recette_n_a_qu_une_tentative(live):
+    """Jamais rejoué : un échec ne repart pas en file (sinon le refus du worker
+    `recipe_job_not_replayed` écrasait la vraie cause dans `last_error`)."""
+    from oto_mcp import db
+    _vider()
+    t = _creer()
+    RT._triggers_sync(_ctx(), RT.TriggerInput(op="run_now", trigger_id=t["id"]))
+    (job,) = _travaux(t["id"])
+    with db._connect() as conn:
+        n = conn.execute("SELECT max_attempts FROM runner_jobs WHERE id = %s",
+                         (job["id"],)).fetchone()["max_attempts"]
+    assert n == 1
+
+
 def test_le_webhook_enfile_la_charge_recette_marquee_hook(live):
     from oto_mcp import db, runner_hook
     _vider()
