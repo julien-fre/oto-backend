@@ -12,7 +12,11 @@ authoring, and the browser session does not open these tools.
 (`sendNow` / `sent` status), deleting a contact / list / campaign / template,
 purging hard bounces. We design, we measure, we send ourselves a test — launching
 a mass send and deletions stay in the Brevo UI. `brevo_send_email` stays
-exposed: it is single transactional sending, explicit recipients.
+exposed: it is single transactional sending, explicit recipients. oto-core
+(v1.254.0) now has `delete_contact` and `delete_list`: they are NOT served here.
+
+`get_account` no longer returns the SMTP relay login nor the marketing
+automation key: the client strips both (`oto.tools.brevo.ACCOUNT_STRIPPED`).
 
 **Consolidated surface (ADR 0047 §Amendment, applied to the brevo connector)**: one
 tool per business OBJECT, the verb in the `op` parameter — `brevo_contact`, `brevo_list`
@@ -235,7 +239,10 @@ def register(mcp: FastMCP) -> None:
 
         `op`:
         - **"list"** (default): the account's contact lists, or those of a folder if
-          `folder_id`.
+          `folder_id`: `{lists: [{id, name, folderId}], count}`, `count` the total —
+          the next page is `offset + limit`, while below `count`. Brevo no longer
+          computes the subscriber totals here (they come back 0): op="get" gives
+          them for one list.
         - **"get"**: a list's details — name, folder, number of contacts and of
           blacklisted ones.
         - **"contacts"**: a list's contacts (paginated, **max 500 per call**).
