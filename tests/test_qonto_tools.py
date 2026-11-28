@@ -302,7 +302,7 @@ def test_probe_refuses_a_bad_key():
         cls.return_value.probe.side_effect = _upstream(401, "nope")
         # The saving screen shows this message: plain words, not Qonto's raw body.
         with pytest.raises(verify.NonAutorise, match="not an email") as e:
-            qonto._verify({"key": KEY})
+            qonto._verify({"login": "acme-1234", "key": "sk_test"})
         assert "trace_id" not in str(e.value)
 
 
