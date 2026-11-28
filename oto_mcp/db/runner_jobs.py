@@ -800,8 +800,10 @@ def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str],
         # La présence PAR FAMILLE — ce que `runner_arme` rend en `families`.
         # Seules les familles du catalogue se notent : `provider` est une
         # chaîne libre, et un dépôt que rien ne route n'a rien à promettre.
-        from ..runner_models import FAMILLES
-        if depot in FAMILLES:
+        # La famille `recette` (agents-recettes, sans modèle) se note aussi : c'est elle
+        # que la pose d'un agent-recette exige servie (`_declencheur_recette`).
+        from ..runner_models import FAMILLE_RECETTE, FAMILLES
+        if depot in FAMILLES or depot == FAMILLE_RECETTE:
             base = f"{depot}{_MARQUE_FERME}" if ferme else depot
             depots = ([f"{base}{_PORTEE_ORG}{int(o)}" for o in org_ids]
                       if org_ids else [base])

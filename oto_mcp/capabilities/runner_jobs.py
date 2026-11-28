@@ -678,6 +678,12 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
                            depot, appelant, job["org_id"], job.get("id"))
         return job
     famille = _abonnement.famille_du_travail(job)
+    if famille == runner_models.FAMILLE_RECETTE:
+        # Un travail d'AGENT-RECETTE (`_declencheur_recette`) : aucun modèle n'est
+        # appelé, donc aucune clé n'est remise ni exigée, aucun abonnement jugé. Il
+        # n'atteint qu'un worker qui réserve avec `provider="recette"` (clause de
+        # famille de `claim_next_job`) ; le jeton délégué est déjà posé (`_delegue`).
+        return job
     if not famille:
         # ⚠️ UN TRAVAIL SANS MODÈLE NE PART PLUS (24/09/2026). Servi à un worker de
         # plateforme, il tournait sur le modèle de SON environnement — notre clé —
@@ -1796,6 +1802,13 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 "la clé de l'organisation doit nommer QUEL dépôt il consomme — "
                 "sans lui, il n'y a aucune clé à attendre et rien à servir.")
         ferme = _engine_ferme(ctx, inp)
+        recettes = inp.provider == runner_models.FAMILLE_RECETTE
+        if recettes and not ctx.platform_worker:
+            # Le worker des agents-recettes est un service de PLATEFORME (secret de
+            # machine) : il appelle `op=run` au nom de chaque demandeur.
+            raise AuthzDenied(403, "recipe_worker_platform_only",
+                              "`provider=recette` est réservé aux workers de plateforme : "
+                              "il sert les agents-recettes de toutes les orgs.")
         bail = max(30, min(inp.lease_seconds, 3600))
         # ⚠️ Un worker d'ABONNEMENT ne prend QUE sa famille, qu'il l'ait demandé ou
         # non (revue du 21/09/2026). Il n'exécute rien lui-même : tout part dans le
@@ -1804,7 +1817,10 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # coup sûr, tentative après tentative. Le drapeau `org_key_only` le
         # garantissait déjà… à condition que l'unité systemd le pose. Une garde qui
         # dépend d'une variable d'environnement bien écrite n'en est pas une.
-        famille_seule = inp.org_key_only or _abonnement.est_abonnement(inp.provider)
+        # Le worker `recette` ne prend QUE les travaux d'agents-recettes : un travail
+        # sans famille (agent historique) lui partirait sans modèle à appeler.
+        famille_seule = (inp.org_key_only or _abonnement.est_abonnement(inp.provider)
+                         or recettes)
         # ⚠️ Un MEMBRE ne réserve que SES travaux (10/10/2026). Le travail réservé
         # revient avec un jeton de délégation au nom de SON porteur (`_delegue`) :
         # un membre qui réservait le travail d'un collègue en recevait un qui agit au
@@ -1839,7 +1855,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 # pas de la même façon. Les confondre a coûté des jours de
                 # sondage à vide sans que personne ne le voie (07/09/2026).
                 return {"job": None, "campaign_error": panne}
-        if job is None and ctx.platform_worker and inp.provider:
+        if job is None and ctx.platform_worker and inp.provider and not recettes:
             # ⚠️ REPLI ABONNEMENT ÉPUISÉ → clé API (OTO-130, 27/09/2026) : un
             # travail d'abonnement en pause (jamais needs_login/disconnected,
             # jamais un pool vide) rejoue sur la clé API de son org plutôt que
